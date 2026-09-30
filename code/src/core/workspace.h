@@ -5,6 +5,7 @@
 #include "algo/probability_engine/probability/probability.h"
 #include "algo/probability_engine/shape_solver/shape_solver_types.h"
 #include "algo/probability_engine/structure/structure.h"
+#include "algo/winrate_engine/java_transplant/java_evaluate.h"
 #include "core/utility/combination.h"
 
 namespace mss {
@@ -17,6 +18,8 @@ struct Workspace {
     BruteForce::Workspace bruteForce{shapeSolver};
     Structure::Workspace structure;
     Probability::Workspace probability{shapeSolver, combination};
+    LongTermRiskReference::Workspace longTermRisk{basic, structure, probability};
+    JavaEvaluate::Workspace javaEvaluate{longTermRisk};
 };
 
 } // 命名空间 mss

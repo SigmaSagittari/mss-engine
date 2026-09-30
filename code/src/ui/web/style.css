@@ -107,9 +107,10 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 18px; pa
 .cell.probability-cell { font-size: 12px; font-weight: 650; }
 .cell.flagged { color: #c23b3b; background: #c6c6c6; }
 .cell.mine { font-size: 28px; line-height: 1; }
+.cell.endgame-candidate { background: #f0b447; }
 .cell.selected { outline: 3px solid #f1bd45; outline-offset: 1px; z-index: 2; }
-.cell.endgame-best { outline: 4px solid #e00078; outline-offset: -5px; z-index: 3; }
 .cell.hovered:not(.selected) { outline: 2px solid #879fc9; outline-offset: 1px; z-index: 2; }
+.cell.endgame-best { z-index: 3; background: #22c55e; }
 .cell.hit-mine { color: #fff; background: #c93434; }
 .message { min-height: 22px; padding: 10px 2px 0; color: #788397; font-size: 13px; }
 .message.error { color: #b53737; }

@@ -174,8 +174,7 @@ void HttpServer::run() {
     const std::string origin = "http://" + host;
     // 通过 URL 文件关联启动系统默认浏览器。
     const std::wstring url = L"http://127.0.0.1:" + std::to_wstring(port) + L"/";
-    const INT_PTR browserResult = (INT_PTR)ShellExecuteW(GetConsoleWindow(), L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    std::ofstream("mss_current_run.log", std::ios::app) << "ShellExecuteW result=" << browserResult << " error=" << GetLastError() << "\n";
+    ShellExecuteW(GetConsoleWindow(), L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     const std::filesystem::path assets = assetDirectory();
     while (!session_.stopped()) {
         const SOCKET client = accept(listener, nullptr, nullptr);

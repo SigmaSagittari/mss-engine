@@ -256,7 +256,7 @@ std::string Session::analysisResult() {
     return "{\"ok\":true,\"rows\":" + std::to_string(analysisBoard_.board.rows()) + ",\"cols\":" + std::to_string(analysisBoard_.board.cols()) + ",\"cells\":" + jsonString(cellString(analysisBoard_)) + ",\"candidateCount\":" + jsonString(candidateCount.str()) + ",\"probabilities\":" + probabilitiesJson(analysisBoard_, analysisBasic_, analysisStructure_, analysisProbability_) + "}";
 }
 
-std::string Session::analyzeEndgame(int candidateLimit, bool includeProbabilities, bool checkAllMoves, bool multiThread) {
+std::string Session::analyzeEndgame(int engineThreshold, bool includeProbabilities, bool checkAllMoves, bool multiThread) {
     if (analysisDirty_ && !calculateAnalysis())
         return error(analysisError_);
     if (!analysisReady_)
@@ -265,15 +265,32 @@ std::string Session::analyzeEndgame(int candidateLimit, bool includeProbabilitie
     std::ostringstream candidateText;
     candidateText << std::scientific << std::setprecision(6) << candidateCount;
     const std::string probabilityData = includeProbabilities ? ",\"probabilities\":" + probabilitiesJson(analysisBoard_, analysisBasic_, analysisStructure_, analysisProbability_) : "";
-    if (candidateCount > candidateLimit)
-        return "{\"ok\":true,\"exceeded\":true,\"candidateCount\":" + jsonString(candidateText.str()) + ",\"limit\":" + std::to_string(candidateLimit) + probabilityData + "}";
+    if (candidateCount > engineThreshold) {
+        const LongTermRiskReference::Config riskConfig{};
+        const LongTermRiskReference::Influence risk = LongTermRiskReference::findInfluence(analysisBoard_, analysisBasic_, analysisStructure_, analysisProbability_, analysisShapes_, analysisDistributions_, {}, riskConfig, workspace_.longTermRisk);
+        const JavaEvaluate::Config evaluateConfig{};
+        const JavaEvaluate::Result java = JavaEvaluate::solve(analysisBoard_, analysisBasic_, analysisStructure_, analysisProbability_, analysisShapes_, analysisDistributions_, risk, {}, evaluateConfig, workspace_.javaEvaluate);
+        std::ostringstream result;
+        const int bestCell = java.x == 0 || java.y == 0 ? -1 : analysisBoard_.id(java.x - 1, java.y - 1);
+        result << "{\"ok\":true,\"exceeded\":false,\"engine\":\"JavaEval\",\"candidateCount\":" << jsonString(candidateText.str()) << ",\"bestCell\":" << bestCell << ",\"candidates\":[";
+        for (int i = 0; i < (int)java.candidates.size(); ++i) {
+            if (i != 0)
+                result << ',';
+            result << analysisBoard_.id(java.candidates[i].x - 1, java.candidates[i].y - 1);
+        }
+        result << ']';
+        if (includeProbabilities)
+            result << probabilityData;
+        result << '}';
+        return result.str();
+    }
     const int configurationCount = (int)candidateCount;
     BruteForce::Config options;
     options.checkAllMoves = checkAllMoves;
     options.solver = multiThread ? BruteForce::Solver::BitwiseRootParallel : BruteForce::Solver::Bitwise;
     const BruteForce::Result bruteForce = BruteForce::solve(analysisBoard_, analysisBasic_, analysisStructure_, analysisShapes_, options, workspace_.bruteForce);
     std::ostringstream result;
-    result << "{\"ok\":true,\"exceeded\":false,\"candidateCount\":" << jsonString(candidateText.str()) << ",\"configurationCount\":" << configurationCount << ",\"nodes\":" << bruteForce.nodes << ",\"moves\":[";
+    result << "{\"ok\":true,\"exceeded\":false,\"engine\":\"BruteForce\",\"candidateCount\":" << jsonString(candidateText.str()) << ",\"configurationCount\":" << configurationCount << ",\"nodes\":" << bruteForce.nodes << ",\"moves\":[";
     for (int i = 0; i < (int)bruteForce.moves.size(); ++i) {
         if (i != 0)
             result << ',';
@@ -348,15 +365,15 @@ std::string Session::handle(const std::string &path, const std::string &body) {
         return analysisResult();
     }
     if (path == "/api/endgame/analyze") {
-        int candidateLimit = 0;
-        if (!parseInteger(value(fields, "limit"), candidateLimit) || candidateLimit < 1)
-            return error("残局分析候选数上限无效");
+        int engineThreshold = 0;
+        if (!parseInteger(value(fields, "limit"), engineThreshold) || engineThreshold < 1)
+            return error("JavaEval 切换阈值无效");
         if (!setOrderAlgo(fields))
             return error("ShapeSolver 算法无效");
         std::string response;
         if (!setAnalysisBoard(fields, value(fields, "mode") == "analysis", response))
             return response;
-        return analyzeEndgame(candidateLimit, value(fields, "includeProbabilities") == "true", value(fields, "checkAllMoves") == "true", value(fields, "multiThread") == "true");
+        return analyzeEndgame(engineThreshold, value(fields, "includeProbabilities") == "true", value(fields, "checkAllMoves") == "true", value(fields, "multiThread") == "true");
     }
     if (path == "/api/detail") {
         int cell = -1;

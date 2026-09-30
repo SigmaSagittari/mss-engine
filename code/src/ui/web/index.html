@@ -27,7 +27,7 @@
             <button id="play-mode" class="mode active" role="tab">游玩</button>
             <button id="analysis-mode" class="mode" role="tab">分析</button>
         </div>
-        <button id="endgame-analysis" class="secondary">残局分析</button>
+        <button id="endgame-analysis" class="secondary">分析</button>
         <div id="play-actions" class="play-actions">
             <button id="play-until-no-safe">开到无安全格</button>
         </div>
@@ -71,7 +71,7 @@
                 </div>
             </section>
             <section id="endgame-result" class="endgame-result" hidden>
-                <h3>残局分析</h3>
+                <h3>分析结果</h3>
                 <div id="endgame-summary" class="muted"></div>
                 <ol id="endgame-moves" class="endgame-moves"></ol>
             </section>
@@ -81,9 +81,9 @@
         <div class="settings-title"><h2 id="settings-title">设置</h2><button id="close-settings" aria-label="关闭设置">关闭</button></div>
         <div class="settings-body">
             <label class="settings-row"><span>显示分析概率</span><input id="probability-display" type="checkbox" checked></label>
-            <label class="settings-row"><span>残局分析候选数上限</span><input id="endgame-candidate-limit" type="number" min="1" step="1" value="100000"></label>
-            <label class="settings-row"><span>分析所有候选格</span><input id="endgame-check-all-moves" type="checkbox"></label>
-            <label class="settings-row"><span>残局分析多线程</span><input id="endgame-multithread" type="checkbox" checked></label>
+            <label class="settings-row"><span>JavaEval 切换阈值</span><input id="endgame-candidate-limit" type="number" min="1" step="1" value="100000"></label>
+            <label class="settings-row"><span>BruteForce 分析所有候选格</span><input id="endgame-check-all-moves" type="checkbox"></label>
+            <label class="settings-row"><span>BruteForce 多线程</span><input id="endgame-multithread" type="checkbox" checked></label>
             <label class="settings-row"><span>ShapeSolver 算法</span><select id="shape-algo"><option value="auto" selected>auto（默认）</option><option value="autoSA">autoSA</option></select></label>
             <label class="settings-row"><span>棋盘格子大小</span><select id="cell-size"><option value="auto" selected>自适应（默认）</option><option value="25">25 px</option><option value="28">28 px</option><option value="32">32 px</option><option value="34">34 px</option><option value="38">38 px</option><option value="42">42 px</option><option value="48">48 px</option></select></label>
             <div>
@@ -91,9 +91,9 @@
                 <div class="seed-row"><input id="rng-seed" type="text" maxlength="32" spellcheck="false" value="243f6a8885a308d313198a2e03707344"><button id="regenerate-seed">以此种子开局</button></div>
             </div>
             <div class="board-export">
-                <label for="board-string">当前盘面字符串（JSON）</label>
+                <label for="board-string">当前盘面字符串</label>
                 <textarea id="board-string" rows="5" spellcheck="false"></textarea>
-                <div class="board-export-actions"><button id="fill-board-string">填入当前盘面</button><button id="import-board-string" disabled>从字符串导入</button></div>
+                <div class="board-export-actions"><button id="export-davidnhill">导出为 davidNhill 格式</button><button id="import-board-string" disabled>从字符串导入</button></div>
                 <div class="muted">导入仅在分析模式开放。</div>
                 <div id="board-export-status" class="muted" aria-live="polite"></div>
             </div>
@@ -102,7 +102,7 @@
     <div id="analysis-blocker" class="analysis-blocker" hidden role="dialog" aria-modal="true" aria-labelledby="analysis-blocker-title">
         <div class="analysis-blocker-content">
             <div class="analysis-spinner" aria-hidden="true"></div>
-            <h2 id="analysis-blocker-title">正在分析残局</h2>
+            <h2 id="analysis-blocker-title">正在分析</h2>
         </div>
     </div>
     <script src="/app.js" defer></script>

@@ -275,7 +275,7 @@ const Structure::Pool &GameControl::Game::shapePool() const {
 }
 
 std::vector<ObservedBoard::CellId> GameControl::Game::suggest(Position::SuggestAlgo algo) {
-    if (algo != Position::SuggestAlgo::LowRisk) {
+    if (algo != Position::SuggestAlgo::Java && algo != Position::SuggestAlgo::LowRisk) {
         assert_(false, "Game::suggest: 无效的建议算法");
 #if defined(_MSC_VER)
         __assume(0);
@@ -312,6 +312,20 @@ std::vector<ObservedBoard::CellId> GameControl::Game::suggest(Position::SuggestA
     const Probability::Result &updatedProbability = position.probability(*shapes_, *distributions_);
     if (position.error.failed)
         return {};
+    if (algo == Position::SuggestAlgo::Java) {
+        if (updatedProbability.candidates() < 5000.0L) {
+            const BruteForce::Result result = BruteForce::solve(position.observedBoard, position.basic_, position.structure_, *shapes_, {false, 1, BruteForce::Solver::Bitwise}, position.workspace_.bruteForce);
+            if (!result.moves.empty())
+                return {result.moves.front().cell};
+        }
+        const LongTermRiskReference::Config riskConfig{};
+        const LongTermRiskReference::Influence risk = LongTermRiskReference::findInfluence(position.observedBoard, position.basic_, position.structure_, updatedProbability, *shapes_, *distributions_, {}, riskConfig, position.workspace_.longTermRisk);
+        const JavaEvaluate::Config evaluateConfig{};
+        const JavaEvaluate::Result result = JavaEvaluate::solve(position.observedBoard, position.basic_, position.structure_, updatedProbability, *shapes_, *distributions_, risk, {}, evaluateConfig, position.workspace_.javaEvaluate);
+        if (result.x == 0 || result.y == 0)
+            return {};
+        return {position.observedBoard.id(result.x - 1, result.y - 1)};
+    }
     ObservedBoard::CellId safest = -1;
     int safestRow = position.observedBoard.board.rows();
     int safestCol = -1;

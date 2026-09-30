@@ -36,8 +36,8 @@ struct Session {
     bool calculateAnalysis();
     bool setOrderAlgo(const std::vector<FormField> &fields);
     bool setAnalysisBoard(const std::vector<FormField> &fields, bool allowForcedStates, std::string &response);
-    // 先按完整布局数执行上限筛除，再按配置返回候选首步的最终胜局数。
-    std::string analyzeEndgame(int candidateLimit, bool includeProbabilities, bool checkAllMoves, bool multiThread);
+    // 按完整布局数选择 JavaEval 或 BruteForce，并返回推荐首步。
+    std::string analyzeEndgame(int engineThreshold, bool includeProbabilities, bool checkAllMoves, bool multiThread);
 
     Workspace workspace_;
     Structure::Pool analysisShapes_;

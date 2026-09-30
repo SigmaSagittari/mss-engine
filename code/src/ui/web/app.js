@@ -44,6 +44,7 @@ let probabilityRevision = 0;
 let probabilityPending = false;
 let operationBusy = false;
 let endgameResultAvailable = false;
+let endgameCandidateCells = new Set();
 let endgameBestCells = new Set();
 const rngMask = 0xffffffffffffffffn;
 
@@ -117,10 +118,6 @@ function currentBoardString() {
     const state = activeState();
     const cells = mode === "play" ? state.cells.replace(/\*/g, "?") : state.cells;
     return JSON.stringify({ rows: state.rows, cols: state.cols, mines: state.mines, cells });
-}
-
-async function fillBoardString() {
-    boardStringInput.value = currentBoardString();
 }
 
 function cellFromTarget(target) {
@@ -197,9 +194,10 @@ function clearDetail() {
 
 function clearEndgameResult() {
     endgameResultAvailable = false;
+    endgameCandidateCells.clear();
     endgameBestCells.clear();
     for (let cell = 0; cell < boardElement.children.length; ++cell)
-        boardElement.children[cell].classList.remove("endgame-best");
+        boardElement.children[cell].classList.remove("endgame-candidate", "endgame-best");
     endgameResult.hidden = true;
     endgameSummary.textContent = "";
     endgameMoves.replaceChildren();
@@ -465,6 +463,8 @@ function updateCell(button, cell, state) {
         button.classList.add("selected");
     if (mode === "analysis" && hoveredCell === cell)
         button.classList.add("hovered");
+    if (endgameResultAvailable && endgameCandidateCells.has(cell))
+        button.classList.add("endgame-candidate");
     if (endgameResultAvailable && endgameBestCells.has(cell))
         button.classList.add("endgame-best");
 }
@@ -502,8 +502,6 @@ function render() {
     const state = activeState();
     if (!state)
         return;
-    if (!settingsDialog.open)
-        boardStringInput.value = currentBoardString();
     clearPressedCells();
     boardElement.style.gridTemplateColumns = `repeat(${state.cols}, var(--cell-size, 34px))`;
     const cellSize = cellSizeSetting.value === "auto" ? Math.max(25, Math.min(38, Math.floor((window.innerWidth - 370) / state.cols))) : Number(cellSizeSetting.value);
@@ -702,26 +700,43 @@ async function playUntilNoSafe() {
 }
 
 function showEndgameResult(result) {
-    endgameSummary.textContent = `候选方案 ${result.candidateCount}；搜索节点 ${result.nodes}`;
+    endgameSummary.textContent = result.engine === "JavaEval" ? `候选方案 ${result.candidateCount}；JavaEval 推荐` : `候选方案 ${result.candidateCount}；搜索节点 ${result.nodes}`;
     endgameMoves.replaceChildren();
-    const moves = result.moves.slice().sort((left, right) => right.wins - left.wins || left.cell - right.cell);
+    endgameCandidateCells.clear();
     endgameBestCells.clear();
+    if (result.engine === "JavaEval") {
+        const state = activeState();
+        endgameCandidateCells = new Set(result.candidates);
+        if (result.bestCell < 0) {
+            const item = document.createElement("li");
+            item.textContent = "没有可推荐的隐藏格。";
+            endgameMoves.append(item);
+        } else {
+            const cell = result.bestCell;
+            const row = Math.floor(cell / state.cols) + 1;
+            const col = cell % state.cols + 1;
+            endgameCandidateCells.add(cell);
+            endgameBestCells.add(cell);
+            const item = document.createElement("li");
+            item.textContent = `JavaEval 推荐：第 ${row} 行，第 ${col} 列`;
+            endgameMoves.append(item);
+        }
+        endgameResultAvailable = true;
+        endgameResult.hidden = false;
+        return;
+    }
+    const moves = result.moves.slice().sort((left, right) => right.wins - left.wins || left.cell - right.cell);
     if (moves.length === 0) {
         const item = document.createElement("li");
-        item.textContent = "没有可供残局搜索的隐藏格。";
+        item.textContent = "没有可供分析的隐藏格。";
         endgameMoves.append(item);
     } else {
-        let bestWins = moves[0].wins;
-        for (let i = 1; i < moves.length; ++i)
-            if (moves[i].wins > bestWins)
-                bestWins = moves[i].wins;
-        for (let i = 0; i < moves.length; ++i)
-            if (moves[i].wins === bestWins)
-                endgameBestCells.add(moves[i].cell);
+        endgameBestCells.add(moves[0].cell);
     }
     const state = activeState();
     for (let i = 0; i < moves.length; ++i) {
         const move = moves[i];
+        endgameCandidateCells.add(move.cell);
         const item = document.createElement("li");
         const row = Math.floor(move.cell / state.cols) + 1;
         const col = move.cell % state.cols + 1;
@@ -738,7 +753,7 @@ async function analyzeEndgame() {
         return;
     const limit = Number(endgameCandidateLimit.value);
     if (!Number.isInteger(limit) || limit < 1 || limit > 2147483647) {
-        setMessage("残局分析候选数上限必须是正整数。", "error");
+        setMessage("JavaEval 切换阈值必须是正整数。", "error");
         return;
     }
     operationBusy = true;
@@ -757,12 +772,8 @@ async function analyzeEndgame() {
             probabilities = result.probabilities;
             candidateCount = result.candidateCount;
         }
-        if (result.exceeded)
-            setMessage(`候选方案数 ${result.candidateCount} 超过上限 ${limit}。`, "error");
-        else {
-            showEndgameResult(result);
-            setMessage("残局分析完成。", "success");
-        }
+        showEndgameResult(result);
+        setMessage("分析完成。", "success");
     } catch (error) {
         setMessage(error.message, "error");
     } finally {
@@ -815,15 +826,27 @@ difficulty.addEventListener("change", () => {
         startNewGame();
 });
 document.getElementById("new-game").addEventListener("click", () => startNewGame());
-document.getElementById("open-settings").addEventListener("click", async () => {
-    await fillBoardString();
+document.getElementById("open-settings").addEventListener("click", () => {
+    boardStringInput.value = currentBoardString();
     boardExportStatus.textContent = "";
     settingsDialog.showModal();
 });
 document.getElementById("close-settings").addEventListener("click", () => settingsDialog.close());
-document.getElementById("fill-board-string").addEventListener("click", async () => {
-    await fillBoardString();
-    boardExportStatus.textContent = "当前盘面字符串已填入。";
+document.getElementById("export-davidnhill").addEventListener("click", () => {
+    try {
+        const board = JSON.parse(boardStringInput.value);
+        if (!board || !Number.isInteger(board.rows) || !Number.isInteger(board.cols) || !Number.isInteger(board.mines) || board.rows < 1 || board.cols < 1 || board.rows > 50 || board.cols > 50 || board.mines < 0 || board.mines >= board.rows * board.cols)
+            throw new Error("盘面参数无效");
+        if (typeof board.cells !== "string" || board.cells.length !== board.rows * board.cols || /[^0-8?MS]/.test(board.cells))
+            throw new Error("盘面数据无效");
+        const lines = [`${board.cols}x${board.rows}x${board.mines}`];
+        for (let row = 0; row < board.rows; ++row)
+            lines.push(board.cells.slice(row * board.cols, (row + 1) * board.cols).replace(/[?MS]/g, "H"));
+        boardStringInput.value = lines.join("\n");
+        boardExportStatus.textContent = "已转换为 davidNhill 格式。";
+    } catch (error) {
+        boardExportStatus.textContent = `导出失败：${error.message}`;
+    }
 });
 importBoardStringButton.addEventListener("click", () => {
     if (mode !== "analysis")

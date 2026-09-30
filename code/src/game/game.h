@@ -41,6 +41,7 @@ struct GameControl {
       public:
         // 新增建议策略只需扩展此枚举和 Game::suggest 的分支。
         enum class SuggestAlgo {
+            Java,
             LowRisk,
         };
 
