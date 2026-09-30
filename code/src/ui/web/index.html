@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="mss-token" content="__MSS_TOKEN__">
+    <title>mss1.5</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">mss<span>1.5</span></div>
+        <label class="difficulty-label" for="difficulty">盘面</label>
+        <select id="difficulty">
+            <option value="beginner">初级 9×9 / 10</option>
+            <option value="intermediate">中级 16×16 / 40</option>
+            <option value="advanced" selected>高级 30×16 / 99</option>
+            <option value="custom">自定义</option>
+        </select>
+        <div id="custom-settings" class="custom-settings" hidden>
+            <label>行 <input id="rows" type="number" min="1" max="50" value="16"></label>
+            <label>列 <input id="cols" type="number" min="1" max="50" value="30"></label>
+            <label>雷 <input id="mines" type="number" min="0" value="99"></label>
+        </div>
+        <button id="new-game" class="primary">新游戏</button>
+        <div class="mode-tabs" role="tablist">
+            <button id="play-mode" class="mode active" role="tab">游玩</button>
+            <button id="analysis-mode" class="mode" role="tab">分析</button>
+        </div>
+        <button id="endgame-analysis" class="secondary">残局分析</button>
+        <div id="play-actions" class="play-actions">
+            <button id="play-until-no-safe">开到无安全格</button>
+        </div>
+        <button id="open-settings" class="settings-button">设置</button>
+    </header>
+    <main>
+        <section class="game-area">
+            <div class="board-heading">
+                <div id="board-status">正在载入盘面…</div>
+                <div id="mine-counter"></div>
+            </div>
+            <div class="board-scroll"><div id="board" class="board" role="grid"></div></div>
+            <div id="message" class="message" aria-live="polite" hidden></div>
+        </section>
+        <aside class="details">
+            <h2>详细信息</h2>
+            <div id="detail-empty" class="muted">左键揭格，右键标旗。</div>
+            <div id="detail-content" hidden>
+                <div id="detail-position" class="detail-position"></div>
+                <div class="risk-row"><span>雷概率</span><strong id="detail-risk">—</strong></div>
+                <div class="candidate-row"><span>总候选方案数</span><strong id="detail-candidates">—</strong></div>
+                <div id="observe-result" class="observe-result"></div>
+            </div>
+            <section id="analysis-editor" class="analysis-editor" hidden>
+                <div class="editor-row">
+                    <select id="cell-state">
+                        <option value="?">隐藏（H）</option>
+                        <option value="0">0</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8</option>
+                        <option value="S">确定安全（S）</option>
+                        <option value="M">确定为雷（M）</option>
+                    </select>
+                    <button id="apply-edit">应用</button>
+                </div>
+            </section>
+            <section id="endgame-result" class="endgame-result" hidden>
+                <h3>残局分析</h3>
+                <div id="endgame-summary" class="muted"></div>
+                <ol id="endgame-moves" class="endgame-moves"></ol>
+            </section>
+        </aside>
+    </main>
+    <dialog id="settings-dialog" aria-labelledby="settings-title">
+        <div class="settings-title"><h2 id="settings-title">设置</h2><button id="close-settings" aria-label="关闭设置">关闭</button></div>
+        <div class="settings-body">
+            <label class="settings-row"><span>显示分析概率</span><input id="probability-display" type="checkbox" checked></label>
+            <label class="settings-row"><span>残局分析候选数上限</span><input id="endgame-candidate-limit" type="number" min="1" step="1" value="100000"></label>
+            <label class="settings-row"><span>分析所有候选格</span><input id="endgame-check-all-moves" type="checkbox"></label>
+            <label class="settings-row"><span>残局分析多线程</span><input id="endgame-multithread" type="checkbox" checked></label>
+            <label class="settings-row"><span>ShapeSolver 算法</span><select id="shape-algo"><option value="auto" selected>auto（默认）</option><option value="autoSA">autoSA</option></select></label>
+            <label class="settings-row"><span>棋盘格子大小</span><select id="cell-size"><option value="auto" selected>自适应（默认）</option><option value="25">25 px</option><option value="28">28 px</option><option value="32">32 px</option><option value="34">34 px</option><option value="38">38 px</option><option value="42">42 px</option><option value="48">48 px</option></select></label>
+            <div>
+                <label for="rng-seed">RNG seed</label>
+                <div class="seed-row"><input id="rng-seed" type="text" maxlength="32" spellcheck="false" value="243f6a8885a308d313198a2e03707344"><button id="regenerate-seed">以此种子开局</button></div>
+            </div>
+            <div class="board-export">
+                <label for="board-string">当前盘面字符串（JSON）</label>
+                <textarea id="board-string" rows="5" spellcheck="false"></textarea>
+                <div class="board-export-actions"><button id="fill-board-string">填入当前盘面</button><button id="import-board-string" disabled>从字符串导入</button></div>
+                <div class="muted">导入仅在分析模式开放。</div>
+                <div id="board-export-status" class="muted" aria-live="polite"></div>
+            </div>
+        </div>
+    </dialog>
+    <div id="analysis-blocker" class="analysis-blocker" hidden role="dialog" aria-modal="true" aria-labelledby="analysis-blocker-title">
+        <div class="analysis-blocker-content">
+            <div class="analysis-spinner" aria-hidden="true"></div>
+            <h2 id="analysis-blocker-title">正在分析残局</h2>
+        </div>
+    </div>
+    <script src="/app.js" defer></script>
+</body>
+</html>
