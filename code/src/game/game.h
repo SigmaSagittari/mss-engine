@@ -39,18 +39,21 @@ struct GameControl {
 
     struct Position {
       public:
-        // 新增建议策略只需扩展此枚举和 Game::suggest 的分支。
-        enum class SuggestAlgo {
-            Java,
-            LowRisk,
-        };
-
         struct Error {
             bool failed = false;
             std::string reason;
         };
 
-        // 界面读取观测盘面；变更必须经 Game::update，否则 Basic、Structure 与概率缓存会失效。
+
+        struct SuggestResult {
+            enum class Engine { Safe, LowRisk, BruteForce, JavaEval };
+            Engine engine = Engine::Safe;
+            std::vector<ObservedBoard::CellId> cells;
+            std::vector<ObservedBoard::CellId> candidates;
+            BruteForce::Result bruteForce;
+        };
+
+        // 界面读取观测盘面；增量变更必须经 update，否则 Basic、Structure 与概率缓存会失效。
         ObservedBoard::Result observedBoard;
         Error error;
 
@@ -59,14 +62,27 @@ struct GameControl {
         // 返回当前前沿组件；更新后组件下标和引用内容可能变化。
         const Structure::Result &structure() const;
 
+        Position(ObservedBoard::Result observedBoard, Workspace &workspace, ShapeSolver::OrderAlgo orderAlgo);
+        // UI 已完成 Basic 校验时直接复用结果，不重复分析。
+        Position(ObservedBoard::Result observedBoard, Basic::Result basic, Workspace &workspace, ShapeSolver::OrderAlgo orderAlgo);
+        ShapeSolver::OrderAlgo orderAlgo() const;
+        void setOrderAlgo(ShapeSolver::OrderAlgo orderAlgo);
+        const Probability::Result &probability();
+        // cell 必须是当前盘面的隐藏格；结果按点击后数字 0~8 和爆炸 9 给出概率。
+        Observe::Result observe(ObservedBoard::CellId cell);
+        // cell 必须是当前盘面有效 CellId，且当前概率结果有合法布局。
+        long double mineProbability(ObservedBoard::CellId cell);
+        // 返回当前形状池；ID 只在池未清空前有效。
+        const Structure::Pool &shapePool() const;
+        // 优先返回安全格；需要猜测时按策略和阈值选择引擎，附带该引擎的实际分析结果。
+        SuggestResult suggest(const Config &config);
+
       private:
         friend struct Game;
 
-        Position(ObservedBoard::Result observedBoard, Structure::Pool &shapes, ShapeSolver::DistributionPool &distributions, Workspace &workspace, ShapeSolver::OrderAlgo orderAlgo);
-        void initialize(Structure::Pool &shapes, ShapeSolver::DistributionPool &distributions);
-        void update(ObservedBoard::Delta &updates, Structure::Pool &shapes);
-        const std::vector<ObservedBoard::CellId> &safeMoves(Structure::Pool &shapes, ShapeSolver::DistributionPool &distributions);
-        const Probability::Result &probability(Structure::Pool &shapes, ShapeSolver::DistributionPool &distributions);
+        void initialize(Basic::Result basic);
+        void update(ObservedBoard::Delta &updates);
+        const std::vector<ObservedBoard::CellId> &safeMoves();
 
         std::vector<ObservedBoard::CellId> safeCells_;
         // 先复用 Basic 推导出的隐藏安全格，再检查组件级确定安全格，最后才运行全盘概率分析。
@@ -77,6 +93,8 @@ struct GameControl {
         Basic::Result basic_;
         Structure::Result structure_;
         Probability::Result probability_;
+        Structure::Pool shapes_;
+        ShapeSolver::DistributionPool distributions_;
         ShapeSolver::OrderAlgo orderAlgo_;
         Workspace &workspace_;
         bool probabilityDirty_ = false;
@@ -87,8 +105,6 @@ struct GameControl {
     struct Game {
       private:
         std::unique_ptr<MineBoard> mineBoard_;
-        std::unique_ptr<Structure::Pool> shapes_;
-        std::unique_ptr<ShapeSolver::DistributionPool> distributions_;
 
       public:
         Position position;
@@ -107,16 +123,6 @@ struct GameControl {
         int number(int row, int col) const;
         // 所有安全格已揭开时返回 true。
         bool won() const;
-        // 概率引用属于当前 Position；更新或 reset 后内容会被重算覆盖。
-        const Probability::Result &probability();
-        // cell 必须是当前盘面的隐藏格；结果按点击后数字 0~8 和爆炸 9 给出概率。
-        Observe::Result observe(ObservedBoard::CellId cell);
-        // cell 必须是当前盘面有效 CellId，且当前概率结果有合法布局。
-        long double mineProbability(ObservedBoard::CellId cell);
-        // 返回当前形状池；ID 只在池未清空前有效。
-        const Structure::Pool &shapePool() const;
-        // 返回全部已知安全格；没有安全格时返回最低风险单格，风险相同时选最靠右上方的格。
-        std::vector<ObservedBoard::CellId> suggest(Position::SuggestAlgo algo);
         // 持续打开安全格，直到当前局面没有可证明安全的格。
         void playUntilNoSafe();
     };

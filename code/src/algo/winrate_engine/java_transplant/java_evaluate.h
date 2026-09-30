@@ -12,6 +12,8 @@
 #include "algo/probability_engine/structure/structure.h"
 #include "core/utility/neighbors.h"
 
+#include "core/config.h"
+
 namespace mss {
 // ─────────────────────────────────────────────────────────────
 // algo/winrate_engine/java_transplant/java_evaluate.h — Java 猜牌参考入口的忠实移植。
@@ -38,19 +40,6 @@ namespace mss {
 struct JavaEvaluate {
     struct Workspace {
         LongTermRiskReference::Workspace &risk;
-    };
-
-    // 与 Java SolverSettings / SecondarySafetyEvaluator 默认值一致。
-    struct Config {
-        long double progressContribution = 0.001L;
-        long double selectionThreshold1 = 0.10L;
-        long double selectionThreshold2 = 0.20L;
-        long double influenceScale = 0.9L;       // FIFTYFIFTY_INFLUENCE_SCALE
-        long double equalityThreshold = 0.0001L; // EQUALITY_THRESHOLD
-        int weight1 = 4;
-        int weight2 = 1;
-        int spaceThreshold = 8; // SpaceCounter 阈值
-        long double eqEps = 1e-9L;
     };
 
     // 单候选报告（与 Java EvaluatedLocation 的公开字段对齐）。
@@ -211,7 +200,6 @@ inline ForcedInfo inspectForced(const Structure::Result &structure, const Probab
 
 // 临时施加强制事实并回滚，复用父状态的 Board、Basic、Structure 容量。
 
-
 // ── 新局面的摘要（Java ProbabilityEngineFast 的 bestSafety 族）──
 //   blendedSafety   = (最安全活格×weight1 + 次安全活格×weight2) / 和
 //   clears          = 活清空格数（tally-0 盒内非死格）
@@ -226,7 +214,7 @@ struct BoardSummary {
 
 inline BoardSummary summarizeBoard(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure,
                                    const Probability::Result &probability, const Structure::Pool &shapes,
-                                   const JavaEvaluate::Config &cfg) {
+                                   const Config &cfg) {
     BoardSummary out;
     long double best = 1.0L - probability.tCellProbability();
     long double second = best;
@@ -286,7 +274,7 @@ inline BoardSummary summarizeBoard(const ObservedBoard::Result &board, const Bas
         if (haveSecondItem && secondItem.safety > second)
             second = secondItem.safety;
     }
-    out.blendedSafety = (best * cfg.weight1 + second * cfg.weight2) / (cfg.weight1 + cfg.weight2);
+    out.blendedSafety = (best * cfg.javaEvaluate.weight1 + second * cfg.javaEvaluate.weight2) / (cfg.javaEvaluate.weight1 + cfg.javaEvaluate.weight2);
     if (best > second)
         out.singleSafestTile = bestCell;
 
@@ -329,7 +317,6 @@ inline std::vector<ObservedBoard::CellId> flattenBoxes(const std::vector<std::ve
 // board/basic/structure 会被临时修改并回滚。observation 是该格的观测分布。
 // best：当前最高分（Java 的 best 字段，供乐观剪枝）；cell = -1 表示尚无第一名。
 
-
 // ── 候选窗 / 离网候选 ──
 
 // Java SpaceCounter.meetsThreshold：未开格连通区（可跳过已揭示格）≥ 阈值。
@@ -368,13 +355,13 @@ inline bool meetsSpaceThreshold(int startX, int startY, const ObservedBoard::Res
 }
 
 // ── bestMove 支配替换（Java findAlternativeMove）──
-inline const Eval *findAlternativeMove(const Eval &move, const std::vector<Eval> &evaluated, const JavaEvaluate::Config &cfg) {
+inline const Eval *findAlternativeMove(const Eval &move, const std::vector<Eval> &evaluated, const Config &cfg) {
     if (move.commonClears.empty())
         return nullptr;
     for (const Eval &candidate : evaluated) {
         if (candidate.cell == move.cell)
             continue;
-        if (candidate.safety - move.safety > cfg.equalityThreshold && evaluateContains(move.commonClears, candidate.cell))
+        if (candidate.safety - move.safety > cfg.javaEvaluate.equalityThreshold && evaluateContains(move.commonClears, candidate.cell))
             return &candidate;
     }
     return nullptr;
@@ -415,7 +402,7 @@ namespace JavaEvaluateInternal {
 inline Eval evaluate(ObservedBoard::Result &board, Basic::Result &basic, Structure::Result &structure, const Probability::Result &probability,
                      Structure::Pool &shapes, ShapeSolver::DistributionPool &distributions,
                      const LongTermRiskReference::Influence &risk, long double baseHotspot,
-                     const Observe::Result &observation, ObservedBoard::CellId cell, const Eval &best, const JavaEvaluate::Config &cfg,
+                     const Observe::Result &observation, ObservedBoard::CellId cell, const Eval &best, const Config &cfg,
                      JavaEvaluate::Workspace &workspace) {
     Eval out;
     out.cell = cell;
@@ -428,7 +415,7 @@ inline Eval evaluate(ObservedBoard::Result &board, Basic::Result &basic, Structu
     const long double safetyTally = probability.candidates() - evaluateBoxTally(cell, probability, board, basic, structure);
     long double fiftyFiftyInfluence = 1.0L;
     if (safetyTally > 0.0L)
-        fiftyFiftyInfluence = (safetyTally + cfg.influenceScale * tally) / safetyTally;
+        fiftyFiftyInfluence = (safetyTally + cfg.javaEvaluate.influenceScale * tally) / safetyTally;
 
     const bool hotSpotTile = hotspotExempt(risk, cell);
     const long double pruneFiftyFiftyInfluence = (hotSpotTile ? 1.0L : fiftyFiftyInfluence) / baseHotspot;
@@ -440,7 +427,7 @@ inline Eval evaluate(ObservedBoard::Result &board, Basic::Result &basic, Structu
                                                     cell, workspace);
     const long double linkedTilesCount = dominatedInfo.livingClears;
     if (dominatedInfo.dominated) {
-        out.weight = out.safety * (1.0L + out.safety * cfg.progressContribution);
+        out.weight = out.safety * (1.0L + out.safety * cfg.javaEvaluate.progressContribution);
         out.expectedClears = linkedTilesCount;
         out.maxValueProgress = out.safety;
         for (const std::vector<ObservedBoard::CellId> &cells : dominatedInfo.emptyBoxes)
@@ -468,7 +455,7 @@ inline Eval evaluate(ObservedBoard::Result &board, Basic::Result &basic, Structu
         if (probV == 0.0L)
             continue;
         // 乐观上界剪枝（Java 同款）：剩余安全度全按 100% 计也追不上第一名。
-        const long double progressBonus = 1.0L + (progressProb + safetyThisTileLeft) * cfg.progressContribution;
+        const long double progressBonus = 1.0L + (progressProb + safetyThisTileLeft) * cfg.javaEvaluate.progressContribution;
         const long double optimistic = (secondarySafety + safetyThisTileLeft * pruneFiftyFiftyInfluence) * progressBonus;
         if (best.cell != -1 && optimistic < best.weight && !best.deferGuessing) {
             out.pruned = true;
@@ -526,7 +513,7 @@ inline Eval evaluate(ObservedBoard::Result &board, Basic::Result &basic, Structu
         ObservedBoard::reverseDelta(board, updates);
     }
 
-    out.weight = secondarySafety * (1.0L + progressProb * cfg.progressContribution);
+    out.weight = secondarySafety * (1.0L + progressProb * cfg.javaEvaluate.progressContribution);
     out.expectedClears = expectedClears;
     out.maxValueProgress = maxValueProgress;
     out.commonClears = flattenBoxes(commonBoxes);
@@ -732,8 +719,8 @@ inline JavaEvaluate::Result JavaEvaluate::solve(ObservedBoard::Result &board, Ba
             break;
     }
 
-    long double test = bestSafety == 1.0L ? 1.0L : bestLivingSafety - cfg.selectionThreshold1;
-    long double test2 = bestSafety == 1.0L ? 1.0L : bestLivingSafety - cfg.selectionThreshold2;
+    long double test = bestSafety == 1.0L ? 1.0L : bestLivingSafety - cfg.javaEvaluate.selectionThreshold1;
+    long double test2 = bestSafety == 1.0L ? 1.0L : bestLivingSafety - cfg.javaEvaluate.selectionThreshold2;
 
     // 第二遍：候选窗（原逻辑；断点前的低安全度盒不 observe）。
     std::vector<ObservedBoard::CellId> onEdge;
@@ -758,7 +745,7 @@ inline JavaEvaluate::Result JavaEvaluate::solve(ObservedBoard::Result &board, Ba
     }
 
     // 长期风险影响格（Java evaluateLocations 加入 tileOfInterestOn）。
-    for (ObservedBoard::CellId cell : risk.influencedTiles(bestLivingSafety - cfg.selectionThreshold1, board, basic, structure, probability, deadSet))
+    for (ObservedBoard::CellId cell : risk.influencedTiles(bestLivingSafety - cfg.javaEvaluate.selectionThreshold1, board, basic, structure, probability, deadSet))
         if (!evaluateContains(onEdge, cell))
             onEdge.push_back(cell);
 
@@ -813,7 +800,7 @@ inline JavaEvaluate::Result JavaEvaluate::solve(ObservedBoard::Result &board, Ba
     auto partition = [&](const std::vector<ObservedBoard::CellId> &tiles) {
         for (ObservedBoard::CellId cell : tiles) {
             const auto [x, y] = board.pos(cell);
-            if (meetsSpaceThreshold(x, y, board, basic, cfg.spaceThreshold))
+            if (meetsSpaceThreshold(x, y, board, basic, cfg.javaEvaluate.spaceThreshold))
                 notDeferred.push_back(cell);
             else
                 deferred.push_back(cell);

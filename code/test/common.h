@@ -38,7 +38,9 @@ struct RunSummary {
 
 template <typename Fn>
 inline bool generateGame(mss::GameControl::Game &game, mss::Random &rng, mss::ObservedBoard::Delta &updates, Fn &&perDecision) {
-    std::vector<mss::ObservedBoard::CellId> moves = game.suggest(mss::GameControl::Position::SuggestAlgo::LowRisk);
+    mss::Config config;
+    config.position.algo = mss::Config::Position::Algo::LowRisk;
+    std::vector<mss::ObservedBoard::CellId> moves = game.position.suggest(config).cells;
     perDecision(game);
     const mss::ObservedBoard::CellId firstCell = game.position.observedBoard.id(0, game.position.observedBoard.board.cols() - 1);
     mss::ObservedBoard::CellId safeCell = firstCell;
@@ -65,7 +67,7 @@ inline bool generateGame(mss::GameControl::Game &game, mss::Random &rng, mss::Ob
             if (game.won())
                 return true;
         }
-        moves = game.suggest(mss::GameControl::Position::SuggestAlgo::LowRisk);
+        moves = game.position.suggest(config).cells;
         perDecision(game);
     }
 }
@@ -76,7 +78,9 @@ inline RunSummary runGames(int rows, int cols, int mines, double seconds, Decisi
     mss::Workspace workspace;
     mss::ObservedBoard::Delta updates;
     mss::GameControl::Game game(rows, cols, mines, {rng.next(), rng.next()}, workspace);
-    const std::vector<mss::ObservedBoard::CellId> initialMoves = game.suggest(mss::GameControl::Position::SuggestAlgo::LowRisk);
+    mss::Config config;
+    config.position.algo = mss::Config::Position::Algo::LowRisk;
+    const std::vector<mss::ObservedBoard::CellId> initialMoves = game.position.suggest(config).cells;
     mss::assert_(initialMoves.size() == 1 && initialMoves[0] == game.position.observedBoard.id(0, cols - 1), "test::runGames: 初始平局没有选择右上角");
     const TimeBox timebox(seconds);
     RunSummary summary;

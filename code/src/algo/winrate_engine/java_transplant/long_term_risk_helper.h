@@ -9,6 +9,8 @@
 #include "algo/probability_engine/shape_solver/shape_solver.h"
 #include "algo/probability_engine/structure/structure.h"
 
+#include "core/config.h"
+
 namespace mss {
 
 // ─────────────────────────────────────────────────────────────
@@ -30,15 +32,6 @@ namespace mss {
 // ─────────────────────────────────────────────────────────────
 
 struct LongTermRiskReference {
-    // 与 Java 版完全一致的可调参数（SolverSettings / LongTermRiskHelper 默认值）。
-    struct Config {
-        // FINAL_THRESHOLD：影响度 > 方案数 × 此值才记账（tiles/enablers/possible）。
-        long double influenceThreshold = 0.025L;
-        // HOTSPOT_ENABLER_SAFETY：enabler 安全度低于此值才记热点。
-        long double hotspotEnablerSafety = 0.9L;
-        // 计数相等的相对容差（Java 的精确整数相等在 long double 下改相对比较）。
-        long double eqEps = 1e-9L;
-    };
 
     // 热点：点击后会把局面逼进 50/50 的格。
     struct RiskHotspot {
@@ -235,7 +228,6 @@ inline long double boxTally(ObservedBoard::CellId cell, const Probability::Resul
 // 数全盘解数。mineCount = 1（2-tile）/ 2（2x2）；maxMissing 是"missing+n ≤ maxMissing"
 // 的阈值（Java 直接传 maxMissingMines）。
 
-
 } // namespace LongTermRiskInternal
 
 inline bool LongTermRiskReference::RiskHotspot::isExempt(ObservedBoard::CellId candidate) const {
@@ -245,8 +237,6 @@ inline bool LongTermRiskReference::RiskHotspot::isExempt(ObservedBoard::CellId c
 inline bool LongTermRiskReference::Possible5050::isExempt(ObservedBoard::CellId candidate) const {
     return LongTermRiskInternal::contains(exemptions, candidate);
 }
-
-
 
 
 
@@ -372,7 +362,7 @@ inline LongTermRiskReference::Influence LongTermRiskReference::findInfluence(con
             return;
         if (hasRevealedSource(board, source))
             return;
-        const CellList missing = missingMines(board, basic, structure, probability, source, cfg.eqEps);
+        const CellList missing = missingMines(board, basic, structure, probability, source, cfg.longTermRisk.eqEps);
         const int extra = mineCount == 1 ? 1 : 2;
         if (missing.count + extra > maxMissing)
             return;
@@ -383,9 +373,9 @@ inline LongTermRiskReference::Influence LongTermRiskReference::findInfluence(con
         // Java 要求 subject 位于某盒（getBox != null）——离网格没有盒概念。
         if (storeHotspots && missing.size() == 1 && mineCount == 1 && structure.cellLoc[tiles[0]].box != -1) {
             const long double tally0 = boxTally(tiles[0], probability, board, basic, structure);
-            if (std::abs(2.0L * tally0 - probability.candidates()) <= cfg.eqEps * probability.candidates()) {
+            if (std::abs(2.0L * tally0 - probability.candidates()) <= cfg.longTermRisk.eqEps * probability.candidates()) {
                 const long double safety = 1.0L - probability.mineProbability(missing[0], board, basic, structure);
-                if (safety < cfg.hotspotEnablerSafety) {
+                if (safety < cfg.longTermRisk.hotspotEnablerSafety) {
                     RiskHotspot hotspot;
                     hotspot.cell = missing[0];
                     hotspot.safety = 0.5L + 0.5L * safety;
@@ -415,7 +405,7 @@ inline LongTermRiskReference::Influence LongTermRiskReference::findInfluence(con
         // checkForPseudo：盒雷迹被结构影响度完全覆盖且非死格。
         for (ObservedBoard::CellId tile : tiles) {
             const long double mineTally = boxTally(tile, probability, board, basic, structure);
-            if (std::abs(tally - mineTally) <= cfg.eqEps * (std::max)(tally, mineTally) && !contains(dead, tile))
+            if (std::abs(tally - mineTally) <= cfg.longTermRisk.eqEps * (std::max)(tally, mineTally) && !contains(dead, tile))
                 out.pseudos.push_back(tile);
         }
         if (!out.pseudos.empty()) {
@@ -424,7 +414,7 @@ inline LongTermRiskReference::Influence LongTermRiskReference::findInfluence(con
         }
 
         // addInfluence（FINAL_THRESHOLD 之上才记账）。
-        if (ratio > cfg.influenceThreshold) {
+        if (ratio > cfg.longTermRisk.influenceThreshold) {
             Possible5050 possible;
             possible.probability = ratio;
             possible.exemptions.insert(possible.exemptions.end(), missing.begin(), missing.end());

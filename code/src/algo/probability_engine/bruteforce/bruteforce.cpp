@@ -275,18 +275,18 @@ void BruteForce::writeConfig(CommonSession &session, Workspace &workspace, bool 
 
 BruteForce::Result BruteForce::solve(const ObservedBoard::Result &board, const Basic::Result &basic,
                                      const Structure::Result &structure, const Structure::Pool &shapes,
-                                     const Config &options, Workspace &workspace) {
+                                     const Config &config, Workspace &workspace) {
     buildCommonSession(workspace.commonSession, board, basic, structure, shapes, workspace);
-    return solveCommonSession(workspace.commonSession, options, workspace);
+    return solveCommonSession(workspace.commonSession, config, workspace);
 }
 
 BruteForce::Result BruteForce::solveComponent(const ObservedBoard::Result &board, const Basic::Result &basic,
                                               const std::vector<Structure::InstanceId> &components,
                                               const std::vector<ObservedBoard::CellId> &offFrontierCells,
-                                              const Structure::Pool &shapes, int mines, const Config &options,
+                                              const Structure::Pool &shapes, int mines, const Config &config,
                                               Workspace &workspace) {
     buildComponentCommonSession(workspace.commonSession, board, basic, components, offFrontierCells, shapes, mines, workspace);
-    return solveCommonSession(workspace.commonSession, options, workspace);
+    return solveCommonSession(workspace.commonSession, config, workspace);
 }
 
 } // 命名空间 mss

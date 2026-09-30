@@ -23,6 +23,7 @@ const cellState = document.getElementById("cell-state");
 const endgameCandidateLimit = document.getElementById("endgame-candidate-limit");
 const endgameCheckAllMoves = document.getElementById("endgame-check-all-moves");
 const endgameMultithread = document.getElementById("endgame-multithread");
+const endgameMaxThreads = document.getElementById("endgame-max-threads");
 const endgameResult = document.getElementById("endgame-result");
 const endgameSummary = document.getElementById("endgame-summary");
 const endgameMoves = document.getElementById("endgame-moves");
@@ -154,6 +155,17 @@ function setDifficultyValues(value) {
     customSettings.hidden = value !== "custom";
 }
 
+function formatCount(value) {
+    const scientific = typeof value === "string" && value.includes("e") ? value : Number(value).toExponential(6);
+    const [mantissa, exponentText] = scientific.split("e");
+    const exponent = Number(exponentText);
+    if (exponent >= 15)
+        return scientific;
+    const unit = Math.max(0, Math.floor(exponent / 3));
+    const digits = (Number(mantissa) * 10 ** (exponent - unit * 3)).toPrecision(7);
+    return (unit <= 1 ? Number(digits).toString() : digits) + ["", "K", "M", "B", "T"][unit];
+}
+
 function showDetail(data, cell) {
     detailEmpty.hidden = !analysisElapsedText;
     detailEmpty.textContent = analysisElapsedText;
@@ -163,7 +175,8 @@ function showDetail(data, cell) {
     const col = cell % state.cols + 1;
     detailPosition.textContent = `${row} 行，${col} 列`;
     detailRisk.textContent = data.probability;
-    detailCandidates.textContent = data.candidateCount || candidateCount || "—";
+    const count = data.candidateCount || candidateCount;
+    detailCandidates.textContent = count ? formatCount(count) : "—";
     observeResult.replaceChildren();
     if (!data.observe) {
         const item = document.createElement("div");
@@ -699,39 +712,17 @@ async function playUntilNoSafe() {
     }
 }
 
-function showEndgameResult(result) {
-    endgameSummary.textContent = result.engine === "JavaEval" ? `候选方案 ${result.candidateCount}；JavaEval 推荐` : `候选方案 ${result.candidateCount}；搜索节点 ${result.nodes}`;
+function showSuggestion(result, elapsedMs) {
+    const bruteForce = result.engine === "BruteForce";
+    endgameSummary.textContent = `分析耗时（前端）：${elapsedMs.toFixed(1)} ms；候选方案 ${formatCount(result.candidateCount)}；` + (result.engine === "Safe" ? "确定安全格" : bruteForce ? `搜索节点 ${formatCount(result.nodes)}` : "JavaEval 推荐");
     endgameMoves.replaceChildren();
-    endgameCandidateCells.clear();
-    endgameBestCells.clear();
-    if (result.engine === "JavaEval") {
-        const state = activeState();
-        endgameCandidateCells = new Set(result.candidates);
-        if (result.bestCell < 0) {
-            const item = document.createElement("li");
-            item.textContent = "没有可推荐的隐藏格。";
-            endgameMoves.append(item);
-        } else {
-            const cell = result.bestCell;
-            const row = Math.floor(cell / state.cols) + 1;
-            const col = cell % state.cols + 1;
-            endgameCandidateCells.add(cell);
-            endgameBestCells.add(cell);
-            const item = document.createElement("li");
-            item.textContent = `JavaEval 推荐：第 ${row} 行，第 ${col} 列`;
-            endgameMoves.append(item);
-        }
-        endgameResultAvailable = true;
-        endgameResult.hidden = false;
-        return;
-    }
-    const moves = result.moves.slice().sort((left, right) => right.wins - left.wins || left.cell - right.cell);
+    endgameCandidateCells = new Set(result.candidates);
+    endgameBestCells = new Set(result.recommended);
+    const moves = bruteForce ? result.moves.slice().sort((left, right) => right.wins - left.wins || left.cell - right.cell) : result.recommended.map((cell) => ({ cell }));
     if (moves.length === 0) {
         const item = document.createElement("li");
-        item.textContent = "没有可供分析的隐藏格。";
+        item.textContent = "没有可推荐的隐藏格。";
         endgameMoves.append(item);
-    } else {
-        endgameBestCells.add(moves[0].cell);
     }
     const state = activeState();
     for (let i = 0; i < moves.length; ++i) {
@@ -740,20 +731,24 @@ function showEndgameResult(result) {
         const item = document.createElement("li");
         const row = Math.floor(move.cell / state.cols) + 1;
         const col = move.cell % state.cols + 1;
-        const rate = (move.wins / result.configurationCount * 100).toFixed(3);
-        item.textContent = `第 ${row} 行，第 ${col} 列：最终获胜 ${move.wins} / ${result.configurationCount}（${rate}%）`;
+        item.textContent = `第 ${row} 行，第 ${col} 列：` + (result.engine === "Safe" ? "确定安全" : bruteForce ? `最终获胜 ${formatCount(move.wins)} / ${formatCount(result.configurationCount)}（${(move.wins / result.configurationCount * 100).toFixed(3)}%）` : "JavaEval 推荐");
         endgameMoves.append(item);
     }
     endgameResultAvailable = true;
     endgameResult.hidden = false;
 }
 
-async function analyzeEndgame() {
+async function requestSuggestion() {
     if (operationBusy || (mode === "play" && (playState.lost || playState.won)))
         return;
     const limit = Number(endgameCandidateLimit.value);
     if (!Number.isInteger(limit) || limit < 1 || limit > 2147483647) {
         setMessage("JavaEval 切换阈值必须是正整数。", "error");
+        return;
+    }
+    const maxThreads = Number(endgameMaxThreads.value);
+    if (!Number.isInteger(maxThreads) || maxThreads < 1 || maxThreads > 2147483647) {
+        setMessage("BruteForce 核心数必须是正整数。", "error");
         return;
     }
     operationBusy = true;
@@ -767,12 +762,13 @@ async function analyzeEndgame() {
         await probabilityUpdateQueue;
         const state = activeState();
         const cells = mode === "play" ? state.cells.replace(/\*/g, "?") : state.cells;
-        const result = await post("/api/endgame/analyze", { mode, rows: state.rows, cols: state.cols, mines: state.mines, cells, limit, algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, checkAllMoves: endgameCheckAllMoves.checked, multiThread: endgameMultithread.checked });
+        const startedAt = performance.now();
+        const result = await post("/api/suggest", { mode, rows: state.rows, cols: state.cols, mines: state.mines, cells, limit, maxThreads, algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, checkAllMoves: endgameCheckAllMoves.checked, multiThread: endgameMultithread.checked });
         if (probabilityDisplay.checked) {
             probabilities = result.probabilities;
             candidateCount = result.candidateCount;
         }
-        showEndgameResult(result);
+        showSuggestion(result, performance.now() - startedAt);
         setMessage("分析完成。", "success");
     } catch (error) {
         setMessage(error.message, "error");
@@ -913,7 +909,7 @@ document.getElementById("play-mode").addEventListener("click", () => {
 });
 document.getElementById("analysis-mode").addEventListener("click", openAnalysis);
 document.getElementById("play-until-no-safe").addEventListener("click", playUntilNoSafe);
-document.getElementById("endgame-analysis").addEventListener("click", analyzeEndgame);
+document.getElementById("endgame-analysis").addEventListener("click", requestSuggestion);
 document.getElementById("apply-edit").addEventListener("click", () => editAnalysisCell(selectedCell, cellState.value));
 
 document.addEventListener("click", (event) => {

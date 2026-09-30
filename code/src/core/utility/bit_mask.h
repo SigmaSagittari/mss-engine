@@ -68,11 +68,7 @@ template <std::size_t WordCount> struct bitMask {
             ++index;
         }
         assert_(false, "bitMask::firstSetBit: mask is empty");
-#if defined(_MSC_VER)
-        __assume(0);
-#else
-        __builtin_unreachable();
-#endif
+        std::exit(1);
     }
 
     // 查询指定下标是否置位。
@@ -172,11 +168,7 @@ template <> struct bitMask<1> {
         if (word != 0)
             return std::countr_zero(word);
         assert_(false, "bitMask::firstSetBit: mask is empty");
-#if defined(_MSC_VER)
-        __assume(0);
-#else
-        __builtin_unreachable();
-#endif
+        std::exit(1);
     }
 
     // 查询单 word 中指定下标是否置位。

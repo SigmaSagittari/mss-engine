@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "core/workspace.h"
+#include "game/game.h"
 
 namespace mss::UI {
 
@@ -20,6 +21,7 @@ struct Session {
         std::string value;
     };
 
+
     static std::vector<FormField> parseForm(const std::string &body);
     static std::string jsonString(const std::string &value);
     static std::string fixedProbability(long double value);
@@ -33,25 +35,15 @@ struct Session {
     std::string analysisState() const;
     std::string analysisResult();
     std::string detail(int cell);
-    bool calculateAnalysis();
-    bool setOrderAlgo(const std::vector<FormField> &fields);
-    bool setAnalysisBoard(const std::vector<FormField> &fields, bool allowForcedStates, std::string &response);
-    // 按完整布局数选择 JavaEval 或 BruteForce，并返回推荐首步。
-    std::string analyzeEndgame(int engineThreshold, bool includeProbabilities, bool checkAllMoves, bool multiThread);
+    bool setPosition(ObservedBoard::Result board, ShapeSolver::OrderAlgo orderAlgo, std::string &response);
+    bool parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolver::OrderAlgo &algo);
+    bool setAnalysisBoard(const std::vector<FormField> &fields, bool allowForcedStates, ShapeSolver::OrderAlgo orderAlgo, std::string &response);
+    std::string suggest(const Config &config);
 
     Workspace workspace_;
-    Structure::Pool analysisShapes_;
-    ShapeSolver::DistributionPool analysisDistributions_;
-    ObservedBoard::Result analysisBoard_;
-    Basic::Result analysisBasic_;
-    Structure::Result analysisStructure_;
-    Probability::Result analysisProbability_;
-    ShapeSolver::OrderAlgo orderAlgo_ = ShapeSolver::OrderAlgo::Auto;
-    bool analysisDirty_ = true;
-    bool analysisReady_ = false;
+    std::unique_ptr<GameControl::Position> analysisPosition_;
     bool stopped_ = false;
     std::string token_;
-    std::string analysisError_;
 };
 
 }

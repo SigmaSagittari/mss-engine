@@ -13,6 +13,7 @@
 #include "algo/probability_engine/observed_board/observed_board.h"
 #include "algo/probability_engine/shape_solver/shape_solver.h"
 #include "algo/probability_engine/structure/structure.h"
+#include "core/config.h"
 #include "core/utility/bit_mask.h"
 #include "core/utility/dynamic_bitset.h"
 #include "core/utility/flat_hashtable.h"
@@ -22,27 +23,6 @@
 namespace mss {
 
 struct BruteForce {
-    // 三种后端结果语义一致；候选超过掩码宽度或只有一种布局时，调度层使用 Common 后端。
-    enum class Solver {
-        // 普通递归实现，支持任意候选数。
-        Common,
-        // 定宽位掩码实现，最多处理 bitMask<8> 可容纳的候选格。
-        Bitwise,
-        // 仅并行展开根节点候选；线程上限由 maxThread 控制，包含调用线程。
-        BitwiseRootParallel,
-    };
-
-    struct Config {
-        // 仅为 true 时返回每个候选格的结果；false 时至多返回一条推荐步。
-        bool checkAllMoves = false;
-        // 单推荐步模式的最低胜局数，语义上必须至少为 1；全候选模式不做阈值剪枝。
-        // 取 0 会让"最低胜局数"成为空洞约束：收尾判定 best >= need 恒真，从未搜到候选的
-        // 哨兵值也会被当成真实胜局数参与解码。搜索返回的 0 专用于表示缓存未命中。
-        int minWins = 1;
-        // 后端选择不改变动作含义或胜局数。
-        Solver solver = Solver::Bitwise;
-    };
-
     struct Result {
         struct Move {
             // 按当前棋盘尺寸编码的 0-based CellId。
@@ -214,8 +194,6 @@ struct BruteForce {
                 std::vector<long long> nodes;
                 std::vector<Worker> workers;
                 std::vector<std::jthread> threads;
-                // 只允许根节点切换到并行调度；子问题仍在当前 worker 中串行递归。
-                bool enabled = false;
             } parallel;
 
             // 根据候选格数选择最窄掩码布局；variant 只保存当前宽度的可复用数据。

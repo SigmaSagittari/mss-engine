@@ -39,7 +39,7 @@ inline void graphSolverFrequency() {
     auto collectGraphSolverFrequency = [&](const mss::GameControl::Game &game) {
         ++decisions;
         const mss::Structure::Result &structure = game.position.structure();
-        const mss::Structure::Pool &shapes = game.shapePool();
+        const mss::Structure::Pool &shapes = game.position.shapePool();
         for (int i = 0; i < (int)structure.components.size(); ++i) {
             const mss::Structure::Instance &instance = shapes.getInstance(structure.components[i]);
             const mss::Structure::Shape &shape = shapes.getShape(instance.shape);
