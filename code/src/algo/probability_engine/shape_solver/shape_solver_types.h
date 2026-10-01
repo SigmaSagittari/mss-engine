@@ -245,6 +245,34 @@ struct DistributionPool {
     FlatHashTable<U128, DistributionId, U128Hash> index_;
 };
 
+// 仅随机生成使用；按 ShapeId 缓存 DFS 枚举的 Box 雷数赋值，与概率分布池分开。
+struct AssignmentPool {
+    struct Assignment {
+        std::size_t offset;
+        long double cumulative;
+    };
+
+    struct Result {
+        int boxCount = -1;
+        std::vector<char> boxMines;
+        // assignments[k] 中每项是总雷数为 k 的赋值，cumulative 是该档内的累积布局权重。
+        std::vector<std::vector<Assignment>> assignments;
+        std::vector<long double> ways;
+    };
+
+    const Result *find(Structure::ShapeId shape) const { return shape < (int)results_.size() && results_[shape].boxCount >= 0 ? &results_[shape] : nullptr; }
+    const Result &insert(Structure::ShapeId shape, Result result) {
+        if (shape >= (int)results_.size())
+            results_.resize(shape + 1);
+        results_[shape] = std::move(result);
+        return results_[shape];
+    }
+    void clear() { results_.clear(); }
+
+  private:
+    std::vector<Result> results_;
+};
+
 class ObversedResult {
   public:
     // 九段均为空表示没有满足约束且点击格安全的赋值。

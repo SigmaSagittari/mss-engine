@@ -1,6 +1,9 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace mss {
 
@@ -21,6 +24,14 @@ struct Random {
         lo_ = splitmix64(lo_ + 0x9e3779b97f4a7c15ULL);
         hi_ = splitmix64(hi_ + 0xd1b54a32d192ed03ULL);
         return lo_ ^ hi_;
+    }
+
+    // 返回 [0, 1) 内的随机浮点数，保留 long double 可精确表示的有效位。
+    long double nextUnit() {
+        const std::uint64_t lo = next();
+        const std::uint64_t hi = next();
+        const int digits = (std::min)(std::numeric_limits<long double>::digits, 64);
+        return std::ldexp((long double)((lo ^ hi) >> (64 - digits)), -digits);
     }
 
   private:

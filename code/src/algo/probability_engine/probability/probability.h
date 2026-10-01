@@ -59,6 +59,11 @@ struct Probability {
         std::vector<ShapeSolver::DistributionId> distributionIds;
         std::vector<Poly> frontiers;
 
+        struct Sample {
+            std::vector<std::vector<long double>> suffix;
+            std::vector<ObservedBoard::CellId> freeCells;
+        } sample;
+
         // 乘积树先执行逐组件回调、后返回全盘分母；暂存各档分子以便之后统一归一化。
         struct LogicComponentValue {
             int component = 0;
@@ -96,6 +101,10 @@ struct Probability {
 
     // 按 Structure 组件顺序重建 Result；结果拥有自己的连续 Box 概率数组，不依赖 Workspace 生命周期。
     static void analyze(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes, ShapeSolver::DistributionPool &distributions, Result &result, Workspace &workspace, const ShapeSolver::OrderAlgo &algo = ShapeSolver::OrderAlgo::Auto);
+
+    // 输入必须来自同一当前盘面且至少存在一种合法全盘布局；assignments 与 shapes 同期清空。
+    // 按具体全盘雷位近似均匀抽样；随机组件始终由 DFS 枚举；返回网格中 1 为雷、0 为安全格。
+    static RawGrid<char> sampleMineBoard(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes, ShapeSolver::AssignmentPool &assignments, Workspace &workspace, U128 seed);
 
     // components 必须覆盖本次统计的所有逻辑块，且各块的 T 格互不重叠；frontier 系数数组必须至少保留到本次调用结束。
     // components[i].frontier 表示第 i 个逻辑块的前沿多项式；系数下标 t 对应 frontier.start+t 个前沿雷，无前沿块使用常数多项式 1。offFrontierCount 是该块非前沿 T 格数。

@@ -1,7 +1,12 @@
 #include "algo/probability_engine/probability/probability.h"
 
+#include <algorithm>
+#include <array>
 #include <span>
 #include <utility>
+
+#include "core/assert.h"
+#include "core/utility/rng.h"
 
 namespace mss {
 
@@ -135,6 +140,109 @@ void Probability::analyze(const ObservedBoard::Result &board, const Basic::Resul
     result.tCellProbability_ = limitProbability(countWeightedWays(all, totalMines - 1, tSum - 1, ws.combination) / result.candidates_);
     for (int box = 0; box < (int)result.boxProbabilities_.size(); ++box)
         result.boxProbabilities_[box] /= result.candidates_;
+}
+
+RawGrid<char> Probability::sampleMineBoard(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes, ShapeSolver::AssignmentPool &assignments, Workspace &workspace, U128 seed) {
+    const int componentCount = structure.components.size();
+    for (Structure::InstanceId id : structure.components) {
+        const Structure::Instance &instance = shapes.getInstance(id);
+        ShapeSolver::assignments(instance.shape, shapes.get(instance.shape), shapes, assignments, workspace.shapeSolver);
+    }
+    std::vector<std::vector<long double>> &suffix = workspace.sample.suffix;
+    suffix.resize(componentCount + 1);
+    suffix[componentCount].assign(1, 1.0L);
+    for (int component = componentCount - 1; component >= 0; --component) {
+        const Structure::Instance &instance = shapes.getInstance(structure.components[component]);
+        const ShapeSolver::AssignmentPool::Result &distribution = *assignments.find(instance.shape);
+        Poly::multiply(Poly(0, distribution.ways), Poly(0, suffix[component + 1]), suffix[component]);
+    }
+    const int remainingMines = board.totalMines - basic.mineSum;
+    const int freeCount = basic.unknownSum;
+    const std::vector<long double> &frontierWays = suffix[0];
+    long double totalWays = 0.0L;
+    for (int mines = 0; mines < (int)frontierWays.size(); ++mines) {
+        const int freeMines = remainingMines - mines;
+        if (freeMines < 0 || freeMines > freeCount)
+            continue;
+        const long double freeWays = freeCount <= 9 ? Combination::chooseSmall(freeCount, freeMines) : Combination::chooseLarge(freeCount, freeMines, workspace.combination);
+        totalWays += frontierWays[mines] * freeWays;
+    }
+    if (totalWays == 0.0L)
+        assert_(false, "Probability::sampleMineBoard: 没有合法全盘雷分布");
+    Random random(seed.lo, seed.hi);
+    const long double frontierDraw = random.nextUnit();
+    long double accumulated = 0.0L;
+    int frontierMines = -1;
+    for (int mines = 0; mines < (int)frontierWays.size(); ++mines) {
+        const int freeMines = remainingMines - mines;
+        if (freeMines < 0 || freeMines > freeCount)
+            continue;
+        const long double freeWays = freeCount <= 9 ? Combination::chooseSmall(freeCount, freeMines) : Combination::chooseLarge(freeCount, freeMines, workspace.combination);
+        accumulated += frontierWays[mines] * freeWays;
+        if (frontierDraw < accumulated / totalWays) {
+            frontierMines = mines;
+            break;
+        }
+    }
+    if (frontierMines < 0)
+        assert_(false, "Probability::sampleMineBoard: 全盘抽样未命中雷数档");
+    RawGrid<char> result(board.board.rows(), board.board.cols(), 0);
+    std::vector<ObservedBoard::CellId> &freeCells = workspace.sample.freeCells;
+    freeCells.clear();
+    freeCells.reserve(freeCount);
+    for (int row = 0; row < board.board.rows(); ++row)
+        for (int col = 0; col < board.board.cols(); ++col) {
+            if (basic.marks[row][col] == Basic::Mark::F)
+                result[row][col] = 1;
+            else if (basic.marks[row][col] == Basic::Mark::T)
+                freeCells.push_back(board.id(row, col));
+        }
+    int remainingFrontier = frontierMines;
+    for (int component = 0; component < componentCount; ++component) {
+        const Structure::Instance &instance = shapes.getInstance(structure.components[component]);
+        const ShapeSolver::AssignmentPool::Result &distribution = *assignments.find(instance.shape);
+        const std::vector<long double> &outside = suffix[component + 1];
+        const long double componentTotal = suffix[component][remainingFrontier];
+        const long double draw = random.nextUnit();
+        long double sum = 0.0L;
+        int componentMines = -1;
+        for (int mines = 0; mines < (int)distribution.ways.size(); ++mines) {
+            const int outsideMines = remainingFrontier - mines;
+            if (outsideMines < 0 || outsideMines >= (int)outside.size())
+                continue;
+            sum += distribution.ways[mines] * outside[outsideMines];
+            if (draw < sum / componentTotal) {
+                componentMines = mines;
+                break;
+            }
+        }
+        if (componentMines < 0)
+            assert_(false, "Probability::sampleMineBoard: 组件抽样未命中雷数档");
+        remainingFrontier -= componentMines;
+        const std::span<const char> boxMines = ShapeSolver::sampleAssignment(distribution, componentMines, random.nextUnit());
+        const std::span<const int> offsets = instance.boxes.boxOf.span(shapes.boxOf);
+        const std::span<const ObservedBoard::CellId> cells = instance.boxes.cells.span(shapes.cells);
+        std::array<ObservedBoard::CellId, 8> choices;
+        for (int box = 0; box < distribution.boxCount; ++box) {
+            const int size = offsets[box + 1] - offsets[box];
+            for (int i = 0; i < size; ++i)
+                choices[i] = cells[offsets[box] + i];
+            for (int i = 0; i < boxMines[box]; ++i) {
+                const int chosen = i + (int)(random.nextUnit() * (size - i));
+                std::swap(choices[i], choices[chosen]);
+                const auto [row, col] = board.pos(choices[i]);
+                result[row][col] = 1;
+            }
+        }
+    }
+    const int freeMines = remainingMines - frontierMines;
+    for (int i = 0; i < freeMines; ++i) {
+        const int chosen = i + (int)(random.nextUnit() * (freeCount - i));
+        std::swap(freeCells[i], freeCells[chosen]);
+        const auto [row, col] = board.pos(freeCells[i]);
+        result[row][col] = 1;
+    }
+    return result;
 }
 
 long double Probability::analyzeLogicComponents(const std::vector<LogicComponentInput> &components, int totalMines, Workspace &workspace, const std::function<void(int, int, long double, long double)> &callback) {

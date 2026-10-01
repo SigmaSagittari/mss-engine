@@ -18,6 +18,11 @@ inline constexpr int graphThreshold = 35;
 // 返回的 ID 只在 distPool 未清空时有效。
 DistributionId analyze(const Structure::Shape &shape, const Structure::Pool &shapes, DistributionPool &distPool, Workspace &workspace, const OrderAlgo &algo = OrderAlgo::Auto);
 
+// 随机生成专用缓存：始终由 DFS 枚举所有合法 Box 雷数赋值，按 ShapeId 与普通分布分开保存。
+const AssignmentPool::Result &assignments(Structure::ShapeId shapeId, const Structure::Shape &shape, const Structure::Pool &shapes, AssignmentPool &pool, Workspace &workspace);
+// componentMines 必须是 ways 中非零的雷数档；返回的视图在 pool 更新或清空后失效。
+std::span<const char> sampleAssignment(const AssignmentPool::Result &result, int componentMines, long double unit);
+
 // adjacentBoxCells 长度必须等于 Box 数，第 b 项是第 b 个 Box 中与点击格相邻的格数。
 // xBox 是点击格所属 Box，或在组件外时为 -1；非负时必须小于 Box 数。
 // 按组件大小选择 DFS 或 Graph，将组件雷数与邻居雷数的联合权重写入 result。
