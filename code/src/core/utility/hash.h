@@ -11,8 +11,12 @@ namespace mss {
 // 同一批数据的碰撞概率约 2^-127，对 1e9 量级的数据也足够安全；项目将其
 // 作为内容身份使用，不为哈希命中再做结构相等性核验。
 struct U128 {
-    std::uint64_t lo = 0;
-    std::uint64_t hi = 0;
+    std::uint64_t lo;
+    std::uint64_t hi;
+
+    // 零值是分量累加的单位元；实际哈希值或种子显式提供两个分量。
+    constexpr U128() : lo(0), hi(0) {}
+    constexpr U128(std::uint64_t lo, std::uint64_t hi) : lo(lo), hi(hi) {}
 
     // 比较两个 128 位身份值的全部位。
     bool operator==(const U128 &o) const {
@@ -49,7 +53,7 @@ struct U128Hash {
 class U128Hasher {
   public:
     // 创建使用默认双通道种子的哈希器。
-    U128Hasher() = default;
+    U128Hasher() : lo_(kLoSeed), hi_(kHiSeed) {}
 
     // 创建使用指定种子初始化双通道的哈希器。
     explicit U128Hasher(std::uint64_t seed) : lo_(seed + kLoSeed), hi_(seed + kHiSeed) {
@@ -76,8 +80,8 @@ class U128Hasher {
     static constexpr std::uint64_t kHiSeed = 0xd1b54a32d192ed03ULL;
     static constexpr std::uint64_t kMixOffset = 0x6d2b79f5a39c8b7dULL;
 
-    std::uint64_t lo_ = kLoSeed;
-    std::uint64_t hi_ = kHiSeed;
+    std::uint64_t lo_;
+    std::uint64_t hi_;
 };
 
 } // 命名空间 mss

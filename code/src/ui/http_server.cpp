@@ -1,13 +1,16 @@
 #include "ui/internal/http_server.h"
 
 #include <charconv>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <thread>
 #include <winsock2.h>
 #include <windows.h>
 #include <shellapi.h>
+#include <objbase.h>
 
 namespace mss::UI {
 
@@ -140,7 +143,7 @@ std::filesystem::path assetDirectory() {
     return std::filesystem::path(executable).parent_path() / L"ui";
 }
 
-HttpServer::HttpServer(Session &session) : session_(session) {}
+HttpServer::HttpServer(Session &session, const Config &config) : session_(session), config_(config) {}
 
 void HttpServer::run() {
     WinsockRuntime runtime;
@@ -172,10 +175,30 @@ void HttpServer::run() {
     const unsigned short port = ntohs(address.sin_port);
     const std::string host = "127.0.0.1:" + std::to_string(port);
     const std::string origin = "http://" + host;
-    // 通过 URL 文件关联启动系统默认浏览器。
+    // 此线程随后阻塞在 accept，须同步完成默认浏览器的激活。
     const std::wstring url = L"http://127.0.0.1:" + std::to_wstring(port) + L"/";
-    ShellExecuteW(GetConsoleWindow(), L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    const HRESULT browserCom = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    if (FAILED(browserCom)) {
+        closesocket(listener);
+        MessageBoxW(nullptr, L"无法初始化默认浏览器启动环境。", L"mss1.5", MB_OK | MB_ICONERROR);
+        return;
+    }
+    SHELLEXECUTEINFOW browser{};
+    browser.cbSize = sizeof(browser);
+    browser.fMask = SEE_MASK_NOASYNC;
+    browser.hwnd = GetConsoleWindow();
+    browser.lpVerb = L"open";
+    browser.lpFile = url.c_str();
+    browser.nShow = SW_SHOWNORMAL;
+    const BOOL browserStarted = ShellExecuteExW(&browser);
+    CoUninitialize();
+    if (!browserStarted) {
+        closesocket(listener);
+        MessageBoxW(nullptr, L"无法启动系统默认浏览器。", L"mss1.5", MB_OK | MB_ICONERROR);
+        return;
+    }
     const std::filesystem::path assets = assetDirectory();
+    std::jthread mctsStream;
     while (!session_.stopped()) {
         const SOCKET client = accept(listener, nullptr, nullptr);
         if (client == INVALID_SOCKET)
@@ -190,7 +213,7 @@ void HttpServer::run() {
         }
         if (request.host != host) {
             sendResponse(client, 403, "text/plain; charset=utf-8", "Forbidden");
-        } else if (request.path == "/" || request.path == "/app.js" || request.path == "/style.css") {
+        } else if (request.path == "/" || request.path == "/state.js" || request.path == "/game.js" || request.path == "/view.js" || request.path == "/analysis.js" || request.path == "/monte_carlo.js" || request.path == "/main.js" || request.path == "/style.css") {
             if (request.method != "GET") {
                 sendResponse(client, 405, "text/plain; charset=utf-8", "Method Not Allowed");
             } else {
@@ -198,11 +221,24 @@ void HttpServer::run() {
                 std::string content = readAsset(assets / assetName);
                 if (request.path == "/") {
                     const std::string marker = "__MSS_TOKEN__";
-                    const std::size_t position = content.find(marker);
-                    if (position != std::string::npos)
-                        content.replace(position, marker.size(), session_.token());
+                    content.replace(content.find(marker), marker.size(), session_.token());
+                    const Config &config = config_;
+                    const std::string thresholdMarker = "__MSS_BRUTE_FORCE_THRESHOLD__";
+                    content.replace(content.find(thresholdMarker), thresholdMarker.size(), std::to_string(config.bruteForce.candidateThreshold));
+                    const std::string threadsMarker = "__MSS_THREAD_LIMIT__";
+                    content.replace(content.find(threadsMarker), threadsMarker.size(), std::to_string(config.global.threadLimit));
+                    const std::string checkAllMarker = "__MSS_BRUTE_FORCE_CHECK_ALL__";
+                    content.replace(content.find(checkAllMarker), checkAllMarker.size(), config.bruteForce.checkAllMoves ? "checked" : "");
+                    const std::string multiThreadMarker = "__MSS_BRUTE_FORCE_MULTITHREAD__";
+                    content.replace(content.find(multiThreadMarker), multiThreadMarker.size(), config.bruteForce.solver == BruteForce::Config::Solver::BitwiseRootParallel ? "checked" : "");
+                    const std::string versionMarker = "__MSS_VERSION__";
+                    std::size_t version = content.find(versionMarker);
+                    while (version != std::string::npos) {
+                        content.replace(version, versionMarker.size(), mss::version);
+                        version = content.find(versionMarker, version + std::string(mss::version).size());
+                    }
                 }
-                const std::string contentType = request.path == "/" ? "text/html; charset=utf-8" : request.path == "/app.js" ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8";
+                const std::string contentType = request.path == "/" ? "text/html; charset=utf-8" : request.path == "/style.css" ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8";
                 sendResponse(client, content.empty() ? 404 : 200, contentType, content);
             }
         } else if (request.path.rfind("/api/", 0) == 0) {
@@ -210,6 +246,36 @@ void HttpServer::run() {
                 sendResponse(client, 405, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"只接受 POST 请求\"}");
             } else if (request.origin != origin || request.token != session_.token()) {
                 sendResponse(client, 403, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"请求来源无效\"}");
+            } else if (request.path == "/api/mcts/stop") {
+                mctsStream.request_stop();
+                session_.stopMcts();
+                sendResponse(client, 200, "application/json; charset=utf-8", "{\"ok\":true}");
+            } else if (request.path == "/api/mcts/start") {
+                mctsStream.request_stop();
+                session_.stopMcts();
+                if (mctsStream.joinable())
+                    mctsStream.join();
+                std::string response;
+                if (!session_.startMcts(request.body, response)) {
+                    sendResponse(client, 200, "application/json; charset=utf-8", response);
+                } else if (sendAll(client, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n")) {
+                    DWORD sendTimeout = 1000;
+                    setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, (const char *)&sendTimeout, sizeof(sendTimeout));
+                    mctsStream = std::jthread([this, client](std::stop_token stop) {
+                        std::chrono::steady_clock::time_point next = std::chrono::steady_clock::now();
+                        while (!stop.stop_requested()) {
+                            next += std::chrono::milliseconds(100);
+                            std::this_thread::sleep_until(next);
+                            if (stop.stop_requested() || !sendAll(client, "data: " + session_.mctsUpdate() + "\n\n"))
+                                break;
+                        }
+                        session_.stopMcts();
+                        closesocket(client);
+                    });
+                    continue;
+                } else {
+                    session_.stopMcts();
+                }
             } else {
                 sendResponse(client, 200, "application/json; charset=utf-8", session_.handle(request.path, request.body));
             }
@@ -218,6 +284,10 @@ void HttpServer::run() {
         }
         closesocket(client);
     }
+    mctsStream.request_stop();
+    session_.stopMcts();
+    if (mctsStream.joinable())
+        mctsStream.join();
     closesocket(listener);
 }
 

@@ -1,6 +1,7 @@
 #include "ui/internal/session.h"
 
 #include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <iomanip>
 #include <random>
@@ -9,12 +10,7 @@
 
 namespace mss::UI {
 
-Session::Session() {
-    const U128 seed = makeSeed();
-    std::ostringstream token;
-    token << std::hex << std::setfill('0') << std::setw(16) << seed.lo << std::setw(16) << seed.hi;
-    token_ = token.str();
-}
+Session::Session(const Config &config) : nextAnalysis_(1), stopped_(false), token_(makeToken()), config_(config) {}
 
 const std::string &Session::token() const {
     return token_;
@@ -112,23 +108,6 @@ std::string Session::value(const std::vector<FormField> &fields, const std::stri
     return "";
 }
 
-bool Session::parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolver::OrderAlgo &algo) {
-    const std::string algoValue = value(fields, "algo");
-    if (algoValue.empty())
-        return true;
-    if (algoValue == "auto")
-        algo = ShapeSolver::OrderAlgo::Auto;
-    else if (algoValue == "autoSA")
-        algo = ShapeSolver::OrderAlgo::AutoSA;
-    else
-        return false;
-    return true;
-}
-
-std::string Session::error(const std::string &message) const {
-    return "{\"ok\":false,\"error\":" + jsonString(message) + "}";
-}
-
 std::string Session::cellString(const ObservedBoard::Result &board) {
     std::string cells;
     cells.reserve(board.board.rows() * board.board.cols());
@@ -147,60 +126,72 @@ std::string Session::cellString(const ObservedBoard::Result &board) {
     return cells;
 }
 
-std::string Session::probabilitiesJson(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Probability::Result &probability) {
-    std::ostringstream result;
-    result << std::setprecision(18) << '[';
-    for (int row = 0; row < board.board.rows(); ++row)
-        for (int col = 0; col < board.board.cols(); ++col) {
-            if (row != 0 || col != 0)
-                result << ',';
-            result << probability.mineProbability(board.id(row, col), board, basic, structure);
-        }
-    result << ']';
-    return result.str();
-}
-
-U128 Session::makeSeed() {
+std::string Session::makeToken() {
     std::random_device random;
     const std::uint64_t low = ((std::uint64_t)random() << 32) | (std::uint64_t)random();
     const std::uint64_t high = ((std::uint64_t)random() << 32) | (std::uint64_t)random();
-    return {low, high};
+    std::ostringstream token;
+    token << std::hex << std::setfill('0') << std::setw(16) << low << std::setw(16) << high;
+    return token.str();
 }
 
-std::string Session::analysisState() const {
-    std::ostringstream result;
-    result << "{\"ok\":true,\"mode\":\"analysis\",\"rows\":" << analysisPosition_->observedBoard.board.rows() << ",\"cols\":" << analysisPosition_->observedBoard.board.cols() << ",\"mines\":" << analysisPosition_->observedBoard.totalMines
-           << ",\"cells\":" << jsonString(cellString(analysisPosition_->observedBoard)) << '}';
-    return result.str();
+std::string Session::error(const std::string &message) const {
+    return "{\"ok\":false,\"error\":" + jsonString(message) + "}";
 }
 
-bool Session::setAnalysisBoard(const std::vector<FormField> &fields, bool allowForcedStates, ShapeSolver::OrderAlgo orderAlgo, std::string &response) {
-    int rows = 0;
-    int cols = 0;
-    int mines = 0;
+bool Session::parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolver::OrderAlgo &algo) {
+    const std::string name = value(fields, "algo");
+    if (name == "auto")
+        algo = ShapeSolver::OrderAlgo::Auto;
+    else if (name == "autoSA")
+        algo = ShapeSolver::OrderAlgo::AutoSA;
+    else
+        return false;
+    return true;
+}
+
+bool Session::parseConfig(const std::vector<FormField> &fields, int &candidateThreshold, int &threadLimit, winrate::SuggestAlgo &strategy, std::string &response) {
+    if (!parseInteger(value(fields, "limit"), candidateThreshold) || candidateThreshold < 1) {
+        response = error("JavaBrute 切换阈值无效");
+        return false;
+    }
+    if (!parseInteger(value(fields, "maxThreads"), threadLimit) || threadLimit < 1) {
+        response = error("BruteForce 核心数必须是正整数");
+        return false;
+    }
+    const std::string name = value(fields, "strategy");
+    if (name == "lowrisk")
+        strategy = winrate::SuggestAlgo::LowRisk;
+    else if (name == "java")
+        strategy = winrate::SuggestAlgo::JavaEval;
+    else if (name == "javaBrute")
+        strategy = winrate::SuggestAlgo::JavaBrute;
+    else {
+        response = error("建议策略无效");
+        return false;
+    }
+    return true;
+}
+
+bool Session::parseBoard(const std::vector<FormField> &fields, int &rows, int &cols, int &mines, std::string &cells, std::string &response) {
     if (!parseInteger(value(fields, "rows"), rows) || !parseInteger(value(fields, "cols"), cols) || !parseInteger(value(fields, "mines"), mines)) {
         response = error("盘面参数无效");
         return false;
     }
-    if (rows < 1 || cols < 1 || rows > 50 || cols > 50 || rows * cols > 2500 || mines < 0 || mines >= rows * cols) {
+    if (rows < 1 || cols < 1 || rows > 50 || cols > 50 || mines < 0 || mines >= rows * cols) {
         response = error("自定义盘面范围无效");
         return false;
     }
-    const std::string cells = value(fields, "cells");
-    if ((int)cells.size() != rows * cols) {
-        response = error("盘面数据长度无效");
+    cells = value(fields, "cells");
+    if ((int)cells.size() != rows * cols || cells.find_first_not_of("012345678?MSG") != std::string::npos) {
+        response = error("盘面数据无效");
         return false;
     }
-    for (int cell = 0; cell < rows * cols; ++cell) {
-        if (cells[cell] == '?' || (cells[cell] >= '0' && cells[cell] <= '8'))
-            continue;
-        if (allowForcedStates && (cells[cell] == 'M' || cells[cell] == 'S'))
-            continue;
-        response = error("盘面状态无效");
-        return false;
-    }
-    // 游玩快照只传数字和隐藏格；分析导入额外允许 M/S 约束，旗标和真实雷位始终留在浏览器。
-    ObservedBoard::Result board = ObservedBoard::analyze(rows, cols, mines);
+    return true;
+}
+
+ObservedBoard::Result Session::makeBoard(int rows, int cols, int mines, const std::string &cells) {
+    ObservedBoard::Result board(rows, cols, mines);
     for (int cell = 0; cell < rows * cols; ++cell) {
         if (cells[cell] >= '0' && cells[cell] <= '8')
             board.board[cell / cols][cell % cols] = (ObservedBoard::CellState)(cells[cell] - '0');
@@ -209,159 +200,311 @@ bool Session::setAnalysisBoard(const std::vector<FormField> &fields, bool allowF
         else if (cells[cell] == 'S')
             board.board[cell / cols][cell % cols] = ObservedBoard::CellState::ForcedSafe;
     }
-    return setPosition(std::move(board), orderAlgo, response);
+    return board;
 }
 
-bool Session::setPosition(ObservedBoard::Result board, ShapeSolver::OrderAlgo orderAlgo, std::string &response) {
-    Basic::Result basic = Basic::analyze(board, workspace_.basic);
-    if (!Basic::checkValid(board, basic)) {
-        response = error("数字约束互相矛盾");
+bool Session::createAnalysis(const std::vector<FormField> &fields, std::unique_ptr<Analysis> &analysis, std::string &response) {
+    ShapeSolver::OrderAlgo algo;
+    if (!parseOrderAlgo(fields, algo)) {
+        response = error("ShapeSolver 算法无效");
         return false;
     }
-    analysisPosition_.reset();
-    analysisPosition_ = std::make_unique<GameControl::Position>(std::move(board), std::move(basic), workspace_, orderAlgo);
-    response = analysisPosition_->error.failed ? error(analysisPosition_->error.reason) : analysisState();
-    return !analysisPosition_->error.failed;
+    int rows, cols, mines;
+    std::string cells;
+    if (!parseBoard(fields, rows, cols, mines, cells, response))
+        return false;
+    analysis = std::make_unique<Analysis>(nextAnalysis_++, algo, makeBoard(rows, cols, mines, cells));
+    // 人工快照的局部检查和全盘存在性检查由 Position 构造完成，只在输入边界读取一次。
+    if (analysis->position.error().failed) {
+        response = error(analysis->position.error().reason);
+        return false;
+    }
+    return true;
 }
 
-std::string Session::analysisResult() {
-    if (!analysisPosition_)
-        return error("尚未导入盘面");
-    if (analysisPosition_->error.failed)
-        return error(analysisPosition_->error.reason);
-    std::ostringstream candidateCount;
-    candidateCount << std::scientific << std::setprecision(6) << analysisPosition_->probability().candidates();
-    return "{\"ok\":true,\"rows\":" + std::to_string(analysisPosition_->observedBoard.board.rows()) + ",\"cols\":" + std::to_string(analysisPosition_->observedBoard.board.cols()) + ",\"cells\":" + jsonString(cellString(analysisPosition_->observedBoard)) + ",\"candidateCount\":" + jsonString(candidateCount.str()) + ",\"probabilities\":" + probabilitiesJson(analysisPosition_->observedBoard, analysisPosition_->basic(), analysisPosition_->structure(), analysisPosition_->probability()) + "}";
-}
-
-std::string Session::suggest(const Config &config) {
-    const GameControl::Position::SuggestResult suggestion = analysisPosition_->suggest(config);
-    if (analysisPosition_->error.failed)
-        return error(analysisPosition_->error.reason);
-    const Probability::Result &probability = analysisPosition_->probability();
-    std::ostringstream candidateText;
-    candidateText << std::scientific << std::setprecision(6) << probability.candidates();
-    constexpr const char *engines[]{"Safe", "LowRisk", "BruteForce", "JavaEval"};
-    std::ostringstream result;
-    result << "{\"ok\":true,\"engine\":" << jsonString(engines[(int)suggestion.engine]) << ",\"candidateCount\":" << jsonString(candidateText.str()) << ",\"configurationCount\":" << (suggestion.engine == GameControl::Position::SuggestResult::Engine::BruteForce ? (int)probability.candidates() : 0) << ",\"nodes\":" << suggestion.bruteForce.nodes << ",\"recommended\":[";
-    for (int i = 0; i < (int)suggestion.cells.size(); ++i) {
+void Session::writeCells(std::ostream &result, const std::vector<ObservedBoard::CellId> &cells) {
+    result << '[';
+    for (int i = 0; i < (int)cells.size(); ++i) {
         if (i != 0)
             result << ',';
-        result << suggestion.cells[i];
-    }
-    result << "],\"candidates\":[";
-    for (int i = 0; i < (int)suggestion.candidates.size(); ++i) {
-        if (i != 0)
-            result << ',';
-        result << suggestion.candidates[i];
-    }
-    result << "],\"moves\":[";
-    for (int i = 0; i < (int)suggestion.bruteForce.moves.size(); ++i) {
-        if (i != 0)
-            result << ',';
-        result << "{\"cell\":" << suggestion.bruteForce.moves[i].cell << ",\"wins\":" << suggestion.bruteForce.moves[i].wins << '}';
+        result << cells[i];
     }
     result << ']';
-    if (config.ui.includeProbabilities)
-        result << ",\"probabilities\":" << probabilitiesJson(analysisPosition_->observedBoard, analysisPosition_->basic(), analysisPosition_->structure(), probability);
+}
+
+void Session::writeProbabilities(std::ostream &result, const GameControl::Position &position, ShapeSolver::OrderAlgo algo) {
+    const ObservedBoard::Result &board = position.observedBoard();
+    const Probability::Result &probability = position.probability(algo);
+    const Basic::Result &basic = position.basic();
+    const Structure::Result &structure = position.structure();
+    result << std::setprecision(18) << ",\"probabilities\":[";
+    for (int row = 0; row < board.board.rows(); ++row)
+        for (int col = 0; col < board.board.cols(); ++col) {
+            if (row != 0 || col != 0)
+                result << ',';
+            result << probability.mineProbability(board.id(row, col), board, basic, structure);
+        }
+    result << ']';
+}
+
+void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config, winrate::SuggestAlgo strategy) {
+    GameControl::Position &position = analysis.position;
+    const GameControl::Position::SuggestResult safe = position.suggest(analysis.algo, winrate::SuggestAlgo::LowRisk, config);
+    if (safe.safeResult || strategy == winrate::SuggestAlgo::LowRisk) {
+        result << ",\"engine\":" << jsonString(safe.safeResult ? "Safe" : "LowRisk") << ",\"recommended\":";
+        writeCells(result, safe.suggest);
+        result << ",\"candidates\":";
+        writeCells(result, safe.suggest);
+        return;
+    }
+    const winrate::Input input = position.input(analysis.algo);
+    if (strategy == winrate::SuggestAlgo::JavaBrute && input.probability.candidates() < config.bruteForce.candidateThreshold) {
+        const BruteForce::Result evaluated = BruteForce::solve(input.board, input.basic, input.structure, input.shapes, config.bruteForce, analysis.workspace.bruteForce);
+        std::vector<ObservedBoard::CellId> candidates;
+        std::vector<ObservedBoard::CellId> recommended;
+        const BruteForce::Result::Move *best = nullptr;
+        for (const BruteForce::Result::Move &move : evaluated.moves) {
+            candidates.push_back(move.cell);
+            if (!best || move.wins > best->wins)
+                best = &move;
+        }
+        if (best)
+            recommended.push_back(best->cell);
+        result << ",\"engine\":\"BruteForce\",\"configurationCount\":" << (int)input.probability.candidates() << ",\"nodes\":" << evaluated.nodes << ",\"recommended\":";
+        writeCells(result, recommended);
+        result << ",\"candidates\":";
+        writeCells(result, candidates);
+        result << ",\"moves\":[";
+        for (int i = 0; i < (int)evaluated.moves.size(); ++i) {
+            if (i != 0)
+                result << ',';
+            result << "{\"cell\":" << evaluated.moves[i].cell << ",\"wins\":" << evaluated.moves[i].wins << '}';
+        }
+        result << ']';
+    } else {
+        const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, config.longTermRisk, analysis.workspace.longTermRisk);
+        const JavaEval::Result evaluated = JavaEval::analyze(input, risk, {}, config.javaEval, config.longTermRisk, config.pseudo, analysis.workspace.javaEval);
+        std::vector<ObservedBoard::CellId> candidates;
+        std::vector<ObservedBoard::CellId> recommended;
+        // 被裁剪的项仍是显示候选；推荐使用自动评估的首项，与 Game 的策略一致。
+        for (const JavaEval::Evaluation &move : evaluated)
+            candidates.push_back(move.cellId);
+        if (!evaluated.empty())
+            recommended.push_back(evaluated.front().cellId);
+        result << ",\"engine\":\"JavaEval\",\"recommended\":";
+        writeCells(result, recommended);
+        result << ",\"candidates\":";
+        writeCells(result, candidates);
+    }
+}
+
+std::string Session::analyze(const std::vector<FormField> &fields) {
+    std::string response;
+    const std::string idText = value(fields, "analysisId");
+    if (idText.empty()) {
+        std::unique_ptr<Analysis> next;
+        if (!createAnalysis(fields, next, response))
+            return response;
+        analysis_ = std::move(next);
+    } else {
+        int id;
+        if (!parseInteger(idText, id) || !analysis_ || id != analysis_->id)
+            return error("计算上下文已失效");
+    }
+    GameControl::Position &position = analysis_->position;
+    std::ostringstream count;
+    count << std::scientific << std::setprecision(6) << position.probability(analysis_->algo).candidates();
+    std::ostringstream result;
+    result << "{\"ok\":true,\"analysisId\":" << analysis_->id << ",\"candidateCount\":" << jsonString(count.str());
+    if (value(fields, "includeProbabilities") == "true")
+        writeProbabilities(result, position, analysis_->algo);
+    if (value(fields, "suggest") == "true") {
+        int candidateThreshold, threadLimit;
+        winrate::SuggestAlgo strategy;
+        if (!parseConfig(fields, candidateThreshold, threadLimit, strategy, response))
+            return response;
+        const Config config(Config::Global(threadLimit), value(fields, "checkAllMoves") == "true", value(fields, "multiThread") == "true" ? BruteForce::Config::Solver::BitwiseRootParallel : BruteForce::Config::Solver::Bitwise, candidateThreshold, config_.longTermRisk, config_.pseudo, config_.javaEval, config_.monteCarlo);
+        writeSuggestion(result, *analysis_, config, strategy);
+    }
+    const std::string cellText = value(fields, "cell");
+    if (!cellText.empty()) {
+        int cell;
+        const ObservedBoard::Result &board = position.observedBoard();
+        if (!parseInteger(cellText, cell) || cell < 0 || cell >= board.board.rows() * board.board.cols())
+            return error("格子编号无效");
+        const ObservedBoard::CellState state = board.board[cell / board.board.cols()][cell % board.board.cols()];
+        result << ",\"probability\":" << jsonString(fixedProbability(position.mineProbability(cell, analysis_->algo)));
+        if (state < ObservedBoard::CellState::Hidden || state == ObservedBoard::CellState::ForcedMine) {
+            result << ",\"observe\":null";
+        } else {
+            const Observe::Result observed = position.observe(cell, analysis_->algo);
+            result << ",\"observe\":[";
+            for (int i = 0; i < (int)observed.probability.size(); ++i) {
+                if (i != 0)
+                    result << ',';
+                result << jsonString(fixedProbability(observed.probability[i]));
+            }
+            result << ']';
+        }
+    }
     result << '}';
     return result.str();
 }
 
-std::string Session::detail(int cell) {
-    if (!analysisPosition_)
-        return error("尚未导入盘面");
-    if (cell < 0 || cell >= analysisPosition_->observedBoard.board.rows() * analysisPosition_->observedBoard.board.cols())
-        return error("格子编号无效");
-    if (analysisPosition_->error.failed)
-        return error(analysisPosition_->error.reason);
-    const int cols = analysisPosition_->observedBoard.board.cols();
-    const int row = cell / cols;
-    const int col = cell % cols;
-    if (analysisPosition_->observedBoard.board[row][col] < ObservedBoard::CellState::Hidden)
-        return "{\"ok\":true,\"probability\":\"0.000000\",\"observe\":null}";
-    const std::string risk = fixedProbability(analysisPosition_->mineProbability(cell));
-    const Observe::Result observed = analysisPosition_->observe(cell);
+std::string Session::playUntilNoSafe(const std::vector<FormField> &fields) {
+    std::string response;
+    int rows, cols, totalMines;
+    std::string cells;
+    if (!parseBoard(fields, rows, cols, totalMines, cells, response))
+        return response;
+    ObservedBoard::Result board = makeBoard(rows, cols, totalMines, cells);
+    ShapeSolver::OrderAlgo algo;
+    if (!parseOrderAlgo(fields, algo))
+        return error("ShapeSolver 算法无效");
+    const std::string mines = value(fields, "minefield");
+    if ((int)mines.size() != rows * cols || mines.find_first_not_of("01") != std::string::npos)
+        return error("真实雷盘数据无效");
+    RawGrid<char> grid(rows, cols, 0);
+    int count = 0;
+    for (int cell = 0; cell < rows * cols; ++cell) {
+        grid[cell / cols][cell % cols] = mines[cell] - '0';
+        count += grid[cell / cols][cell % cols];
+    }
+    if (count != board.totalMines)
+        return error("真实雷盘与总雷数不符");
+    GameControl::MineBoard mineBoard(std::move(grid));
+    // 固定 Game 信任雷盘与观测一致；只在接收外部完整游戏时核对一次，不另建人工 Position。
+    for (int row = 0; row < rows; ++row)
+        for (int col = 0; col < cols; ++col) {
+            const ObservedBoard::CellState state = board.board[row][col];
+            if (state == ObservedBoard::CellState::ForcedMine || state == ObservedBoard::CellState::ForcedSafe || (state < ObservedBoard::CellState::Hidden && (int)state != mineBoard.number(row, col)))
+                return error("游玩观测与真实雷盘不符");
+        }
+    Workspace workspace;
+    GameControl::Game game(std::move(mineBoard), std::move(board), workspace);
+    game.playUntilNoSafe(algo);
     std::ostringstream result;
-    result << "{\"ok\":true,\"probability\":" << jsonString(risk) << ",\"observe\":[";
-    for (int i = 0; i < (int)observed.probability.size(); ++i) {
-        if (i != 0)
+    result << "{\"ok\":true,\"rows\":" << rows << ",\"cols\":" << cols << ",\"mines\":" << count << ",\"minefield\":" << jsonString(mines) << ",\"cells\":" << jsonString(cellString(game.position().observedBoard())) << ",\"lost\":" << (game.state() == GameControl::Game::State::Lost ? "true" : "false") << ",\"won\":" << (game.state() == GameControl::Game::State::Won ? "true" : "false");
+    if (value(fields, "includeProbabilities") == "true" && game.state() == GameControl::Game::State::Running) {
+        std::ostringstream candidateCount;
+        candidateCount << std::scientific << std::setprecision(6) << game.position().probability(algo).candidates();
+        result << ",\"candidateCount\":" << jsonString(candidateCount.str());
+        writeProbabilities(result, game.position(), algo);
+    }
+    result << '}';
+    return result.str();
+}
+
+std::string Session::mctsResult(const MonteCarlo::Result &snapshot, bool complete) {
+    const ObservedBoard::CellId recommended = snapshot.recommended();
+    long double winrate = snapshot.samples() == 0 ? 0 : (long double)snapshot.wins() / snapshot.samples();
+    if (!snapshot.winrate)
+        for (const MonteCarlo::Candidate &candidate : snapshot.candidates)
+            if (candidate.cellId == recommended)
+                winrate = candidate.samples == 0 ? 0 : (long double)candidate.wins / candidate.samples;
+    std::ostringstream result;
+    result << std::setprecision(12) << "{\"ok\":true,\"simulations\":" << snapshot.samples() << ",\"value\":" << winrate << ",\"recommended\":" << recommended << ",\"winrate\":" << (snapshot.winrate ? "true" : "false") << ",\"complete\":" << (complete ? "true" : "false") << ",\"moves\":[";
+    bool first = true;
+    for (const MonteCarlo::Candidate &candidate : snapshot.candidates) {
+        if (candidate.samples == 0)
+            continue;
+        if (!first)
             result << ',';
-        result << jsonString(fixedProbability(observed.probability[i]));
+        first = false;
+        result << "{\"cell\":" << candidate.cellId << ",\"visits\":" << jsonString(std::to_string(candidate.samples)) << ",\"wins\":" << jsonString(std::to_string(candidate.wins)) << ",\"winrate\":" << (long double)candidate.wins / candidate.samples << '}';
     }
     result << "]}";
     return result.str();
 }
 
-std::string Session::handle(const std::string &path, const std::string &body) {
+bool Session::startMcts(const std::string &body, std::string &response) {
+    stopMcts();
+    if (mctsWorker_.joinable())
+        mctsWorker_.join();
     const std::vector<FormField> fields = parseForm(body);
-    ShapeSolver::OrderAlgo orderAlgo = analysisPosition_ ? analysisPosition_->orderAlgo() : ShapeSolver::OrderAlgo::Auto;
-    if (!parseOrderAlgo(fields, orderAlgo))
-        return error("ShapeSolver 算法无效");
-    if (analysisPosition_ && (path == "/api/analysis/run" || path == "/api/detail"))
-        analysisPosition_->setOrderAlgo(orderAlgo);
-    if (path == "/api/copy-analysis" || path == "/api/analysis/import") {
-        std::string response;
-        setAnalysisBoard(fields, path == "/api/analysis/import", orderAlgo, response);
-        return response;
+    int candidateThreshold, threadLimit;
+    winrate::SuggestAlgo strategy;
+    if (!parseConfig(fields, candidateThreshold, threadLimit, strategy, response))
+        return false;
+    const Config config(Config::Global(threadLimit), value(fields, "checkAllMoves") == "true", value(fields, "multiThread") == "true" ? BruteForce::Config::Solver::BitwiseRootParallel : BruteForce::Config::Solver::Bitwise, candidateThreshold, config_.longTermRisk, config_.pseudo, config_.javaEval, config_.monteCarlo);
+    std::unique_ptr<Analysis> analysis;
+    if (!createAnalysis(fields, analysis, response))
+        return false;
+    std::vector<ObservedBoard::CellId> targets;
+    const std::string cells = value(fields, "cells");
+    const ObservedBoard::Result &board = analysis->position.observedBoard();
+    int revealed = 0;
+    for (int cell = 0; cell < (int)cells.size(); ++cell) {
+        if (cells[cell] == 'G')
+            targets.push_back(cell);
+        if (cells[cell] >= '0' && cells[cell] <= '8')
+            ++revealed;
     }
-    if (path == "/api/analysis/edit") {
-        if (!analysisPosition_)
-            return error("尚未导入盘面");
-        int cell = -1;
-        const std::string cellText = value(fields, "cell");
-        const std::string stateText = value(fields, "state");
-        if (!parseInteger(cellText, cell) || stateText.size() != 1)
-            return error("编辑参数无效");
-        if (cell < 0 || cell >= analysisPosition_->observedBoard.board.rows() * analysisPosition_->observedBoard.board.cols())
-            return error("格子编号无效");
-        const char state = stateText[0];
-        if (state != '?' && state != 'S' && state != 'M' && (state < '0' || state > '8'))
-            return error("格子状态无效");
-        ObservedBoard::Result board = analysisPosition_->observedBoard;
-        const int cols = board.board.cols();
-        if (state == '?')
-            board.board[cell / cols][cell % cols] = ObservedBoard::CellState::Hidden;
-        else if (state == 'M')
-            board.board[cell / cols][cell % cols] = ObservedBoard::CellState::ForcedMine;
-        else if (state == 'S')
-            board.board[cell / cols][cell % cols] = ObservedBoard::CellState::ForcedSafe;
-        else
-            board.board[cell / cols][cell % cols] = (ObservedBoard::CellState)(state - '0');
-        std::string response;
-        setPosition(std::move(board), orderAlgo, response);
-        return response;
+    const bool complete = revealed + board.totalMines == (int)cells.size();
+    if (!complete && !targets.empty()) {
+        bool safe = false;
+        for (int cell = 0; cell < (int)cells.size(); ++cell)
+            if ((cells[cell] == '?' || cells[cell] == 'G' || cells[cell] == 'S') && analysis->position.mineProbability(cell, analysis->algo) == 0.0L) {
+                safe = true;
+                break;
+            }
+        // 有必安格时 MC 忽略目标并采整局胜率；仅在实际比较首招时检查外部目标。
+        if (!safe)
+            for (ObservedBoard::CellId cell : targets)
+                if (analysis->position.mineProbability(cell, analysis->algo) == 1.0L) {
+                    response = error("MC 目标格已确定为雷");
+                    return false;
+                }
     }
-    if (path == "/api/analysis/run") {
-        return analysisResult();
+    {
+        const std::lock_guard<std::mutex> lock(mctsMutex_);
+        mctsUpdate_ = "{\"ok\":true,\"simulations\":0,\"value\":0,\"recommended\":-1,\"winrate\":false,\"complete\":false,\"moves\":[]}";
     }
-    if (path == "/api/suggest") {
-        Config config;
-        if (!parseInteger(value(fields, "limit"), config.position.bruteForceThreshold) || config.position.bruteForceThreshold < 1)
-            return error("JavaEval 切换阈值无效");
-        if (!parseInteger(value(fields, "maxThreads"), config.bruteForce.maxThreads) || config.bruteForce.maxThreads < 1)
-            return error("BruteForce 核心数必须是正整数");
-        config.ui.includeProbabilities = value(fields, "includeProbabilities") == "true";
-        config.bruteForce.checkAllMoves = value(fields, "checkAllMoves") == "true";
-        config.bruteForce.solver = value(fields, "multiThread") == "true" ? Config::BruteForce::Solver::BitwiseRootParallel : Config::BruteForce::Solver::Bitwise;
-        std::string response;
-        if (!setAnalysisBoard(fields, value(fields, "mode") == "analysis", orderAlgo, response))
-            return response;
-        return suggest(config);
-    }
-    if (path == "/api/detail") {
-        int cell = -1;
-        if (value(fields, "mode") != "analysis")
-            return error("格子详情仅在分析模式开放");
-        if (!parseInteger(value(fields, "cell"), cell))
-            return error("格子编号无效");
-        return detail(cell);
-    }
-    if (path == "/api/exit") {
-        stopped_ = true;
-        return "{\"ok\":true}";
-    }
-    return error("API 不存在");
+    // 根输入及池随独立任务存活；普通分析的下一份快照不会覆盖 MC 正在使用的数据。
+    mctsWorker_ = std::jthread([this, analysis = std::move(analysis), config, strategy, targets = std::move(targets), complete](std::stop_token stop) {
+        const winrate::Input input = analysis->position.input(analysis->algo);
+        MonteCarlo::Result result = MonteCarlo::analyze(input, strategy, config, analysis->workspace.monteCarlo, targets);
+        auto publish = [&]() {
+            const std::string update = mctsResult(result, complete);
+            const std::lock_guard<std::mutex> lock(mctsMutex_);
+            mctsUpdate_ = update;
+        };
+        publish();
+        std::chrono::steady_clock::time_point next = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+        while (MonteCarlo::update(result, input, config, analysis->workspace.monteCarlo, stop)) {
+            if (complete)
+                break;
+            if (std::chrono::steady_clock::now() >= next) {
+                publish();
+                next = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+            }
+        }
+        publish();
+    });
+    return true;
 }
 
+void Session::stopMcts() {
+    mctsWorker_.request_stop();
 }
+
+std::string Session::mctsUpdate() const {
+    const std::lock_guard<std::mutex> lock(mctsMutex_);
+    return mctsUpdate_;
+}
+
+std::string Session::handle(const std::string &path, const std::string &body) {
+    const std::vector<FormField> fields = parseForm(body);
+    if (path == "/api/analyze")
+        return analyze(fields);
+    if (path == "/api/play-until-no-safe")
+        return playUntilNoSafe(fields);
+    if (path == "/api/quit") {
+        stopped_ = true;
+        stopMcts();
+        return "{\"ok\":true}";
+    }
+    return error("未知接口");
+}
+
+} // namespace mss::UI

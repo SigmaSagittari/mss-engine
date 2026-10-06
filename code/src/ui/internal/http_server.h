@@ -5,11 +5,12 @@
 namespace mss::UI {
 
 struct HttpServer {
-    explicit HttpServer(Session &session);
+    HttpServer(Session &session, const Config &config);
     void run();
 
   private:
     Session &session_;
+    const Config &config_;
 };
 
 }

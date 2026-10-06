@@ -9,6 +9,8 @@ namespace mss {
 
 class DynamicBitset {
   public:
+    DynamicBitset() : size_(0) {}
+
     // resize 只改变可见位数；残局普通后端先 resize 再 setAll 建立 unopened，
     // 新增加的 word 为 0，不会自动继承“全候选开放”的语义。
     void resize(std::size_t size) {
@@ -62,7 +64,7 @@ class DynamicBitset {
     }
 
     std::vector<std::uint64_t> words_;
-    std::size_t size_ = 0;
+    std::size_t size_;
 };
 
 } // namespace mss

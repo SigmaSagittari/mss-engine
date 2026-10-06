@@ -47,7 +47,7 @@ template <bool CheckAllMoves>
 int BruteForce::MultiMaskParallelSolver<Mask>::solveCandidates(
     const Workspace::CommonSession &common, Workspace::MultiMask &multiMask,
     Workspace::MultiMask::Session<Mask> &session, const std::vector<ConfigId> &configs,
-    int start, int count, int need, Result &result, Workspace::MultiMask::Worker &workspace, const Config &config) {
+    int start, int count, int need, Result &result, Workspace::MultiMask::Worker &workspace, const BruteForce::Config &config) {
     // 根排序和并行临时数组放在工作区；各线程独占递归缓存，布局表通过 Session 只读共享。
     Workspace::MultiMask::Parallel &parallel = multiMask.parallel;
     const Workspace::MultiMask::Layer &root = workspace.scratch.layer(0);
@@ -55,7 +55,7 @@ int BruteForce::MultiMaskParallelSolver<Mask>::solveCandidates(
     parallel.deaths = root.deaths;
     const int candidateCount = (int)parallel.order.size();
     const int possibilityCount = count;
-    const int threadCount = (std::min)(config.bruteForce.maxThreads, candidateCount);
+    const int threadCount = (std::min)(config.threadLimit, candidateCount);
     parallel.uppers.assign(candidateCount, 0);
     parallel.nodes.resize(threadCount);
     parallel.sharedCache.reset(common.possibilityCount);
@@ -156,7 +156,7 @@ int BruteForce::MultiMaskParallelSolver<Mask>::solveCandidates(
     const int wins = (int)(value / (candidateCount + 1));
     if constexpr (CheckAllMoves)
         return wins;
-    // need 至少为 1（Config::bruteForce.minWins 的默认值，并在 solveCommonSession 中断言），因此
+    // 根搜索的 need 固定从 1 开始，递归剪枝下界也至少为 1，因此
     // value 为 0 时 wins >= need 必不成立，下面的解码用不到"从未搜到候选"的哨兵值。
     if (wins >= need) {
         const int candidate = parallel.order[candidateCount - (int)(value % (candidateCount + 1))];
@@ -172,13 +172,13 @@ int BruteForce::MultiMaskParallelSolver<Mask>::solveCandidates(
 }
 
 // 只导出四种掩码与两种结果模式，根节点按对应模式调用，递归子节点使用 MultiMaskSolver。
-template int BruteForce::MultiMaskParallelSolver<bitMask<1>>::solveCandidates<true>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<1>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const Config &);
-template int BruteForce::MultiMaskParallelSolver<bitMask<1>>::solveCandidates<false>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<1>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const Config &);
-template int BruteForce::MultiMaskParallelSolver<bitMask<2>>::solveCandidates<true>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<2>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const Config &);
-template int BruteForce::MultiMaskParallelSolver<bitMask<2>>::solveCandidates<false>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<2>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const Config &);
-template int BruteForce::MultiMaskParallelSolver<bitMask<4>>::solveCandidates<true>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<4>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const Config &);
-template int BruteForce::MultiMaskParallelSolver<bitMask<4>>::solveCandidates<false>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<4>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const Config &);
-template int BruteForce::MultiMaskParallelSolver<bitMask<8>>::solveCandidates<true>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<8>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const Config &);
-template int BruteForce::MultiMaskParallelSolver<bitMask<8>>::solveCandidates<false>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<8>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const Config &);
+template int BruteForce::MultiMaskParallelSolver<bitMask<1>>::solveCandidates<true>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<1>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const BruteForce::Config &);
+template int BruteForce::MultiMaskParallelSolver<bitMask<1>>::solveCandidates<false>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<1>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const BruteForce::Config &);
+template int BruteForce::MultiMaskParallelSolver<bitMask<2>>::solveCandidates<true>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<2>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const BruteForce::Config &);
+template int BruteForce::MultiMaskParallelSolver<bitMask<2>>::solveCandidates<false>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<2>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const BruteForce::Config &);
+template int BruteForce::MultiMaskParallelSolver<bitMask<4>>::solveCandidates<true>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<4>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const BruteForce::Config &);
+template int BruteForce::MultiMaskParallelSolver<bitMask<4>>::solveCandidates<false>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<4>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const BruteForce::Config &);
+template int BruteForce::MultiMaskParallelSolver<bitMask<8>>::solveCandidates<true>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<8>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const BruteForce::Config &);
+template int BruteForce::MultiMaskParallelSolver<bitMask<8>>::solveCandidates<false>(const BruteForce::Workspace::CommonSession &, BruteForce::Workspace::MultiMask &, BruteForce::Workspace::MultiMask::Session<bitMask<8>> &, const std::vector<std::uint32_t> &, int, int, int, BruteForce::Result &, BruteForce::Workspace::MultiMask::Worker &, const BruteForce::Config &);
 
 } // 命名空间 mss

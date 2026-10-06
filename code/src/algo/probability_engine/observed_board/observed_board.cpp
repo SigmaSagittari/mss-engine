@@ -3,8 +3,6 @@
 
 namespace mss {
 
-ObservedBoard::Result::Result() = default;
-
 ObservedBoard::Result::Result(int rows, int cols, int mines)
     : totalMines(mines), board(rows, cols, CellState::Hidden) {
 }
@@ -21,7 +19,7 @@ void ObservedBoard::update(Result &board, Delta &delta) {
     for (Delta::Change &change : delta.changes) {
         assert_(change.next != CellState::Hidden, "ObservedBoard::update: next state must not be Hidden");
         const std::pair<int, int> position = board.pos(change.cell);
-        assert_(board.board[position.first][position.second] == CellState::Hidden, "ObservedBoard::update: target must be Hidden");
+        assert_(board.board[position.first][position.second] == change.previous, "ObservedBoard::update: previous state mismatch");
         board.board[position.first][position.second] = change.next;
     }
 }
@@ -30,7 +28,7 @@ void ObservedBoard::reverseDelta(Result &board, const Delta &delta) {
     for (int i = (int)delta.changes.size() - 1; i >= 0; --i) {
         const Delta::Change &change = delta.changes[i];
         const std::pair<int, int> position = board.pos(change.cell);
-        board.board[position.first][position.second] = CellState::Hidden;
+        board.board[position.first][position.second] = change.previous;
     }
 }
 

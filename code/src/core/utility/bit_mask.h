@@ -20,7 +20,10 @@ template <std::size_t WordCount> struct bitMask {
     static constexpr std::size_t kWordCount = WordCount;
     static constexpr int kBitCount = WordCount * 64;
 
-    std::array<std::uint64_t, WordCount> words{};
+    std::array<std::uint64_t, WordCount> words;
+
+    // 初始位集合为空，bit/all/set 在此基础上建立实际集合。
+    constexpr bitMask() : words{} {}
 
     // 创建只包含一个指定位的掩码。
     static bitMask bit(int index) {
@@ -136,7 +139,9 @@ template <> struct bitMask<1> {
     static constexpr std::size_t kWordCount = 1;
     static constexpr int kBitCount = 64;
 
-    std::uint64_t word = 0;
+    std::uint64_t word;
+
+    constexpr bitMask() : word(0) {}
 
     // 创建只包含一个指定位的单 word 掩码。
     static bitMask bit(int index) {

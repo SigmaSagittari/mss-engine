@@ -41,10 +41,13 @@ struct Probability {
       private:
         friend struct Probability;
 
+        // 仅供 analyze 创建输出缓冲；在读取、复制或返回之前，analyze 的全部返回路径都会写入两个标量。
+        Result() = default;
+
         std::vector<Component> components_;
         std::vector<long double> boxProbabilities_;
-        long double candidates_ = 0.0L;
-        long double tCellProbability_ = 0.0L;
+        long double candidates_;
+        long double tCellProbability_;
     };
 
     struct LogicComponentInput {
@@ -66,10 +69,12 @@ struct Probability {
 
         // 乘积树先执行逐组件回调、后返回全盘分母；暂存各档分子以便之后统一归一化。
         struct LogicComponentValue {
-            int component = 0;
-            int mines = 0;
-            long double localWays = 0.0L;
-            long double totalWays = 0.0L;
+            int component;
+            int mines;
+            long double localWays;
+            long double totalWays;
+
+            LogicComponentValue(int component, int mines, long double localWays, long double totalWays) : component(component), mines(mines), localWays(localWays), totalWays(totalWays) {}
         };
         std::vector<LogicComponentValue> logicComponentValues;
 
@@ -87,7 +92,6 @@ struct Probability {
             std::vector<long double> restWays;
             std::vector<long double> restCoefficients;
             std::vector<long double> productScratch;
-            int restStart = 0;
         } observe;
 
         // 构造时绑定外层工作区；引用目标必须比本对象活得久，同一工作区不得并发或重入使用。

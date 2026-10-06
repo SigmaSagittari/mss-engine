@@ -18,8 +18,10 @@ struct Basic {
     struct Result {
         RawGrid<Mark> marks;
         // mineSum 统计 F；unknownSum 只统计 T。H 仍是候选格，但受邻接数字约束，不计入 unknownSum。
-        int unknownSum = 0;
-        int mineSum = 0;
+        int unknownSum;
+        int mineSum;
+
+        Result() : unknownSum(0), mineSum(0) {}
 
       private:
         friend struct Basic;

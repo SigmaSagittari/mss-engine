@@ -343,17 +343,15 @@ void GraphStepGenerator::forEach(const Structure::Shape &shape, const Structure:
     ws.layout.clear();
     ws.nextLayout.clear();
     ws.slotOf.assign(boxCount, -1);
-    StepPlan plan;
     for (int step = 0; step < boxCount; ++step) {
-        plan.box = order[step];
-        plan.boxSize = shape.boxes.span(shapes.boxes)[plan.box].size;
+        const Structure::BoxId currentBox = order[step];
+        const int boxSize = shape.boxes.span(shapes.boxes)[currentBox].size;
         ws.checks.clear();
         ws.gather.clear();
         ws.closings.clear();
-        for (int link = ws.boxHead[plan.box]; link >= 0; link = ws.nextLink[link]) {
+        for (int link = ws.boxHead[currentBox]; link >= 0; link = ws.nextLink[link]) {
             const Structure::Shape::ConstraintView view = shape.constraint(shapes, ws.constraintIds[link]);
-            StepPlan::Check check;
-            check.sum = view.sum;
+            StepPlan::Check check(view.sum);
             for (Structure::BoxId member : view.boxIds) {
                 if (ws.position[member] < step)
                     check.readSlots[check.readCount++] = ws.slotOf[member];
@@ -370,15 +368,13 @@ void GraphStepGenerator::forEach(const Structure::Shape &shape, const Structure:
             ws.gather.push_back(oldSlot);
             ws.nextLayout.push_back(box);
         }
-        if (ws.closeStep[plan.box] > step) {
+        if (ws.closeStep[currentBox] > step) {
             ws.gather.push_back(-1);
-            ws.nextLayout.push_back(plan.box);
+            ws.nextLayout.push_back(currentBox);
         }
         for (Structure::BoxId box = ws.closeHead[step]; box >= 0; box = ws.closeNext[box])
-            ws.closings.push_back({box, box == plan.box ? -1 : ws.slotOf[box]});
-        plan.checks = std::span<const StepPlan::Check>(ws.checks);
-        plan.gather = ws.gather;
-        plan.closings = std::span<const StepPlan::Closing>(ws.closings);
+            ws.closings.push_back({box, box == currentBox ? -1 : ws.slotOf[box]});
+        const StepPlan plan{currentBox, boxSize, ws.checks, ws.gather, ws.closings};
         callback(plan);
         for (Structure::BoxId box : ws.layout)
             ws.slotOf[box] = -1;

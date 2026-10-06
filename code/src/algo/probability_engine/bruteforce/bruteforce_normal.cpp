@@ -4,7 +4,7 @@
 
 namespace mss {
 
-BruteForce::Result BruteForce::runNormal(const CommonSession &common, const Config &config, Workspace::Normal &workspace) {
+BruteForce::Result BruteForce::runNormal(const CommonSession &common, const BruteForce::Config &config, Workspace::Normal &workspace) {
     // 普通后端预先展开方案×候选格表，使递归热路径只查表和分组，不再遍历邻居链接。
     workspace.mineByConfig.resize(common.possibilityCount, common.candidateCount, 0);
     for (int config = 0; config < common.possibilityCount; ++config)
@@ -26,14 +26,14 @@ BruteForce::Result BruteForce::runNormal(const CommonSession &common, const Conf
     workspace.unopenedCandidates.resize(common.candidateCount);
     workspace.unopenedCandidates.setAll();
     Result result;
-    if (config.bruteForce.checkAllMoves) {
+    if (config.checkAllMoves) {
         result.moves.resize(common.candidateCount);
         NormalSolver::solve<true, true>(common, workspace, workspace.configIds, 0, common.possibilityCount, 1, 0, result);
     } else {
         result.moves.resize(1);
         const int wins = NormalSolver::solve<false, true>(common, workspace, workspace.configIds, 0, common.possibilityCount,
-                                                 config.bruteForce.minWins, 0, result);
-        if (wins < config.bruteForce.minWins)
+                                                 1, 0, result);
+        if (wins < 1)
             result.moves.clear();
         else
             result.moves[0].wins = wins;

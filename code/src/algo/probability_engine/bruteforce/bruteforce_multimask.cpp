@@ -255,17 +255,17 @@ template <bool CheckAllMoves, bool IsRoot>
 int BruteForce::MultiMaskSolver<Mask>::solve(
     const CommonSession &common, Workspace::MultiMask &multiMask, Workspace::MultiMask::Session<Mask> &session,
     const std::vector<ConfigId> &configs, int start, int count, int need, int depth,
-    FlatHashTable<U128, int, U128Hash> &table, Result &result, Workspace::MultiMask::Worker &workspace, const Config &config) {
+    FlatHashTable<U128, int, U128Hash> &table, Result &result, Workspace::MultiMask::Worker &workspace, const BruteForce::Config &config) {
     // 位掩码后端与 Common 使用相同的阈值协议和动作语义，掩码只替换雷位集合的表示。
     ++session.nodes;
     if constexpr (CheckAllMoves && IsRoot) {
-        // 全候选模式逐个精确计算首步；此分支忽略 minWins，只有 Config::bruteForce.checkAllMoves 能启用它。
+        // 全候选模式逐个精确计算首步；此分支只由 BruteForce::Config::checkAllMoves 启用。
         if (need > count)
             return -count;
         Workspace::MultiMask::Layer &layer = workspace.scratch.layer(depth);
         result.moves.resize(common.candidateCount);
         std::vector<int> &order = orderCandidates(common, session, configs, start, count, depth, workspace);
-        if (config.bruteForce.solver == Config::BruteForce::Solver::BitwiseRootParallel && config.bruteForce.maxThreads > 1 && count >= BruteForce::parallelConfigThreshold)
+        if (config.solver == BruteForce::Config::Solver::BitwiseRootParallel && config.threadLimit > 1 && count >= BruteForce::parallelConfigThreshold)
             return MultiMaskParallelSolver<Mask>::template solveCandidates<true>(common, multiMask, session, configs,
                 start, count, need, result, workspace, config);
         int best = 0;
@@ -394,7 +394,7 @@ int BruteForce::MultiMaskSolver<Mask>::solve(
 
         std::vector<int> &order = orderCandidates(common, session, configs, start, count, depth, workspace);
         if constexpr (IsRoot)
-            if (config.bruteForce.solver == Config::BruteForce::Solver::BitwiseRootParallel && config.bruteForce.maxThreads > 1 && count >= BruteForce::parallelConfigThreshold)
+            if (config.solver == BruteForce::Config::Solver::BitwiseRootParallel && config.threadLimit > 1 && count >= BruteForce::parallelConfigThreshold)
                 return MultiMaskParallelSolver<Mask>::template solveCandidates<false>(common, multiMask, session, configs,
                     start, count, need, result, workspace, config);
         std::vector<int> &deaths = layer.deaths;
@@ -493,7 +493,7 @@ int BruteForce::MultiMaskSolver<Mask>::solve(
 }
 
 template <typename Mask>
-BruteForce::Result BruteForce::solveWithMask(const CommonSession &common, const Config &config, Workspace &workspace) {
+BruteForce::Result BruteForce::solveWithMask(const CommonSession &common, const BruteForce::Config &config, Workspace &workspace) {
     Workspace::MultiMask &multiMask = workspace.multiMask;
     if (!std::holds_alternative<Workspace::MultiMask::Layout<Mask>>(multiMask.layouts))
         multiMask.layouts.emplace<Workspace::MultiMask::Layout<Mask>>();
@@ -502,20 +502,20 @@ BruteForce::Result BruteForce::solveWithMask(const CommonSession &common, const 
     multiMask.configIds.resize(common.possibilityCount);
     for (int config = 0; config < common.possibilityCount; ++config)
         multiMask.configIds[config] = config;
-    Workspace::MultiMask::Session<Mask> session{layout, Mask::all(common.candidateCount), 0};
+    Workspace::MultiMask::Session<Mask> session{layout, Mask::all(common.candidateCount)};
     Workspace::MultiMask::Worker &worker = multiMask.main;
     worker.scratch.reset();
     worker.cache.clear();
     worker.useSharedCache = false;
     Result result;
-    if (config.bruteForce.checkAllMoves) {
+    if (config.checkAllMoves) {
         MultiMaskSolver<Mask>::template solve<true, true>(common, multiMask, session, multiMask.configIds, 0,
             common.possibilityCount, 1, 0, worker.cache, result, worker, config);
     } else {
         result.moves.resize(1);
         const int wins = MultiMaskSolver<Mask>::template solve<false, true>(common, multiMask, session, multiMask.configIds, 0,
-            common.possibilityCount, config.bruteForce.minWins, 0, worker.cache, result, worker, config);
-        if (wins < config.bruteForce.minWins)
+            common.possibilityCount, 1, 0, worker.cache, result, worker, config);
+        if (wins < 1)
             result.moves.clear();
         else
             result.moves[0].wins = wins;
@@ -524,14 +524,11 @@ BruteForce::Result BruteForce::solveWithMask(const CommonSession &common, const 
     return result;
 }
 
-BruteForce::Result BruteForce::solveCommonSession(const CommonSession &common, const Config &config, Workspace &workspace) {
-    // 单步模式的 minWins 是"最低胜局数"，取 0 即没有任何要求：收尾判定 best >= need 会恒真，
-    // 使从未搜到候选的哨兵值 0 通过判定并被解码成 parallel.order[candidateCount] 越界读取。
-    assert_(config.bruteForce.checkAllMoves || config.bruteForce.minWins >= 1, "BruteForce: 单推荐步模式的最小胜局数必须至少为 1");
+BruteForce::Result BruteForce::solveCommonSession(const CommonSession &common, const BruteForce::Config &config, Workspace &workspace) {
     if (common.possibilityCount == 0 || common.candidateCount == 0)
         return {};
     Result result;
-    if (config.bruteForce.solver != Config::BruteForce::Solver::Common && common.possibilityCount > 1 &&
+    if (config.solver != BruteForce::Config::Solver::Common && common.possibilityCount > 1 &&
         common.candidateCount <= bitMask<8>::kBitCount) {
         if (common.candidateCount <= bitMask<1>::kBitCount)
             result = solveWithMask<bitMask<1>>(common, config, workspace);
@@ -546,9 +543,9 @@ BruteForce::Result BruteForce::solveCommonSession(const CommonSession &common, c
         result = runNormal(common, config, workspace.normal);
     }
     // 单步模式必须把实际候选格交给调用方。两种情况都会让 cell 失效，且都与胜局数无关：
-    // 未达 minWins 时 moves 被清空；writeFirstSafeMove 只在 configs[start] 一个布局里找非雷
+    // 未取得正胜局数时 moves 被清空；writeFirstSafeMove 只在 configs[start] 一个布局里找非雷
     // 候选，全部为雷时不会写入，cell 停在 -1。candidateCount 非零由上方的提前返回保证。
-    if (!config.bruteForce.checkAllMoves && (result.moves.empty() || result.moves[0].cell < 0)) {
+    if (!config.checkAllMoves && (result.moves.empty() || result.moves[0].cell < 0)) {
         if (result.moves.empty())
             result.moves.push_back({common.candidates[0].cell, 0});
         else
@@ -563,9 +560,9 @@ template struct BruteForce::MultiMaskSolver<bitMask<4>>;
 template struct BruteForce::MultiMaskSolver<bitMask<8>>;
 
 // 并行实现跨编译单元调用非根递归；显式实例化使求解模板仍留在本文件。
-template int BruteForce::MultiMaskSolver<bitMask<1>>::solve<false, false>(const Workspace::CommonSession &, Workspace::MultiMask &, Workspace::MultiMask::Session<bitMask<1>> &, const std::vector<std::uint32_t> &, int, int, int, int, FlatHashTable<U128, int, U128Hash> &, Result &, Workspace::MultiMask::Worker &, const Config &);
-template int BruteForce::MultiMaskSolver<bitMask<2>>::solve<false, false>(const Workspace::CommonSession &, Workspace::MultiMask &, Workspace::MultiMask::Session<bitMask<2>> &, const std::vector<std::uint32_t> &, int, int, int, int, FlatHashTable<U128, int, U128Hash> &, Result &, Workspace::MultiMask::Worker &, const Config &);
-template int BruteForce::MultiMaskSolver<bitMask<4>>::solve<false, false>(const Workspace::CommonSession &, Workspace::MultiMask &, Workspace::MultiMask::Session<bitMask<4>> &, const std::vector<std::uint32_t> &, int, int, int, int, FlatHashTable<U128, int, U128Hash> &, Result &, Workspace::MultiMask::Worker &, const Config &);
-template int BruteForce::MultiMaskSolver<bitMask<8>>::solve<false, false>(const Workspace::CommonSession &, Workspace::MultiMask &, Workspace::MultiMask::Session<bitMask<8>> &, const std::vector<std::uint32_t> &, int, int, int, int, FlatHashTable<U128, int, U128Hash> &, Result &, Workspace::MultiMask::Worker &, const Config &);
+template int BruteForce::MultiMaskSolver<bitMask<1>>::solve<false, false>(const Workspace::CommonSession &, Workspace::MultiMask &, Workspace::MultiMask::Session<bitMask<1>> &, const std::vector<std::uint32_t> &, int, int, int, int, FlatHashTable<U128, int, U128Hash> &, Result &, Workspace::MultiMask::Worker &, const BruteForce::Config &);
+template int BruteForce::MultiMaskSolver<bitMask<2>>::solve<false, false>(const Workspace::CommonSession &, Workspace::MultiMask &, Workspace::MultiMask::Session<bitMask<2>> &, const std::vector<std::uint32_t> &, int, int, int, int, FlatHashTable<U128, int, U128Hash> &, Result &, Workspace::MultiMask::Worker &, const BruteForce::Config &);
+template int BruteForce::MultiMaskSolver<bitMask<4>>::solve<false, false>(const Workspace::CommonSession &, Workspace::MultiMask &, Workspace::MultiMask::Session<bitMask<4>> &, const std::vector<std::uint32_t> &, int, int, int, int, FlatHashTable<U128, int, U128Hash> &, Result &, Workspace::MultiMask::Worker &, const BruteForce::Config &);
+template int BruteForce::MultiMaskSolver<bitMask<8>>::solve<false, false>(const Workspace::CommonSession &, Workspace::MultiMask &, Workspace::MultiMask::Session<bitMask<8>> &, const std::vector<std::uint32_t> &, int, int, int, int, FlatHashTable<U128, int, U128Hash> &, Result &, Workspace::MultiMask::Worker &, const BruteForce::Config &);
 
 } // 命名空间 mss

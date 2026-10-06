@@ -49,14 +49,16 @@ struct GraphStepGenerator {
         using Closing = Workspace::GraphSolverWorkspace::Step::Closing;
 
         // 本步骤正在分配雷数的 Box 及其格子数。
-        Structure::BoxId box = 0;
-        int boxSize = 0;
+        Structure::BoxId box;
+        int boxSize;
         // 该 Box 涉及的约束；消费方据此计算本步可分配的雷数范围。
         std::span<const Check> checks;
         // 新 frontier 的来源：非负值复制旧 slot，-1 插入本步的雷数。
         std::span<const int> gather;
         // 本步闭合的 Box；消费方据此累计它们的雷数矩。
         std::span<const Closing> closings;
+
+        StepPlan(Structure::BoxId box, int boxSize, std::span<const Check> checks, std::span<const int> gather, std::span<const Closing> closings) : box(box), boxSize(boxSize), checks(checks), gather(gather), closings(closings) {}
     };
 
     using Callback = std::function<void(const StepPlan &)>;

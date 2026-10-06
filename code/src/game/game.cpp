@@ -3,22 +3,30 @@
 #include <cstdint>
 #include <span>
 #include <utility>
+#include <vector>
 
-#include "core/assert.h"
 #include "core/utility/neighbors.h"
 #include "core/utility/rng.h"
+#include "core/workspace.h"
 
 namespace mss {
 
-void GameControl::MineBoard::generate(int rows, int cols, int mines, U128 seed) {
+GameControl::MineBoard::MineBoard(int rows, int cols, int mines, int firstRow, int firstCol, U128 seed) {
+    generate(rows, cols, mines, firstRow, firstCol, seed);
+}
+
+void GameControl::MineBoard::generate(int rows, int cols, int mines, int firstRow, int firstCol, U128 seed) {
     board_.resize(rows, cols, 0);
     const int cellCount = rows * cols;
-    std::vector<int> cells(cellCount);
+    const int firstCell = firstRow * cols + firstCol;
+    std::vector<int> cells(cellCount - 1);
+    int index = 0;
     for (int cell = 0; cell < cellCount; ++cell)
-        cells[cell] = cell;
+        if (cell != firstCell)
+            cells[index++] = cell;
 
     Random random(seed.lo, seed.hi);
-    for (int i = cellCount - 1; i > 0; --i) {
+    for (int i = (int)cells.size() - 1; i > 0; --i) {
         const int j = (int)(random.next() % (std::uint64_t)(i + 1));
         std::swap(cells[i], cells[j]);
     }
@@ -26,13 +34,6 @@ void GameControl::MineBoard::generate(int rows, int cols, int mines, U128 seed) 
         const int cell = cells[i];
         board_[cell / cols][cell % cols] = 1;
     }
-}
-
-void GameControl::MineBoard::makeSafe(int row, int col, int targetRow, int targetCol) {
-    if (!board_[row][col])
-        return;
-    board_[row][col] = 0;
-    board_[targetRow][targetCol] = 1;
 }
 
 int GameControl::MineBoard::number(int row, int col) const {
@@ -43,158 +44,143 @@ int GameControl::MineBoard::number(int row, int col) const {
     return result;
 }
 
-bool GameControl::MineBoard::matches(const ObservedBoard::Result &observedBoard) const {
-    if (board_.rows() != observedBoard.board.rows() || board_.cols() != observedBoard.board.cols())
-        return false;
-    int mines = 0;
-    for (int row = 0; row < board_.rows(); ++row)
-        for (int col = 0; col < board_.cols(); ++col) {
-            const bool mine = board_[row][col] != 0;
-            const ObservedBoard::CellState state = observedBoard.board[row][col];
-            if (mine)
-                ++mines;
-            if (state == ObservedBoard::CellState::Hidden)
-                continue;
-            if (state == ObservedBoard::CellState::ForcedMine) {
-                if (!mine)
-                    return false;
-                continue;
-            }
-            if (state == ObservedBoard::CellState::ForcedSafe) {
-                if (mine)
-                    return false;
-                continue;
-            }
-            if (mine || number(row, col) != (int)state)
-                return false;
-        }
-    return mines == observedBoard.totalMines;
-}
-
-GameControl::Position::Position(ObservedBoard::Result board, Workspace &workspace, ShapeSolver::OrderAlgo orderAlgo)
-    : observedBoard(std::move(board)), orderAlgo_(orderAlgo), workspace_(workspace) {
-    initialize(Basic::analyze(observedBoard, workspace_.basic));
-}
-
-GameControl::Position::Position(ObservedBoard::Result board, Basic::Result basic, Workspace &workspace, ShapeSolver::OrderAlgo orderAlgo)
-    : observedBoard(std::move(board)), orderAlgo_(orderAlgo), workspace_(workspace) {
-    initialize(std::move(basic));
-}
-
-ShapeSolver::OrderAlgo GameControl::Position::orderAlgo() const {
-    return orderAlgo_;
-}
-
-void GameControl::Position::setOrderAlgo(ShapeSolver::OrderAlgo orderAlgo) {
-    if (orderAlgo_ == orderAlgo)
-        return;
-    orderAlgo_ = orderAlgo;
-    distributions_.clear();
-    probabilityDirty_ = true;
-}
-
-void GameControl::Position::initialize(Basic::Result basic) {
-    shapes_.clear();
-    distributions_.clear();
-    error = {};
+void GameControl::Position::initialize() {
+    error_ = {};
     safeCells_.clear();
     basicSafeCells_.clear();
-    structure_ = Structure::Result{};
-    probability_ = Probability::Result{};
-    probabilityDirty_ = false;
-    const int rows = observedBoard.board.rows();
-    const int cols = observedBoard.board.cols();
-    basicSafeSeen_.assign(rows * cols, 0);
-    remainingSafe_ = rows * cols - observedBoard.totalMines;
-    for (int row = 0; row < rows; ++row)
-        for (int col = 0; col < cols; ++col)
-            if (observedBoard.board[row][col] < ObservedBoard::CellState::Hidden)
-                --remainingSafe_;
-
-    basic_ = std::move(basic);
-    structure_ = Structure::analyze(observedBoard, basic_, shapes_, workspace_.structure);
-    Probability::analyze(observedBoard, basic_, structure_, shapes_, distributions_, probability_, workspace_.probability, orderAlgo_);
-    if (probability_.candidates() == 0.0L) {
-        error.failed = true;
-        error.reason = "观测盘面没有合法的全盘雷分布";
-        return;
-    }
-    probabilityDirty_ = false;
-    for (int row = 0; row < rows; ++row)
-        for (int col = 0; col < cols; ++col)
-            if (observedBoard.board[row][col] == ObservedBoard::CellState::Hidden && basic_.marks[row][col] == Basic::Mark::S) {
-                const ObservedBoard::CellId cell = observedBoard.id(row, col);
+    basicSafeSeen_.assign(observedBoard_.board.rows() * observedBoard_.board.cols(), 0);
+    result_.probabilityDirty = true;
+    delta_.basic.changes.clear();
+    delta_.structure.removed.clear();
+    delta_.structure.addedCount = 0;
+    structureLazyUpdate_.clear();
+    pool_.shapes.clear();
+    pool_.distributions.clear();
+    result_.structure = Structure::analyze(observedBoard_, result_.basic, pool_.shapes, workspace_.structure);
+    for (int row = 0; row < observedBoard_.board.rows(); ++row)
+        for (int col = 0; col < observedBoard_.board.cols(); ++col)
+            if ((observedBoard_.board[row][col] == ObservedBoard::CellState::Hidden || observedBoard_.board[row][col] == ObservedBoard::CellState::ForcedSafe) && result_.basic.marks[row][col] == Basic::Mark::S) {
+                const ObservedBoard::CellId cell = observedBoard_.id(row, col);
                 basicSafeCells_.push_back(cell);
                 basicSafeSeen_[cell] = 1;
             }
 }
 
-const Basic::Result &GameControl::Position::basic() const {
-    return basic_;
-}
-
-const Structure::Result &GameControl::Position::structure() const {
-    return structure_;
+void GameControl::Position::reset(ObservedBoard::Result board) {
+    observedBoard_ = std::move(board);
+    result_.basic = Basic::analyze(observedBoard_, workspace_.basic);
+    initialize();
 }
 
 void GameControl::Position::update(ObservedBoard::Delta &updates) {
-    if (error.failed || updates.changes.empty())
-        return;
+    ObservedBoard::update(observedBoard_, updates);
+    Basic::update(result_.basic, delta_.basic, observedBoard_, updates, workspace_.basic);
     for (const ObservedBoard::Delta::Change &change : updates.changes)
-        if (change.next < ObservedBoard::CellState::Hidden)
-            --remainingSafe_;
-    ObservedBoard::update(observedBoard, updates);
-    Basic::update(basic_, basicDelta_, observedBoard, updates, workspace_.basic);
-    probabilityDirty_ = true;
-    Structure::update(structure_, structureDelta_, observedBoard, basic_, shapes_, updates, workspace_.structure);
-    for (const Basic::Delta::Change &change : basicDelta_.changes) {
+        structureLazyUpdate_.push_back(change.cell);
+    result_.probabilityDirty = true;
+    for (const Basic::Delta::Change &change : delta_.basic.changes) {
         const ObservedBoard::CellId cell = change.cell;
-        const std::pair<int, int> position = observedBoard.pos(cell);
-        if (!basicSafeSeen_[cell] && observedBoard.board[position.first][position.second] == ObservedBoard::CellState::Hidden && basic_.marks[position.first][position.second] == Basic::Mark::S) {
+        const std::pair<int, int> position = observedBoard_.pos(cell);
+        const ObservedBoard::CellState state = observedBoard_.board[position.first][position.second];
+        if (!basicSafeSeen_[cell] && (state == ObservedBoard::CellState::Hidden || state == ObservedBoard::CellState::ForcedSafe) && result_.basic.marks[position.first][position.second] == Basic::Mark::S) {
             basicSafeCells_.push_back(cell);
             basicSafeSeen_[cell] = 1;
         }
     }
 }
 
-const Probability::Result &GameControl::Position::probability() {
-    if (error.failed)
-        return probability_;
-    if (probabilityDirty_) {
-        Probability::analyze(observedBoard, basic_, structure_, shapes_, distributions_, probability_, workspace_.probability, orderAlgo_);
-        probabilityDirty_ = false;
-        if (probability_.candidates() == 0.0L) {
-            error.failed = true;
-            error.reason = "观测盘面没有合法的全盘雷分布";
-        }
-    }
-    return probability_;
+void GameControl::Position::updateStructure() const {
+    if (structureLazyUpdate_.empty())
+        return;
+    Structure::update(result_.structure, delta_.structure, observedBoard_, result_.basic, pool_.shapes, structureLazyUpdate_, workspace_.structure);
+    structureLazyUpdate_.clear();
 }
 
-const std::vector<ObservedBoard::CellId> &GameControl::Position::safeMoves() {
+GameControl::Position::Position(ObservedBoard::Result board, Workspace &workspace, const ShapeSolver::OrderAlgo &algo)
+    : observedBoard_(std::move(board)), result_(Basic::analyze(observedBoard_, workspace.basic)), workspace_(workspace) {
+    // 人工输入先检查局部数字和总雷数范围，不能用全盘候选数代替此检查：无前沿组件的矛盾数字也可能产生非零候选数。
+    if (!Basic::checkValid(observedBoard_, result_.basic)) {
+        error_.failed = true;
+        error_.reason = "观测盘面的数字或已知雷位约束相互矛盾";
+        return;
+    }
+    initialize();
+    if (probability(algo).candidates() == 0.0L) {
+        error_.failed = true;
+        error_.reason = "观测盘面没有合法的全盘雷分布";
+    }
+}
+
+GameControl::Position::Position(Workspace &workspace, ObservedBoard::Result board)
+    : observedBoard_(std::move(board)), result_(Basic::analyze(observedBoard_, workspace.basic)), workspace_(workspace) {
+    initialize();
+}
+
+const ObservedBoard::Result &GameControl::Position::observedBoard() const { return observedBoard_; }
+
+const GameControl::Position::Error &GameControl::Position::error() const { return error_; }
+
+const Basic::Result &GameControl::Position::basic() const { return result_.basic; }
+
+const Structure::Result &GameControl::Position::structure() const { updateStructure(); return result_.structure; }
+
+const Structure::Pool &GameControl::Position::shapePool() const { updateStructure(); return pool_.shapes; }
+
+const Probability::Result &GameControl::Position::probability(const ShapeSolver::OrderAlgo &algo) const {
+    if (result_.probabilityDirty) {
+        updateStructure();
+        if (result_.probability)
+            Probability::analyze(observedBoard_, result_.basic, result_.structure, pool_.shapes, pool_.distributions, *result_.probability, workspace_.probability, algo);
+        else
+            result_.probability.emplace(Probability::analyze(observedBoard_, result_.basic, result_.structure, pool_.shapes, pool_.distributions, workspace_.probability, algo));
+        result_.probabilityDirty = false;
+    }
+    return *result_.probability;
+}
+
+winrate::Input GameControl::Position::input(const ShapeSolver::OrderAlgo &algo) {
+    const Probability::Result &currentProbability = probability(algo);
+    return {observedBoard_, result_.basic, result_.structure, currentProbability, pool_.shapes, pool_.distributions};
+}
+
+long double GameControl::Position::mineProbability(ObservedBoard::CellId cell, const ShapeSolver::OrderAlgo &algo) const {
+    const std::pair<int, int> location = observedBoard_.pos(cell);
+    const Basic::Mark mark = result_.basic.marks[location.first][location.second];
+    if (mark == Basic::Mark::S)
+        return 0.0L;
+    if (mark == Basic::Mark::F)
+        return 1.0L;
+    const Probability::Result &currentProbability = probability(algo);
+    return currentProbability.mineProbability(cell, observedBoard_, result_.basic, result_.structure);
+}
+
+Observe::Result GameControl::Position::observe(ObservedBoard::CellId cell, const ShapeSolver::OrderAlgo &algo) const {
+    const Probability::Result &currentProbability = probability(algo);
+    return Observe::observe(observedBoard_, result_.basic, result_.structure, pool_.shapes, currentProbability, pool_.distributions, cell, workspace_.probability, algo);
+}
+
+const std::vector<ObservedBoard::CellId> &GameControl::Position::safeMoves(const ShapeSolver::OrderAlgo &algo) {
     safeCells_.clear();
-    if (error.failed)
-        return safeCells_;
     for (int i = 0; i < (int)basicSafeCells_.size(); ++i) {
         const ObservedBoard::CellId cell = basicSafeCells_[i];
-        const std::pair<int, int> position = observedBoard.pos(cell);
-        if (observedBoard.board[position.first][position.second] == ObservedBoard::CellState::Hidden && basic_.marks[position.first][position.second] == Basic::Mark::S)
+        const std::pair<int, int> position = observedBoard_.pos(cell);
+        const ObservedBoard::CellState state = observedBoard_.board[position.first][position.second];
+        if ((state == ObservedBoard::CellState::Hidden || state == ObservedBoard::CellState::ForcedSafe) && result_.basic.marks[position.first][position.second] == Basic::Mark::S)
             safeCells_.push_back(cell);
     }
     basicSafeCells_ = safeCells_;
     if (!safeCells_.empty())
         return safeCells_;
 
-    for (int component = 0; component < (int)structure_.components.size(); ++component) {
-        const Structure::Instance &instance = shapes_.getInstance(structure_.components[component]);
-        const Structure::Shape &shape = shapes_.getShape(instance.shape);
-        const ShapeSolver::DistributionId distributionId = ShapeSolver::analyze(shape, shapes_, distributions_, workspace_.shapeSolver, orderAlgo_);
-        const ShapeSolver::DistributionResult &distribution = distributions_.get(distributionId);
+    updateStructure();
+    for (int component = 0; component < (int)result_.structure.components.size(); ++component) {
+        const Structure::Instance &instance = pool_.shapes.getInstance(result_.structure.components[component]);
+        const Structure::Shape &shape = pool_.shapes.getShape(instance.shape);
+        const ShapeSolver::DistributionId distributionId = ShapeSolver::analyze(shape, pool_.shapes, pool_.distributions, workspace_.shapeSolver, algo);
+        const ShapeSolver::DistributionResult &distribution = pool_.distributions.get(distributionId);
         const std::vector<long double> &ways = distribution.ways();
-        if (ways.empty())
-            continue;
-        const std::span<const int> offsets = instance.boxes.boxOf.span(shapes_.boxOf);
-        const std::span<const ObservedBoard::CellId> cells = instance.boxes.cells.span(shapes_.cells);
+        const std::span<const int> offsets = instance.boxes.boxOf.span(pool_.shapes.boxOf);
+        const std::span<const ObservedBoard::CellId> cells = instance.boxes.cells.span(pool_.shapes.cells);
         for (int box = 0; box < distribution.boxCount(); ++box) {
             bool safe = true;
             for (int i = 0; i < (int)ways.size(); ++i)
@@ -211,150 +197,55 @@ const std::vector<ObservedBoard::CellId> &GameControl::Position::safeMoves() {
             return safeCells_;
     }
 
-    const Probability::Result &currentProbability = probability();
-    if (error.failed)
-        return safeCells_;
-    currentProbability.frontierCells(structure_, shapes_, [&](ObservedBoard::CellId cell, long double risk) {
+    const Probability::Result &currentProbability = probability(algo);
+    currentProbability.frontierCells(result_.structure, pool_.shapes, [&](ObservedBoard::CellId cell, long double risk) {
         if (risk == 0.0L)
             safeCells_.push_back(cell);
     });
-    if (currentProbability.tCellProbability() == 0.0L && basic_.unknownSum != 0)
-        for (int row = 0; row < observedBoard.board.rows(); ++row)
-            for (int col = 0; col < observedBoard.board.cols(); ++col)
-                if (observedBoard.board[row][col] == ObservedBoard::CellState::Hidden && basic_.marks[row][col] == Basic::Mark::T)
-                    safeCells_.push_back(observedBoard.id(row, col));
+    if (currentProbability.tCellProbability() == 0.0L && result_.basic.unknownSum != 0)
+        for (int row = 0; row < observedBoard_.board.rows(); ++row)
+            for (int col = 0; col < observedBoard_.board.cols(); ++col)
+                if (observedBoard_.board[row][col] == ObservedBoard::CellState::Hidden && result_.basic.marks[row][col] == Basic::Mark::T)
+                    safeCells_.push_back(observedBoard_.id(row, col));
     return safeCells_;
 }
 
-GameControl::Game::Game(MineBoard mineBoard, ObservedBoard::Result observedBoard, Workspace &workspace, ShapeSolver::OrderAlgo orderAlgo)
-    : mineBoard_(std::make_unique<MineBoard>(std::move(mineBoard))),
-      position(std::move(observedBoard), workspace, orderAlgo) {
-    if (!mineBoard_->matches(position.observedBoard)) {
-        position.error.failed = true;
-        position.error.reason = "观测盘面与实际雷盘不一致";
+GameControl::Position::SuggestResult GameControl::Position::suggest(const ShapeSolver::OrderAlgo &algo, SuggestAlgo suggestAlgo, const Config &cfg) {
+    const std::vector<ObservedBoard::CellId> &safe = safeMoves(algo);
+    if (!safe.empty())
+        return {safe, true};
+
+    const Probability::Result &currentProbability = *result_.probability;
+    if (suggestAlgo == SuggestAlgo::JavaBrute && currentProbability.candidates() < cfg.bruteForce.candidateThreshold) {
+        const BruteForce::Result evaluated = BruteForce::solve(observedBoard_, result_.basic, result_.structure, pool_.shapes, cfg.bruteForce, workspace_.bruteForce);
+        // 全候选模式按候选顺序返回；推荐须取胜局数最大项。无可点击格时返回空列表。
+        if (evaluated.moves.empty())
+            return {};
+        const BruteForce::Result::Move *best = &evaluated.moves.front();
+        for (int i = 1; i < (int)evaluated.moves.size(); ++i)
+            if (evaluated.moves[i].wins > best->wins)
+                best = &evaluated.moves[i];
+        return {{best->cell}, false};
     }
-}
-
-GameControl::Game::Game(int rows, int cols, int mines, U128 seed, Workspace &workspace, const ObservedBoard::Result *observedBoard, ShapeSolver::OrderAlgo orderAlgo)
-    : mineBoard_(std::make_unique<MineBoard>()),
-      position(observedBoard == nullptr ? ObservedBoard::Result(rows, cols, mines) : *observedBoard, workspace, orderAlgo) {
-    mineBoard_->generate(rows, cols, mines, seed);
-    if (observedBoard != nullptr && !mineBoard_->matches(position.observedBoard)) {
-        position.error.failed = true;
-        position.error.reason = "观测盘面与实际雷盘不一致";
-    }
-}
-
-void GameControl::Game::reset(U128 seed) {
-    const int rows = position.observedBoard.board.rows();
-    const int cols = position.observedBoard.board.cols();
-    const int mines = position.observedBoard.totalMines;
-    mineBoard_->generate(rows, cols, mines, seed);
-    position.observedBoard = ObservedBoard::Result(rows, cols, mines);
-    position.initialize(Basic::analyze(position.observedBoard, position.workspace_.basic));
-}
-
-void GameControl::Game::update(ObservedBoard::Delta &updates) {
-    position.update(updates);
-}
-
-void GameControl::Game::makeFirstMoveSafe(ObservedBoard::CellId cell, ObservedBoard::CellId safeCell) {
-    const std::pair<int, int> position = this->position.observedBoard.pos(cell);
-    if (mineBoard_->number(position.first, position.second) == 9) {
-        const std::pair<int, int> safePosition = this->position.observedBoard.pos(safeCell);
-        mineBoard_->makeSafe(position.first, position.second, safePosition.first, safePosition.second);
-    }
-}
-
-int GameControl::Game::number(int row, int col) const {
-    return mineBoard_->number(row, col);
-}
-
-bool GameControl::Game::won() const {
-    return position.remainingSafe_ == 0;
-}
-
-Observe::Result GameControl::Position::observe(ObservedBoard::CellId cell) {
-    const Probability::Result &currentProbability = probability();
-    return Observe::observe(observedBoard, basic_, structure_, shapes_, currentProbability, distributions_, cell, workspace_.probability, orderAlgo_);
-}
-
-long double GameControl::Position::mineProbability(ObservedBoard::CellId cell) {
-    return probability().mineProbability(cell, observedBoard, basic_, structure_);
-}
-
-const Structure::Pool &GameControl::Position::shapePool() const {
-    return shapes_;
-}
-
-GameControl::Position::SuggestResult GameControl::Position::suggest(const Config &config) {
-    if (config.position.algo != Config::Position::Algo::Java && config.position.algo != Config::Position::Algo::LowRisk) {
-        assert_(false, "Position::suggest: 无效的建议算法");
-        std::exit(1);
-    }
-    SuggestResult suggestion;
-    const std::vector<ObservedBoard::CellId> &knownSafe = safeMoves();
-    if (!knownSafe.empty() || error.failed) {
-        suggestion.cells = knownSafe;
-        return suggestion;
-    }
-    if (remainingSafe_ == 0)
-        return {};
-
-    const Probability::Result &currentProbability = probability();
-    if (error.failed)
-        return {};
-    ObservedBoard::Delta forcedMines;
-    currentProbability.frontierCells(structure_, shapes_, [&](ObservedBoard::CellId cell, long double risk) {
-        if (risk == 1.0L)
-            forcedMines.changes.push_back({cell, ObservedBoard::CellState::ForcedMine});
-    });
-    if (currentProbability.tCellProbability() == 1.0L && basic_.unknownSum != 0)
-        for (int row = 0; row < observedBoard.board.rows(); ++row)
-            for (int col = 0; col < observedBoard.board.cols(); ++col)
-                if (observedBoard.board[row][col] == ObservedBoard::CellState::Hidden && basic_.marks[row][col] == Basic::Mark::T)
-                    forcedMines.changes.push_back({observedBoard.id(row, col), ObservedBoard::CellState::ForcedMine});
-    if (!forcedMines.changes.empty()) {
-        update(forcedMines);
-        const std::vector<ObservedBoard::CellId> &newlySafe = safeMoves();
-        if (!newlySafe.empty() || error.failed) {
-            suggestion.cells = newlySafe;
-            return suggestion;
-        }
+    if (suggestAlgo == SuggestAlgo::JavaEval || suggestAlgo == SuggestAlgo::JavaBrute) {
+        const winrate::Input input(observedBoard_, result_.basic, result_.structure, currentProbability, pool_.shapes, pool_.distributions);
+        // Position 没有单独的根死格列表；JavaEval 仍按原数字分支判断推迟猜测的候选。
+        const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, cfg.longTermRisk, workspace_.longTermRisk);
+        const JavaEval::Result evaluated = JavaEval::analyze(input, risk, {}, cfg.javaEval, cfg.longTermRisk, cfg.pseudo, workspace_.javaEval);
+        // 自动评估首项就是推荐格；无可点击格的合法局面返回空列表。
+        if (evaluated.empty())
+            return {};
+        return {{evaluated.front().cellId}, false};
     }
 
-    const Probability::Result &updatedProbability = probability();
-    if (error.failed)
-        return {};
-    if (config.position.algo == Config::Position::Algo::Java) {
-        if (updatedProbability.candidates() <= config.position.bruteForceThreshold) {
-            suggestion.bruteForce = BruteForce::solve(observedBoard, basic_, structure_, shapes_, config, workspace_.bruteForce);
-            if (!suggestion.bruteForce.moves.empty()) {
-                const BruteForce::Result::Move *best = &suggestion.bruteForce.moves.front();
-                for (const BruteForce::Result::Move &move : suggestion.bruteForce.moves)
-                    if (move.wins > best->wins)
-                        best = &move;
-                suggestion.engine = SuggestResult::Engine::BruteForce;
-                suggestion.cells = {best->cell};
-                return suggestion;
-            }
-        }
-        const LongTermRiskReference::Influence risk = LongTermRiskReference::findInfluence(observedBoard, basic_, structure_, updatedProbability, shapes_, distributions_, {}, config, workspace_.longTermRisk);
-        const JavaEvaluate::Result result = JavaEvaluate::solve(observedBoard, basic_, structure_, updatedProbability, shapes_, distributions_, risk, {}, config, workspace_.javaEvaluate);
-        suggestion.engine = SuggestResult::Engine::JavaEval;
-        if (result.x == 0 || result.y == 0)
-            return suggestion;
-        suggestion.cells = {observedBoard.id(result.x - 1, result.y - 1)};
-        for (const JavaEvaluate::Candidate &candidate : result.candidates)
-            suggestion.candidates.push_back(observedBoard.id(candidate.x - 1, candidate.y - 1));
-        return suggestion;
-    }
     ObservedBoard::CellId safest = -1;
-    int safestRow = observedBoard.board.rows();
+    int safestRow = observedBoard_.board.rows();
     int safestCol = -1;
     long double lowestRisk = 2.0L;
     auto consider = [&](ObservedBoard::CellId cell, long double risk) {
-        const std::pair<int, int> location = observedBoard.pos(cell);
+        if (risk == 1.0L)
+            return;
+        const std::pair<int, int> location = observedBoard_.pos(cell);
         if (risk < lowestRisk || (risk == lowestRisk && (location.first < safestRow || (location.first == safestRow && location.second > safestCol)))) {
             lowestRisk = risk;
             safestRow = location.first;
@@ -362,30 +253,99 @@ GameControl::Position::SuggestResult GameControl::Position::suggest(const Config
             safest = cell;
         }
     };
-    updatedProbability.frontierCells(structure_, shapes_, [&](ObservedBoard::CellId cell, long double risk) { consider(cell, risk); });
-    if (basic_.unknownSum != 0)
-        for (int row = 0; row < observedBoard.board.rows(); ++row)
-            for (int col = 0; col < observedBoard.board.cols(); ++col)
-                if (observedBoard.board[row][col] == ObservedBoard::CellState::Hidden && basic_.marks[row][col] == Basic::Mark::T)
-                    consider(observedBoard.id(row, col), updatedProbability.tCellProbability());
-    assert_(safest >= 0, "Position::suggest: 未获胜但没有可建议的隐藏格");
-    suggestion.engine = SuggestResult::Engine::LowRisk;
-    suggestion.cells = {safest};
-    return suggestion;
+    currentProbability.frontierCells(result_.structure, pool_.shapes, [&](ObservedBoard::CellId cell, long double risk) { consider(cell, risk); });
+    if (result_.basic.unknownSum != 0)
+        for (int row = 0; row < observedBoard_.board.rows(); ++row)
+            for (int col = 0; col < observedBoard_.board.cols(); ++col)
+                if (observedBoard_.board[row][col] == ObservedBoard::CellState::Hidden && result_.basic.marks[row][col] == Basic::Mark::T)
+                    consider(observedBoard_.id(row, col), currentProbability.tCellProbability());
+    // Position 没有 Game 的胜负状态；合法局面只剩确定雷格时，没有可揭开的安全格，正常返回空建议。
+    if (safest < 0)
+        return {};
+    return {{safest}, false};
 }
 
-void GameControl::Game::playUntilNoSafe() {
-    ObservedBoard::Delta updates;
-    for (;;) {
-        const std::vector<ObservedBoard::CellId> &safe = position.safeMoves();
+GameControl::Game::Game(MineBoard mineBoard, ObservedBoard::Result observedBoard, Workspace &workspace)
+    : mineBoard_(std::move(mineBoard)), remainingSafe_(countRemainingSafe(observedBoard)), state_(remainingSafe_ == 0 ? State::Won : State::Running), position_(workspace, std::move(observedBoard)) {}
+
+GameControl::Game::Game(int rows, int cols, int mines, U128 seed, Workspace &workspace)
+    : pendingSeed_(seed), remainingSafe_(rows * cols - mines), state_(State::Running), position_(workspace, ObservedBoard::Result(rows, cols, mines)) {}
+
+int GameControl::Game::countRemainingSafe(const ObservedBoard::Result &observedBoard) {
+    int remainingSafe = observedBoard.board.rows() * observedBoard.board.cols() - observedBoard.totalMines;
+    for (int row = 0; row < observedBoard.board.rows(); ++row)
+        for (int col = 0; col < observedBoard.board.cols(); ++col)
+            if (observedBoard.board[row][col] < ObservedBoard::CellState::Hidden)
+                --remainingSafe;
+    return remainingSafe;
+}
+
+void GameControl::Game::reset(U128 seed) {
+    const int rows = position_.observedBoard_.board.rows();
+    const int cols = position_.observedBoard_.board.cols();
+    const int mines = position_.observedBoard_.totalMines;
+    pendingSeed_ = seed;
+    remainingSafe_ = rows * cols - mines;
+    state_ = State::Running;
+    playDelta_.clear();
+    position_.reset(ObservedBoard::Result(rows, cols, mines));
+}
+
+const GameControl::Position &GameControl::Game::position() const {
+    return position_;
+}
+
+GameControl::Game::SuggestResult GameControl::Game::suggest(const ShapeSolver::OrderAlgo &algo, SuggestAlgo suggestAlgo, const Config &cfg) {
+    return position_.suggest(algo, suggestAlgo, cfg);
+}
+
+void GameControl::Game::play(const std::vector<ObservedBoard::CellId> &cells) {
+    playDelta_.clear();
+    int safeCount = 0;
+    for (int i = 0; i < (int)cells.size(); ++i) {
+        const std::pair<int, int> location = position_.observedBoard_.pos(cells[i]);
+        const ObservedBoard::CellState previous = position_.observedBoard_.board[location.first][location.second];
+        if (previous != ObservedBoard::CellState::Hidden)
+            continue;
+        if (pendingSeed_) {
+            const ObservedBoard::Result &board = position_.observedBoard_;
+            if (mineBoard_)
+                mineBoard_->generate(board.board.rows(), board.board.cols(), board.totalMines, location.first, location.second, *pendingSeed_);
+            else
+                mineBoard_.emplace(board.board.rows(), board.board.cols(), board.totalMines, location.first, location.second, *pendingSeed_);
+            pendingSeed_.reset();
+        }
+        const int value = mineBoard_->number(location.first, location.second);
+        if (value == 9) {
+            state_ = State::Lost;
+            break;
+        }
+        playDelta_.changes.push_back({cells[i], previous, (ObservedBoard::CellState)value});
+        ++safeCount;
+        if (safeCount == remainingSafe_)
+            break;
+    }
+    if (!playDelta_.changes.empty())
+        position_.update(playDelta_);
+    remainingSafe_ -= safeCount;
+    if (remainingSafe_ == 0)
+        state_ = State::Won;
+}
+
+int GameControl::Game::number(int row, int col) const {
+    return mineBoard_->number(row, col);
+}
+
+GameControl::Game::State GameControl::Game::state() const {
+    return state_;
+}
+
+void GameControl::Game::playUntilNoSafe(const ShapeSolver::OrderAlgo &algo) {
+    while (state_ == State::Running) {
+        const std::vector<ObservedBoard::CellId> &safe = position_.safeMoves(algo);
         if (safe.empty())
             return;
-        updates.clear();
-        for (ObservedBoard::CellId cell : safe) {
-            const std::pair<int, int> location = position.observedBoard.pos(cell);
-            updates.changes.push_back({cell, (ObservedBoard::CellState)mineBoard_->number(location.first, location.second)});
-        }
-        update(updates);
+        play(safe);
     }
 }
 

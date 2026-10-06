@@ -8,8 +8,10 @@ namespace mss {
 
 template <typename T> struct vectorPool {
     struct vector {
-        int idx = 0;
-        int size = 0;
+        int idx;
+        int size;
+
+        vector(int idx, int size) : idx(idx), size(size) {}
 
         std::span<T> span(vectorPool &pool) const {
             return std::span<T>(pool._data.data() + idx, size);
@@ -35,7 +37,7 @@ template <typename T> struct vectorPool {
     }
 
     void pop_back(const vector &value) {
-        _data.resize(value.idx);
+        _data.erase(_data.begin() + value.idx, _data.end());
     }
 
   private:

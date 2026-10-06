@@ -10,10 +10,10 @@ namespace mss {
 template <typename T> class RawGrid {
   public:
     // 默认构造得到 0×0 空网格。
-    RawGrid() = default;
+    RawGrid() : rows_(0), cols_(0) {}
 
     // 尺寸和填充值的含义与 resize 相同。
-    RawGrid(int rows, int cols, const T &value) { resize(rows, cols, value); }
+    RawGrid(int rows, int cols, const T &value) : rows_(rows), cols_(cols), data_((std::size_t)rows * cols, value) {}
 
     // rows/cols 必须非负；调整后旧内容全部丢弃，新区域统一填入 value。
     void resize(int rows, int cols, const T &value) {
@@ -32,8 +32,8 @@ template <typename T> class RawGrid {
     const T *operator[](int row) const { return data_.data() + (std::size_t)row * cols_; }
 
   private:
-    int rows_ = 0;
-    int cols_ = 0;
+    int rows_;
+    int cols_;
     std::vector<T> data_;
 };
 

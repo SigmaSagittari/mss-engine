@@ -13,7 +13,6 @@
 #include "algo/probability_engine/observed_board/observed_board.h"
 #include "algo/probability_engine/shape_solver/shape_solver.h"
 #include "algo/probability_engine/structure/structure.h"
-#include "core/config.h"
 #include "core/utility/bit_mask.h"
 #include "core/utility/dynamic_bitset.h"
 #include "core/utility/flat_hashtable.h"
@@ -23,18 +22,45 @@
 namespace mss {
 
 struct BruteForce {
+    struct Config {
+        // 三种后端结果语义一致；候选超过掩码宽度或只有一种布局时，调度层使用 Common 后端。
+        enum class Solver {
+            // 普通递归实现，支持任意候选数。
+            Common,
+            // 定宽位掩码实现，最多处理 bitMask<8> 可容纳的候选格。
+            Bitwise,
+            // 仅并行展开根节点候选；线程总数上限由调用方提供，包含调用线程。
+            BitwiseRootParallel,
+        };
+        // 仅为 true 时返回每个候选格的结果；false 时至多返回一条推荐步。
+        bool checkAllMoves;
+        // 后端选择不改变动作含义或胜局数。
+        Solver solver;
+        // JavaBrute 建议模式在全盘候选布局数严格小于此值时调用暴力；solve 本身不受此阈值限制。
+        int candidateThreshold;
+        // 引用主 Config::Global 的线程上限，包含调用线程；目标须比本配置活得久。
+        int &threadLimit;
+
+        Config(bool checkAllMoves, Solver solver, int candidateThreshold, int &threadLimit) : checkAllMoves(checkAllMoves), solver(solver), candidateThreshold(candidateThreshold), threadLimit(threadLimit) {}
+        Config(const Config &other, int &threadLimit) : checkAllMoves(other.checkAllMoves), solver(other.solver), candidateThreshold(other.candidateThreshold), threadLimit(threadLimit) {}
+    };
+
     struct Result {
         struct Move {
-            // 按当前棋盘尺寸编码的 0-based CellId。
-            ObservedBoard::CellId cell = -1;
-            // 点击此格后能保证继续获胜的完整布局数，不是概率。
-            int wins = 0;
+            // 根节点搜索期间 cell 为 -1 表示尚未找到达阈值的推荐格，收尾时会写入真实安全格；wins 在收尾时写入完整布局数。
+            ObservedBoard::CellId cell;
+            int wins;
+
+            Move() : cell(-1), wins(0) {}
+            Move(ObservedBoard::CellId cell, int wins) : cell(cell), wins(wins) {}
         };
 
         // 后端递归访问的节点数；并行模式为所有工作线程的合计。
-        long long nodes = 0;
+        long long nodes;
         // 全候选模式按候选顺序排列；单步模式为空或只有一个推荐步。
         std::vector<Move> moves;
+
+        Result() : nodes(0) {}
     };
 
   private:
@@ -50,24 +76,29 @@ struct BruteForce {
 
         struct CommonSession {
             struct Candidate {
-                ObservedBoard::CellId cell = -1;
+                ObservedBoard::CellId cell;
                 // links 中该候选邻居区间的起点和数量；每格最多 8 个邻居。
-                std::uint32_t linksOffset = 0;
-                std::uint8_t linksCount = 0;
+                std::uint32_t linksOffset;
+                std::uint8_t linksCount;
                 // 不在候选集合里的 F 邻居数，预先并入揭示数字。
-                std::uint8_t fixedMines = 0;
+                std::uint8_t fixedMines;
+
+                Candidate(ObservedBoard::CellId cell, std::uint32_t linksOffset, std::uint8_t linksCount, std::uint8_t fixedMines) : cell(cell), linksOffset(linksOffset), linksCount(linksCount), fixedMines(fixedMines) {}
             };
 
-            int candidateCount = 0;
+            int candidateCount;
             // 完整雷位方案数量；每个方案对应一个 ConfigId。
-            int possibilityCount = 0;
+            int possibilityCount;
             std::vector<Candidate> candidates;
             // 候选邻居的 CandidateId 连续存储，由 linksOffset/linksCount 定位。
             std::vector<int> links;
             // 每行恰有这么多项；组件模式由调用方给定，全盘模式由剩余总雷数确定。
-            int minesPerConfig = 0;
+            int minesPerConfig;
             // [ConfigId][雷序号] 的候选下标表；布局枚举后供两个后端共同读取。
             RawGrid<CandidateId> mineCandidateIds;
+
+            // 空工作区的计数与空容器一致；每次构建都会重设计数并写入实际雷数。
+            CommonSession() : candidateCount(0), possibilityCount(0), minesPerConfig(0) {}
         } commonSession;
 
         struct Build {
@@ -116,7 +147,9 @@ struct BruteForce {
             // 正值缓存精确胜局数，负值缓存未达阈值时可证明的胜局上界。
             FlatHashTable<U128, int, U128Hash> cache;
             std::deque<Layer> layers;
-            long long nodes = 0;
+            long long nodes;
+
+            Normal() : nodes(0) {}
         } normal;
 
         struct MultiMask {
@@ -131,7 +164,9 @@ struct BruteForce {
                 const Layout<Mask> &layout;
                 // 每个搜索线程独有的未开候选掩码和节点计数。
                 Mask unopenedCandidates;
-                long long nodes = 0;
+                long long nodes;
+
+                Session(const Layout<Mask> &layout, Mask unopenedCandidates) : layout(layout), unopenedCandidates(unopenedCandidates), nodes(0) {}
             };
 
             struct Layer {
@@ -154,18 +189,23 @@ struct BruteForce {
                 std::deque<Layer> layers;
                 FlatHashTable<U128, int, U128Hash> safeGroupTable;
                 // 仅 Java-lite 排序时使用的固定容量计数，不随递归深度分配。
-                std::array<std::array<int, bitMask<8>::kBitCount>, 9> javaLiteMineCounts{};
-                std::array<int, 9> javaLiteGroupSizes{};
-                std::array<int, 9 * 9 * 9> smallGroupCounts{};
+                std::array<std::array<int, bitMask<8>::kBitCount>, 9> javaLiteMineCounts;
+                std::array<int, 9> javaLiteGroupSizes;
+                std::array<int, 9 * 9 * 9> smallGroupCounts;
                 std::vector<int> smallGroupKeys;
                 std::vector<int> smallGroupConfigKeys;
+
+                // 分组计数从空开始；小组计数每轮用完归零，worker 搬移时全部数组也保持已初始化。
+                Scratch() : javaLiteMineCounts{}, javaLiteGroupSizes{}, smallGroupCounts{} {}
             };
 
             struct Worker {
                 // 每个并行线程独占 scratch/cache；useSharedCache 只在根并行任务期间开启。
                 Scratch scratch;
                 FlatHashTable<U128, int, U128Hash> cache;
-                bool useSharedCache = false;
+                bool useSharedCache;
+
+                Worker() : useSharedCache(false) {}
             } main;
 
             struct Parallel {
@@ -204,7 +244,8 @@ struct BruteForce {
     };
 
     // board、basic、structure 必须描述同一观测状态，shapes 必须是 structure 所属的池。
-    // checkAllMoves 为 true 时逐一返回所有 H/T 候选格；否则只按 minWins 搜索并返回一条推荐步。
+    // checkAllMoves 为 true 时逐一返回所有 H/T 候选格；否则搜索最高胜局数并返回一条推荐步。
+    // options.threadLimit 引用主 Config::Global，须为正数；串行后端不启用额外线程。
     static Result solve(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes, const Config &options, Workspace &workspace);
     // components 按对应 Structure 池中的 InstanceId 给出，offFrontierCells 是自由选雷格；两者合计恰有 mines 个雷。
     // 输出模式仍只由 checkAllMoves 决定，不会因入口类型自动展开所有候选格。

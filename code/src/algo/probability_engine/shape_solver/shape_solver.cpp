@@ -30,8 +30,7 @@ DistributionId analyze(const Structure::Shape &shape, const Structure::Pool &sha
 const AssignmentPool::Result &assignments(Structure::ShapeId shapeId, const Structure::Shape &shape, const Structure::Pool &shapes, AssignmentPool &pool, Workspace &workspace) {
     if (const AssignmentPool::Result *cached = pool.find(shapeId))
         return *cached;
-    AssignmentPool::Result result;
-    result.boxCount = shape.boxes.size;
+    AssignmentPool::Result result(shape.boxes.size);
     int maxMines = 0;
     for (const Structure::Shape::Box &box : shape.boxes.span(shapes.boxes))
         maxMines += box.size;

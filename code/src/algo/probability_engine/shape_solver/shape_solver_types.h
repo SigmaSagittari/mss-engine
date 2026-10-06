@@ -29,11 +29,13 @@ struct Workspace {
 
         // 以下临时缓冲可跨调用顺序复用；同一 Workspace 不得供并发调用共享。
         struct Frame {
-            int index = 0; // 下一层要分配的 Box 下标。
-            int nextMine = 0; // 当前 Box 下一种待试的雷数。
-            int appliedIndex = -1; // 进入本帧时已应用的父层 Box；根帧为 -1。
-            int appliedMine = 0; // 父层 Box 对各约束和已分配容量的贡献。
-            long double ways = 0.0L; // 到达本帧的具体布局权重。
+            int index; // 下一层要分配的 Box 下标。
+            int nextMine; // 当前 Box 下一种待试的雷数。
+            int appliedIndex; // 进入本帧时已应用的父层 Box；根帧为 -1。
+            int appliedMine; // 父层 Box 对各约束和已分配容量的贡献。
+            long double ways; // 到达本帧的具体布局权重。
+
+            Frame(int index, int nextMine, int appliedIndex, int appliedMine, long double ways) : index(index), nextMine(nextMine), appliedIndex(appliedIndex), appliedMine(appliedMine), ways(ways) {}
         };
 
         // 枚举栈及 Box 到约束的反向索引。
@@ -80,17 +82,32 @@ struct Workspace {
         struct Step {
             struct Check {
                 // 该约束要求的总雷数及尚未处理 Box 的最大可贡献雷数。
-                int sum = 0;
-                int remainingSize = 0;
+                int sum;
+                int remainingSize;
                 // 单条数字约束最多涉及周围 8 格，因此只需记录至多 8 个已处理 Box 的旧 slot。
-                std::array<int, 8> readSlots{};
-                int readCount = 0;
+                std::array<int, 8> readSlots;
+                int readCount;
+
+                // 危险：固定容量避免逐约束分配；只读取 [0, readCount)，建图时逐项首次写入，复制也只处理有效项。
+                explicit Check(int sum) : sum(sum), remainingSize(0), readCount(0) {}
+                Check(const Check &other) : sum(other.sum), remainingSize(other.remainingSize), readCount(other.readCount) {
+                    for (int i = 0; i < readCount; ++i) readSlots[i] = other.readSlots[i];
+                }
+                Check &operator=(const Check &other) {
+                    sum = other.sum;
+                    remainingSize = other.remainingSize;
+                    readCount = other.readCount;
+                    for (int i = 0; i < readCount; ++i) readSlots[i] = other.readSlots[i];
+                    return *this;
+                }
             };
 
             struct Closing {
                 // 已闭合 Box 的 ID；当前正在分配的 Box 用 -1 表示旧 frontier slot。
-                Structure::BoxId box = 0;
-                int oldSlot = -1;
+                Structure::BoxId box;
+                int oldSlot;
+
+                Closing(Structure::BoxId box, int oldSlot) : box(box), oldSlot(oldSlot) {}
             };
 
             std::vector<int> position;
@@ -118,22 +135,26 @@ struct Workspace {
         struct Layer {
             // State 只区分当前未闭合 Box 的赋值；同一 State 的 Count 按组件总雷数累计 ways 和已闭合 Box 的加权雷数。
             struct Count {
-                int mineCount = 0;
-                long double ways = 0.0L;
-                std::size_t momentOffset = 0;
-                int next = -1;
+                int mineCount;
+                long double ways;
+                std::size_t momentOffset;
+                int next;
+
+                Count(int mineCount, long double ways, std::size_t momentOffset, int next) : mineCount(mineCount), ways(ways), momentOffset(momentOffset), next(next) {}
             };
 
             struct State {
-                std::size_t frontierOffset = 0;
-                int firstCount = -1;
-                int lastCount = -1;
+                std::size_t frontierOffset;
+                int firstCount;
+                int lastCount;
+
+                State(std::size_t frontierOffset, int firstCount, int lastCount) : frontierOffset(frontierOffset), firstCount(firstCount), lastCount(lastCount) {}
             };
 
             struct MomentValue {
                 long double value;
 
-                // 不能删：矩数组可能很大，此构造函数避免 resize 清零；每个 Count 的全部矩槽在首次贡献时先被写入，之后才累加。
+                // 危险：矩数组很大，此构造函数避免 resize 清零；首次贡献写完每个 Count 的全部矩槽，之后才累加，扩容只搬移已写完的逻辑范围。
                 MomentValue() {}
             };
 
@@ -162,16 +183,20 @@ struct Workspace {
         struct GraphLayer {
             // 观测层在同一 frontier 赋值下，再按组件总雷数和邻居雷数分别累计权重。
             struct Count {
-                int componentMines = 0;
-                int neighborMines = 0;
-                long double ways = 0.0L;
-                int next = -1;
+                int componentMines;
+                int neighborMines;
+                long double ways;
+                int next;
+
+                Count(int componentMines, int neighborMines, long double ways, int next) : componentMines(componentMines), neighborMines(neighborMines), ways(ways), next(next) {}
             };
 
             struct State {
-                std::size_t frontierOffset = 0;
-                int firstCount = -1;
-                int lastCount = -1;
+                std::size_t frontierOffset;
+                int firstCount;
+                int lastCount;
+
+                State(std::size_t frontierOffset, int firstCount, int lastCount) : frontierOffset(frontierOffset), firstCount(firstCount), lastCount(lastCount) {}
             };
 
             std::vector<State> states;
@@ -253,11 +278,15 @@ struct AssignmentPool {
     };
 
     struct Result {
-        int boxCount = -1;
+        int boxCount;
         std::vector<char> boxMines;
         // assignments[k] 中每项是总雷数为 k 的赋值，cumulative 是该档内的累积布局权重。
         std::vector<std::vector<Assignment>> assignments;
         std::vector<long double> ways;
+
+        // 按 ShapeId 扩容时创建的空槽尚未缓存赋值；只有 boxCount 非负的槽可由 find 返回。
+        Result() : boxCount(-1) {}
+        explicit Result(int boxCount) : boxCount(boxCount) {}
     };
 
     const Result *find(Structure::ShapeId shape) const { return shape < (int)results_.size() && results_[shape].boxCount >= 0 ? &results_[shape] : nullptr; }
@@ -288,7 +317,9 @@ class ObversedResult {
     };
 
     // distributions 按邻居雷数 0~8 排列；九段紧邻存放在 ways 中，段内允许有零项。
-    // 求解器每次完整覆盖九个描述符，并用 assign 覆盖 ways；容量可跨组件复用。
+    // 危险：工作区复用结果容量，避免另建临时结果再搬入；描述符不初始化，DFS/Graph observe 首次完整写入九项前不得读取或复制。
+    // 后续调用同样完整覆盖描述符，并用 assign 覆盖 ways；容量可跨组件复用。
+    ObversedResult() {}
 
     // neighborMines 必须在 [0, 8]；返回 ways[i] 对应 start+i 个组件雷，视图在结果被再次覆写、移动或销毁后失效。
     View distribution(int neighborMines) const {

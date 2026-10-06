@@ -105,7 +105,7 @@ Observe::Result Observe::observe(const ObservedBoard::Result &board, const Basic
 
     // 剩余 T 格与未捕获组件只影响总雷数，不影响点开数字；将其合成 restWays。
     const int tPool = basic.unknownSum - tNeighbors - (clickedT ? 1 : 0);
-    ws.restStart = 0;
+    int restStart = 0;
     ws.restCoefficients.assign(1, 1.0L);
     for (int component = 0; component < (int)structure.components.size(); ++component) {
         if (ws.seen[component])
@@ -113,21 +113,21 @@ Observe::Result Observe::observe(const ObservedBoard::Result &board, const Basic
         const Structure::Instance &instance = shapes.getInstance(structure.components[component]);
         const ShapeSolver::DistributionId id = ShapeSolver::analyze(shapes.get(instance.shape), shapes, distributions, workspace.shapeSolver, algo);
         const ShapeSolver::DistributionResult &distribution = distributions.get(id);
-        const Poly left(ws.restStart, ws.restCoefficients);
+        const Poly left(restStart, ws.restCoefficients);
         const Poly right(distribution.start(), distribution.ways());
         const int nextStart = left.start + right.start;
         Poly::multiply(left, right, ws.productScratch);
         std::swap(ws.restCoefficients, ws.productScratch);
-        ws.restStart = nextStart;
+        restStart = nextStart;
     }
 
     if (ws.restCoefficients.empty())
         ws.restWays.clear();
     else {
-        ws.restWays.assign(ws.restStart + tPool + ws.restCoefficients.size(), 0.0L);
+        ws.restWays.assign(restStart + tPool + ws.restCoefficients.size(), 0.0L);
         for (int i = 0; i < (int)ws.restCoefficients.size(); ++i) {
             const long double ways = ws.restCoefficients[i];
-            const int componentMines = ws.restStart + i;
+            const int componentMines = restStart + i;
             for (int tMines = 0; tMines <= tPool; ++tMines) {
                 const int restMines = componentMines + tMines;
                 if (tPool <= 9)

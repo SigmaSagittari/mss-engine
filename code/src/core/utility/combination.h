@@ -9,10 +9,13 @@ namespace mss {
 
 struct Combination {
     struct Workspace {
+        // -1 表示尚未展开任何一行，首次 chooseLarge 从第 0 行建立缓存。
+        Workspace() : max_n(-1) {}
+
       private:
         friend struct Combination;
 
-        int max_n = -1;
+        int max_n;
         std::vector<long double> values;
     };
 

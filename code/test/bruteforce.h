@@ -7,14 +7,16 @@
 #include <iostream>
 #include <vector>
 
+#include "common.h"
 #include "core/assert.h"
 #include "core/config.h"
+#include "algo/probability_engine/bruteforce/bruteforce.h"
 #include "core/workspace.h"
 
 namespace test {
 
 inline void bruteforce() {
-    auto runBruteForceFixedEndgame = [](const char *mode, const mss::Config &config) {
+    auto runBruteForceFixedEndgame = [&](const char *mode, const mss::BruteForce::Config &config) {
         constexpr int kRows = 30;
         constexpr int kCols = 16;
         constexpr int kMines = 99;
@@ -57,29 +59,24 @@ inline void bruteforce() {
             logicComponents.push_back({mss::Poly(0, unitWays), basic.unknownSum});
         std::vector<long double> componentProbabilities(logicComponents.size(), 0.0L);
         const std::chrono::steady_clock::time_point logicStarted = std::chrono::steady_clock::now();
-        const long double logicWays = mss::Probability::analyzeLogicComponents(logicComponents, board.totalMines - basic.mineSum, analysisWorkspace.probability,
-            [&](int component, int, long double, long double componentProbability) { componentProbabilities[component] += componentProbability; });
+        const long double logicWays = mss::Probability::analyzeLogicComponents(logicComponents, board.totalMines - basic.mineSum, analysisWorkspace.probability, [&](int component, int, long double, long double componentProbability) { componentProbabilities[component] += componentProbability; });
         const double logicMilliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - logicStarted).count();
         mss::assert_(std::fabs(logicWays - probability.candidates()) < 1e-12L, "test::runBruteForceFixedEndgame: logicComponent API 布局数不一致");
         for (int component = 0; component < (int)componentProbabilities.size(); ++component)
             mss::assert_(std::fabs(componentProbabilities[component] - 1.0L) < 1e-12L, "test::runBruteForceFixedEndgame: logicComponent API 概率未归一化");
 
         mss::Workspace solverWorkspace;
-        std::cout << "test/bruteforce: mode=" << mode << ", threads=" << config.bruteForce.maxThreads << ", phase=固定盘面搜索\n" << std::flush;
+        std::cout << "test/bruteforce: mode=" << mode << ", thread_limit=" << engineConfig.global.threadLimit << ", phase=固定盘面搜索\n" << std::flush;
         const std::chrono::steady_clock::time_point searchStarted = std::chrono::steady_clock::now();
         const mss::BruteForce::Result result = mss::BruteForce::solve(board, basic, structure, shapes, config, solverWorkspace.bruteForce);
         const double searchMilliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - searchStarted).count();
         mss::assert_(!result.moves.empty() && result.moves[0].wins == 83553, "test::runBruteForceFixedEndgame: 全盘搜索胜局数变化");
-        std::cout << "test/bruteforce: mode=" << mode << ", threads=" << config.bruteForce.maxThreads << ", layouts=" << probability.candidates()
-                  << ", wins=" << result.moves[0].wins << ", nodes=" << result.nodes << ", search_ms=" << std::fixed << std::setprecision(3) << searchMilliseconds
-                  << ", logic_component_api_ms=" << logicMilliseconds << '\n';
+        std::cout << "test/bruteforce: mode=" << mode << ", thread_limit=" << engineConfig.global.threadLimit << ", layouts=" << probability.candidates() << ", wins=" << result.moves[0].wins << ", nodes=" << result.nodes << ", search_ms=" << std::fixed << std::setprecision(3) << searchMilliseconds << ", logic_component_api_ms=" << logicMilliseconds << '\n';
     };
-    mss::Config config;
-    config.bruteForce.maxThreads = 1;
-    runBruteForceFixedEndgame("single", config);
-    config.bruteForce.solver = mss::Config::BruteForce::Solver::BitwiseRootParallel;
-    config.bruteForce.maxThreads = mss::Config{}.bruteForce.maxThreads;
-    runBruteForceFixedEndgame("multi", config);
+    const mss::BruteForce::Config single(false, mss::BruteForce::Config::Solver::Bitwise, engineConfig.bruteForce.candidateThreshold, engineConfig.bruteForce.threadLimit);
+    const mss::BruteForce::Config multi(false, mss::BruteForce::Config::Solver::BitwiseRootParallel, engineConfig.bruteForce.candidateThreshold, engineConfig.bruteForce.threadLimit);
+    runBruteForceFixedEndgame("single", single);
+    runBruteForceFixedEndgame("multi", multi);
 }
 
 }

@@ -27,12 +27,16 @@ struct Structure {
       public:
         struct Box {
             // 同一 Box 的 H 格共享非空数字邻接集合，因此最多 8 格；无邻数字的 H 格单独成组件。
-            int size = 0;
+            int size;
+
+            Box(int size) : size(size) {}
         };
 
         struct ConstraintView {
-            int sum = 0;
+            int sum;
             std::span<const BoxId> boxIds;
+
+            ConstraintView(int sum, std::span<const BoxId> boxIds) : sum(sum), boxIds(boxIds) {}
         };
 
         // 这些 vectorPool::vector 只是池内数组切片，必须配合同一个 Pool 读取。
@@ -50,20 +54,24 @@ struct Structure {
 
         struct Constraint {
             // sum 是扣除相邻 F 后，仍需由相邻 H 格承担的雷数。
-            int sum = 0;
+            int sum;
             // boxIds_ 中本条约束的起点和 Box 数；单条数字约束最多涉及 8 个 Box。
-            std::uint32_t offset = 0;
-            std::uint8_t count = 0;
+            std::uint32_t offset;
+            std::uint8_t count;
+
+            Constraint(int sum, std::uint32_t offset, std::uint8_t count) : sum(sum), offset(offset), count(count) {}
         };
 
         // 内容哈希同时作为池去重身份，不再做结构相等核验。
-        U128 hash = {};
+        U128 hash;
         vectorPool<Constraint>::vector constraints_;
         vectorPool<BoxId>::vector boxIds_;
+
+        Shape(vectorPool<Box>::vector boxes, U128 hash, vectorPool<Constraint>::vector constraints, vectorPool<BoxId>::vector boxIds) : boxes(boxes), hash(hash), constraints_(constraints), boxIds_(boxIds) {}
     };
 
     struct Instance {
-        ShapeId shape = -1;
+        ShapeId shape;
         struct Boxes {
             // 按 Box 连续排列的真实盘面格子；CellId 使用零起始编号。
             vectorPool<ObservedBoard::CellId>::vector cells;
@@ -79,14 +87,20 @@ struct Structure {
         Boxes boxes;
         // 顺序与 Shape::constraints_ 一一对应，保存每条数字约束所在的 CellId。
         vectorPool<ObservedBoard::CellId>::vector constraintCells;
+
+        Instance(ShapeId shape, Boxes boxes, vectorPool<ObservedBoard::CellId>::vector constraintCells) : shape(shape), boxes(boxes), constraintCells(constraintCells) {}
     };
 
     struct Result {
         struct CellLocation {
             // component 是此 Result::components 下标；只在当前 Result 状态内有效，更新时可能因紧凑搬移而变化。
-            ComponentId component = -1;
+            ComponentId component;
             // H 格指向所属 Box；数字约束格为 -1。
-            BoxId box = -1;
+            BoxId box;
+
+            // -1 表示该格不属于组件；数字约束格属于组件但不属于 Box。
+            CellLocation() : component(-1), box(-1) {}
+            CellLocation(ComponentId component, BoxId box) : component(component), box(box) {}
         };
 
         // 每项是 Pool 中的 InstanceId；ComponentId 是此数组中的位置，不是 InstanceId。
@@ -97,15 +111,19 @@ struct Structure {
 
     struct Delta {
         struct Change {
-            ComponentId component = -1;
+            ComponentId component;
             // 更新前占据该组件位置的 InstanceId。
-            InstanceId previous = -1;
+            InstanceId previous;
+
+            Change(ComponentId component, InstanceId previous) : component(component), previous(previous) {}
         };
 
         // 被删除的旧组件按下标降序记录；逆序恢复时依赖此顺序。
         std::vector<Change> removed;
         // update 追加的新组件数；reverseDelta 先弹出这些尾项，再恢复 removed。
-        int addedCount = 0;
+        int addedCount;
+
+        Delta() : addedCount(0) {}
     };
 
     // 池拥有 Shape、Instance 及其切片的存储；ID 只在池未 clear 时有效。
@@ -183,15 +201,16 @@ struct Structure {
     static InstanceId buildComponent(const std::vector<ObservedBoard::CellId> &cells, const ObservedBoard::Result &board,
                                      const Basic::Result &basic, RawGrid<U128> &cellHash, Pool &pool, Workspace &workspace);
     // 对 Box 大小和数字约束序列生成 Shape 的内容身份。
-    static U128 computeHash(const Shape &shape, const Pool &pool);
+    static U128 computeHash(vectorPool<Shape::Box>::vector boxes, vectorPool<Shape::Constraint>::vector constraints, vectorPool<BoxId>::vector boxIds, const Pool &pool);
 
   public:
     // 输入必须尺寸相同、Basic 与此观测盘面一致且满足其约束；只为 H 和相邻数字建立组件，不收录 T。
     static Result analyze(const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool, Workspace &workspace);
-    // 调用前 board/basic 已应用 updates 且两者尺寸相同；result 是同尺寸的应用前状态，Pool 必须与 result 使用同一个池。
+    // changedCells 覆盖自 result 状态以来的全部观测变化；board/basic 是经正常 Basic::update 得到的最终状态，尺寸相同，Pool 与 result 匹配。
+    // 允许合并多轮变化；新增连接位于变化邻域，Basic 的远端传播由命中的整组旧组件覆盖，重建只读取最终状态。
     // 只重建受影响组件，delta 记录回到调用前 result 所需的信息。
     static void update(Result &result, Delta &delta, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool,
-                       const ObservedBoard::Delta &updates, Workspace &workspace);
+                       std::span<const ObservedBoard::CellId> changedCells, Workspace &workspace);
     // 只撤回与当前 result 匹配的最近一次 update；后续更新必须先撤回，且不改动 board/basic。
     static void reverseDelta(Result &result, const Pool &pool, const Delta &delta);
 };

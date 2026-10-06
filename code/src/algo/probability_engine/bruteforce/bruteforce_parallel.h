@@ -10,7 +10,7 @@ template <typename Mask> struct BruteForce::MultiMaskParallelSolver {
     static int solveCandidates(const Workspace::CommonSession &common, Workspace::MultiMask &multiMask,
                                Workspace::MultiMask::Session<Mask> &session, const std::vector<ConfigId> &configs,
                                int start, int count, int need, Result &result,
-                               Workspace::MultiMask::Worker &workspace, const Config &config);
+                               Workspace::MultiMask::Worker &workspace, const BruteForce::Config &config);
 };
 
 } // 命名空间 mss

@@ -1,9 +1,7 @@
 #pragma once
 
 #include <chrono>
-#include <cstdint>
 #include <utility>
-#include <vector>
 
 #include "core/utility/rng.h"
 #include "core/workspace.h"
@@ -11,89 +9,37 @@
 
 namespace test {
 
-struct TimeBox {
-    std::chrono::steady_clock::time_point start;
-    std::chrono::steady_clock::time_point deadline;
+// 本组用例明确选择引擎参数；线程数引用由主配置绑定到自己的 Global。
+inline const mss::Config engineConfig{mss::Config::Global(5), false, mss::BruteForce::Config::Solver::Bitwise, 1000, {0.025L, 0.9L, 1e-9L}, mss::Pseudo::Config(1e-9L), {0.001L, 0.10L, 0.20L, 0.9L, 0.0001L, 4, 1, 8}, {0.05L, 1.0L}};
 
-    explicit TimeBox(double seconds)
-        : start(std::chrono::steady_clock::now()), deadline(start + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(seconds))) {
-    }
+struct Config {
+    int cols, rows, mines;
+    long double time;
+    int games;
+    mss::GameControl::Game::SuggestAlgo algorithm;
 
-    // 判断计时期限是否已到。
-    bool expired() const {
-        return std::chrono::steady_clock::now() >= deadline;
-    }
-
-    // 返回计时盒启动至今经过的秒数。
-    double elapsedSeconds() const {
-        return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    }
+    constexpr Config(int cols, int rows, int mines, long double time, int games, mss::GameControl::Game::SuggestAlgo algorithm) : cols(cols), rows(rows), mines(mines), time(time), games(games), algorithm(algorithm) {}
 };
 
-struct RunSummary {
-    long long games = 0;
-    long long wins = 0;
-    double elapsedSeconds = 0.0;
-};
-
-template <typename Fn>
-inline bool generateGame(mss::GameControl::Game &game, mss::Random &rng, mss::ObservedBoard::Delta &updates, Fn &&perDecision) {
-    mss::Config config;
-    config.position.algo = mss::Config::Position::Algo::LowRisk;
-    std::vector<mss::ObservedBoard::CellId> moves = game.position.suggest(config).cells;
-    perDecision(game);
-    const mss::ObservedBoard::CellId firstCell = game.position.observedBoard.id(0, game.position.observedBoard.board.cols() - 1);
-    mss::ObservedBoard::CellId safeCell = firstCell;
-    if (game.number(0, game.position.observedBoard.board.cols() - 1) == 9) {
-        const int cellCount = game.position.observedBoard.board.rows() * game.position.observedBoard.board.cols();
-        safeCell = -1;
-        while (safeCell < 0) {
-            const mss::ObservedBoard::CellId candidate = (mss::ObservedBoard::CellId)(rng.next() % (std::uint64_t)cellCount);
-            if (candidate != firstCell && game.number(candidate / game.position.observedBoard.board.cols(), candidate % game.position.observedBoard.board.cols()) != 9)
-                safeCell = candidate;
-        }
-    }
-    game.makeFirstMoveSafe(firstCell, safeCell);
-    for (;;) {
-        for (int i = 0; i < (int)moves.size(); ++i) {
-            const mss::ObservedBoard::CellId cell = moves[i];
-            const std::pair<int, int> position = game.position.observedBoard.pos(cell);
-            const int number = game.number(position.first, position.second);
-            if (number == 9)
-                return false;
-            updates.clear();
-            updates.changes.push_back({cell, (mss::ObservedBoard::CellState)(number)});
-            game.update(updates);
-            if (game.won())
-                return true;
-        }
-        moves = game.position.suggest(config).cells;
-        perDecision(game);
-    }
-}
-
-template <typename DecisionFn, typename GameFn>
-inline RunSummary runGames(int rows, int cols, int mines, double seconds, DecisionFn &&perDecision, GameFn &&perGame) {
-    mss::Random rng(0xC0FFEE12345ULL, 0xD1B54A32D192ED03ULL);
+// 配置须合法，time/games 均为有限正数；限制在整局之间检查，所有落子均由 suggest 选择，seed 决定对局种子序列。
+// callback(const Game &) 在空盘和每次 play 后调用，包括终局；借用的对象与局面内容仅在本次回调期间有效。
+template <typename Callback>
+void runGames(const Config &config, const mss::ShapeSolver::OrderAlgo &algo, mss::U128 seed, Callback &&callback) {
+    using Game = mss::GameControl::Game;
+    const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     mss::Workspace workspace;
-    mss::ObservedBoard::Delta updates;
-    mss::GameControl::Game game(rows, cols, mines, {rng.next(), rng.next()}, workspace);
-    mss::Config config;
-    config.position.algo = mss::Config::Position::Algo::LowRisk;
-    const std::vector<mss::ObservedBoard::CellId> initialMoves = game.position.suggest(config).cells;
-    mss::assert_(initialMoves.size() == 1 && initialMoves[0] == game.position.observedBoard.id(0, cols - 1), "test::runGames: 初始平局没有选择右上角");
-    const TimeBox timebox(seconds);
-    RunSummary summary;
-    while (!timebox.expired()) {
-        if (summary.games != 0)
-            game.reset({rng.next(), rng.next()});
-        if (generateGame(game, rng, updates, perDecision))
-            ++summary.wins;
-        ++summary.games;
-        perGame(summary);
+    mss::Random random(seed.lo, seed.hi);
+    Game game(config.rows, config.cols, config.mines, {random.next(), random.next()}, workspace);
+    for (int games = 0; games < config.games && std::chrono::duration<long double>(std::chrono::steady_clock::now() - start).count() < config.time; ++games) {
+        if (games != 0)
+            game.reset({random.next(), random.next()});
+        for (;;) {
+            callback(std::as_const(game));
+            if (game.state() != Game::State::Running)
+                break;
+            game.play(game.suggest(algo, config.algorithm, engineConfig).suggest);
+        }
     }
-    summary.elapsedSeconds = timebox.elapsedSeconds();
-    return summary;
 }
 
 }

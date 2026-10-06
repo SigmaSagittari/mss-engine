@@ -22,9 +22,27 @@ struct SplitMix64Hash {
 // 写相反区间。slots_ 保持比当前表更大的物理空间，保证头尾可区分。
 template <typename Key, typename Value, typename Hash = SplitMix64Hash> class FlatHashTable {
     struct Slot {
-        Key key{};
-        Value value{};
-        unsigned char used = 0;
+        Key key;
+        Value value;
+        unsigned char used;
+
+        // 危险：批量预分配避免初始化实际键值；used 为 0 时不得读取 key/value，插入或 rehash 写完后才可查询。
+        // vector 扩容和表复制只复制占用槽的键值，不能读取空槽中未写入的标量。
+        Slot() : used(0) {}
+        Slot(const Slot &other) : used(other.used) {
+            if (used) {
+                key = other.key;
+                value = other.value;
+            }
+        }
+        Slot &operator=(const Slot &other) {
+            used = other.used;
+            if (used) {
+                key = other.key;
+                value = other.value;
+            }
+            return *this;
+        }
     };
 
   public:
@@ -32,7 +50,7 @@ template <typename Key, typename Value, typename Hash = SplitMix64Hash> class Fl
 
     static_assert(std::is_invocable_r_v<std::size_t, const Hash &, const Key &>, "Hash must be callable as const Hash&(const Key&)");
 
-    FlatHashTable() = default;
+    FlatHashTable() : size_(0) {}
 
     FlatHashTable(const FlatHashTable &other) : hash_(other.hash_), slots_(other.slots_), activeSlots_(), size_(other.size_) {
         bind(other.activeSlots_.size(), other.activeAtFront());
@@ -243,7 +261,7 @@ template <typename Key, typename Value, typename Hash = SplitMix64Hash> class Fl
     Hash hash_;
     std::vector<Slot> slots_;
     std::span<Slot> activeSlots_;
-    std::size_t size_ = 0;
+    std::size_t size_;
 };
 
 } // 命名空间 mss
