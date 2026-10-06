@@ -41,7 +41,7 @@ struct Basic {
     // 临时队列；一次调用返回后可顺序复用，不可供并发调用共享。
     struct Workspace {
         std::vector<ObservedBoard::CellId> pending;
-        // update 仅对当前排队项去重；出队即清零，之后可因新标记变化再次入队，调用结束时全部归零。
+        // update 对尚未处理完的数字去重；处理结束后可因新标记变化再次入队，调用结束时全部归零。
         std::vector<unsigned char> queued;
     };
 

@@ -108,7 +108,7 @@ void Basic::update(Result &result, Delta &delta, const ObservedBoard::Result &bo
     std::vector<unsigned char> &queued = workspace.queued;
     pending.clear();
     const std::size_t queueSize = (std::size_t)rows * cols;
-    // queued 与 CellId 一一对应；它只去重当前仍排队的数字，出队时清零以允许后续再次入队。
+    // queued 与 CellId 一一对应；数字处理完才清零，避免推导邻格时将自己重新入队。
     if (queued.size() != queueSize)
         queued.resize(queueSize, 0);
 
@@ -145,8 +145,10 @@ void Basic::update(Result &result, Delta &delta, const ObservedBoard::Result &bo
                 --result.hideAround[neighborRow][neighborCol];
             if (nextCandidate)
                 ++result.hideAround[neighborRow][neighborCol];
+            if (!isNumber(board.board[neighborRow][neighborCol]))
+                return;
             const ObservedBoard::CellId neighbor = board.id(neighborRow, neighborCol);
-            if (isNumber(board.board[neighborRow][neighborCol]) && !queued[neighbor]) {
+            if (!queued[neighbor]) {
                 queued[neighbor] = 1;
                 pending.push_back(neighbor);
             }
@@ -176,22 +178,23 @@ void Basic::update(Result &result, Delta &delta, const ObservedBoard::Result &bo
         });
     }
 
-    // 出队时清除 queued 标记；处理过程中重新入队的数字会继续在本循环中处理。
+    // 有候选且能全部确定时才遍历邻格；本次处理会耗尽该数字的候选，无需再处理自身。
     for (int head = 0; head < (int)pending.size(); ++head) {
         const std::pair<int, int> position = board.pos(pending[head]);
         const int row = position.first;
         const int col = position.second;
-        queued[pending[head]] = 0;
+        const int candidateCount = result.hideAround[row][col];
         const int remaining = numberValue(board.board[row][col]) - result.mineAround[row][col];
         // 两个边界分别表示所有候选格安全、所有候选格为雷；中间情况不作推断。
-        if (remaining != 0 && remaining != result.hideAround[row][col])
-            continue;
-        const Mark mark = remaining == 0 ? Mark::S : Mark::F;
-        forEachAdjacent(row, col, rows, cols, [&](int neighborRow, int neighborCol) {
-            if (board.board[neighborRow][neighborCol] != ObservedBoard::CellState::Hidden || !isCandidate(result.marks[neighborRow][neighborCol]))
-                return;
-            setMark(neighborRow, neighborCol, mark);
-        });
+        if (candidateCount != 0 && (remaining == 0 || remaining == candidateCount)) {
+            const Mark mark = remaining == 0 ? Mark::S : Mark::F;
+            forEachAdjacent(row, col, rows, cols, [&](int neighborRow, int neighborCol) {
+                if (board.board[neighborRow][neighborCol] != ObservedBoard::CellState::Hidden || !isCandidate(result.marks[neighborRow][neighborCol]))
+                    return;
+                setMark(neighborRow, neighborCol, mark);
+            });
+        }
+        queued[pending[head]] = 0;
     }
 }
 
