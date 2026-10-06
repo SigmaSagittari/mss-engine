@@ -145,11 +145,11 @@ function updateCell(button, cell, state) {
     const move = mode === "analysis" ? mctsMoves.get(cell) : null;
     const showMcts = (isHidden || value === "S") && move;
     const wasMcts = button.classList.contains("mcts-cell");
-    button.className = "cell";
+    // 先算出最终样式和文字；概率刷新时只写变化项，不清空再恢复整格。
+    let className = "cell";
+    let text = showMcts && wasMcts ? button.textContent : "";
     if (value === "G")
-        button.classList.add("mcts-goal");
-    if (!showMcts || !wasMcts)
-        button.textContent = "";
+        className += " mcts-goal";
     if (wasMcts && !showMcts) {
         button.removeAttribute("data-mcts-winrate");
         button.removeAttribute("data-mcts-visits");
@@ -157,53 +157,61 @@ function updateCell(button, cell, state) {
     button.removeAttribute("title");
     button.setAttribute("aria-label", `第 ${Math.floor(cell / state.cols) + 1} 行，第 ${cell % state.cols + 1} 列`);
     if (value >= "0" && value <= "8")
-        button.classList.add("open");
+        className += " open";
     if (value >= "1" && value <= "8")
-        button.classList.add(`number-${value}`);
+        className += ` number-${value}`;
     if (value === "S")
-        button.classList.add("forced-safe");
+        className += " forced-safe";
     else if (value === "M")
-        button.classList.add("forced-mine");
+        className += " forced-mine";
     if (mode === "play" && isHidden && flags.has(cell)) {
-        button.classList.add("flagged");
-        button.textContent = "⚑";
+        className += " flagged";
+        text = "⚑";
     } else if (value === "*") {
-        button.classList.add("mine");
+        className += " mine";
         if (cell === playState.lostCell)
-            button.classList.add("hit-mine");
-        button.textContent = "✹";
+            className += " hit-mine";
+        text = "✹";
     } else if (showMcts) {
-        button.classList.add("mcts-cell");
+        className += " mcts-cell";
         if (cell === mctsResult.recommended)
-            button.classList.add("mcts-best");
+            className += " mcts-best";
         button.dataset.mctsWinrate = `${(Number(move.winrate) * 100).toFixed(1).replace(/\.0$/, "")}%`;
         button.dataset.mctsVisits = mctsCountFormat.format(BigInt(move.visits));
         button.title = `采样 ${move.visits} 次，胜出 ${move.wins} 次，胜率 ${Number(move.winrate).toFixed(6)}`;
         button.setAttribute("aria-label", `第 ${Math.floor(cell / state.cols) + 1} 行，第 ${cell % state.cols + 1} 列，${button.title}`);
-    } else if (probabilityDisplay.checked && probabilities) {
-        const probability = probabilities[cell];
-        const percentage = (probability * 100).toFixed(1);
-        if (isHidden && probability === 0)
-            button.classList.add("prob-safe");
-        else if (isHidden && probability === 1)
-            button.classList.add("prob-mine");
-        if (isHidden) {
-            button.classList.add("probability-cell");
-            button.textContent = percentage;
+    } else if (isHidden && probabilityDisplay.checked && (probabilities || probabilityPending)) {
+        className += " probability-cell";
+        if (probabilities) {
+            const probability = probabilities[cell];
+            if (probability === 0)
+                className += " prob-safe";
+            else if (probability === 1)
+                className += " prob-mine";
+            text = (probability * 100).toFixed(1);
         } else {
-            button.textContent = value === "0" ? "" : value;
+            // 概率请求串行等待时保留当前显示，结果返回后再覆盖数字和底色。
+            if (button.classList.contains("prob-safe"))
+                className += " prob-safe";
+            else if (button.classList.contains("prob-mine"))
+                className += " prob-mine";
+            text = button.classList.contains("probability-cell") ? button.textContent : "";
         }
     } else if (!isHidden) {
-        button.textContent = value === "0" ? "" : value;
+        text = value === "0" ? "" : value;
     }
     if (mode === "analysis" && selectedCell === cell)
-        button.classList.add("selected");
+        className += " selected";
     if (mode === "analysis" && hoveredCell === cell)
-        button.classList.add("hovered");
+        className += " hovered";
     if (endgameResultAvailable && endgameCandidateCells.has(cell))
-        button.classList.add("endgame-candidate");
+        className += " endgame-candidate";
     if (endgameResultAvailable && endgameBestCells.has(cell))
-        button.classList.add("endgame-best");
+        className += " endgame-best";
+    if (button.className !== className)
+        button.className = className;
+    if (button.textContent !== text)
+        button.textContent = text;
 }
 
 function makeCell(cell, state) {
