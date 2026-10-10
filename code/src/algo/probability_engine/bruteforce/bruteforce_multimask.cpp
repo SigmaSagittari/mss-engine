@@ -315,8 +315,7 @@ int BruteForce::MultiMaskSolver<Mask>::solve(
                 }
                 return need <= 1 ? 1 : -1;
             }
-        const U128 key = workspace.useSharedCache ? multiMask.parallel.sharedCache.hashConfigs(configs, start, count) :
-            BruteForce::hashConfigs(configs, start, count);
+        const U128 key = workspace.useSharedCache || config.solver == BruteForce::Config::Solver::Bitwise ? multiMask.parallel.sharedCache.hashConfigs(configs, start, count) : BruteForce::hashConfigs(configs, start, count);
         const bool shared = workspace.useSharedCache && count >= BruteForce::sharedConfigThreshold;
         // 只有根并行的较大子问题走分片缓存；较小子问题用各线程私有表，避免锁开销。
         int cached = 0;
@@ -502,6 +501,9 @@ BruteForce::Result BruteForce::solveWithMask(const CommonSession &common, const 
     multiMask.configIds.resize(common.possibilityCount);
     for (int config = 0; config < common.possibilityCount; ++config)
         multiMask.configIds[config] = config;
+    // 串行复用布局的预混值，集合键与原即时混合保持一致；根并行仍在原入口准备缓存。
+    if (config.solver == BruteForce::Config::Solver::Bitwise)
+        multiMask.parallel.sharedCache.reset(common.possibilityCount);
     Workspace::MultiMask::Session<Mask> session{layout, Mask::all(common.candidateCount)};
     Workspace::MultiMask::Worker &worker = multiMask.main;
     worker.scratch.reset();
