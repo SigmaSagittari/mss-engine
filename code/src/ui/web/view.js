@@ -84,6 +84,15 @@ function showDetail(data, cell) {
         observeResult.append(item);
         return;
     }
+    const score = document.createElement("div");
+    score.className = "observe-item";
+    score.style.gridColumn = "1 / -1";
+    const scoreLabel = document.createElement("span");
+    scoreLabel.textContent = "Java 评分";
+    const scoreValue = document.createElement("strong");
+    scoreValue.textContent = data.javaScore;
+    score.append(scoreLabel, scoreValue);
+    observeResult.append(score);
     for (let number = 0; number <= 9; ++number) {
         const item = document.createElement("div");
         item.className = "observe-item";

@@ -345,6 +345,16 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
                 result << jsonString(fixedProbability(observed.probability[i]));
             }
             result << ']';
+            if (state == ObservedBoard::CellState::ForcedSafe || observed.probability[9] == 1.0L) {
+                // Java 自动推荐的已知安全格权重为 1，确定雷的权重为 0。
+                result << ",\"javaScore\":" << jsonString(fixedProbability(state == ObservedBoard::CellState::ForcedSafe ? 1.0L : 0.0L));
+            } else {
+                const winrate::Input input = position.input(analysis_->algo);
+                const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, config_.longTermRisk, analysis_->workspace.longTermRisk);
+                // 详情只完整评估所选格，不使用候选筛选、剪枝或支配快路径。
+                const JavaEval::Result evaluated = JavaEval::analyze(input, risk, std::span{&cell, 1}, config_.javaEval, config_.longTermRisk, analysis_->workspace.javaEval, false);
+                result << ",\"javaScore\":" << jsonString(fixedProbability(evaluated.front().value));
+            }
         }
     }
     result << '}';

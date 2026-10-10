@@ -347,4 +347,5 @@ LongTermRisk::Result LongTermRisk::analyze(const winrate::Input &input, winrate:
     update(result, input, dead, cfg, workspace);
     return result;
 }
+
 } // 命名空间 mss

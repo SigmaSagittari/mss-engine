@@ -37,6 +37,7 @@ struct JavaEval {
     struct Candidate {
         winrate::CellId cell;
         long double safety;
+        // 完成时为评分，被裁剪项不参与推荐。
         long double weight;
         long double expectedClears;
         bool deferGuessing;

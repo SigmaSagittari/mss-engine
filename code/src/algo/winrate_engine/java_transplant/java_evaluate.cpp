@@ -52,6 +52,8 @@ bool JavaEval::hotspotExempt(const LongTermRisk::Analysis &risk, winrate::CellId
 bool JavaEval::evalLess(const Candidate &lhs, const Candidate &rhs) {
     if (lhs.pruned != rhs.pruned)
         return !lhs.pruned;
+    // 被裁项按原来的格号顺序排列。
+    if (lhs.pruned) return lhs.cell < rhs.cell;
     if (lhs.deferGuessing != rhs.deferGuessing)
         return !lhs.deferGuessing;
     if (lhs.weight != rhs.weight)
@@ -241,7 +243,7 @@ JavaEval::Candidate JavaEval::evaluate(const winrate::Input &input, LongTermRisk
     const auto &[board, basic, structure, probability, shapes, distributions] = input;
     const long double safety = 1.0L - observation.probability[9];
     if (safety == 0.0L)
-        return {cell, safety, 0.0L, 0.0L, false, false, -1, {}};
+        return Candidate(cell, safety, 0.0L, 0.0L, false, false, -1, {});
     const long double baseHotspot = hotspotSafety(risk, -1, input);
 
     // fiftyFiftyInfluence = (安全迹 + 0.9×影响度) / 安全迹（Java findInfluence(tile)）。
@@ -257,7 +259,7 @@ JavaEval::Candidate JavaEval::evaluate(const winrate::Input &input, LongTermRisk
     const ForcedInfo dominatedInfo = analyzeForced(input, cell, workspace);
     const long double linkedTilesCount = dominatedInfo.livingClears;
     if (allowDominated && dominatedInfo.dominated)
-        return {cell, safety, safety * (1.0L + safety * cfg.progressContribution), linkedTilesCount, false, false, -1, workspace.forcedBoxes.cells};
+        return Candidate(cell, safety, safety * (1.0L + safety * cfg.progressContribution), linkedTilesCount, false, false, -1, workspace.forcedBoxes.cells);
 
     long double secondarySafety = 0.0L;
     long double progressProb = 0.0L;
@@ -286,8 +288,8 @@ JavaEval::Candidate JavaEval::evaluate(const winrate::Input &input, LongTermRisk
         const long double progressBonus = 1.0L + (progressProb + safetyThisTileLeft) * cfg.progressContribution;
         const long double optimistic = (secondarySafety + safetyThisTileLeft * pruneFiftyFiftyInfluence) * progressBonus;
         if (best && prune && optimistic < best->weight && !best->deferGuessing) {
-            // 被裁项不再参与推荐；排序仍按原协议使用零收益和负无穷权重。
-            return {cell, safety, -std::numeric_limits<long double>::infinity(), 0.0L, false, true, -1, {}};
+            // 被裁项不参与推荐。
+            return Candidate(cell, safety, -std::numeric_limits<long double>::infinity(), 0.0L, false, true, -1, {});
         }
 
         // 临时揭示本格为 value，随后回滚。
@@ -296,8 +298,10 @@ JavaEval::Candidate JavaEval::evaluate(const winrate::Input &input, LongTermRisk
         ObservedBoard::update(board, updates);
         Basic::update(basic, workspace.basicDelta, board, updates, workspace.basic);
         Structure::update(structure, workspace.structureDelta, board, basic, shapes, std::span{&cell, 1}, workspace.structure);
-        Probability::analyze(board, basic, structure, shapes, distributions, *workspace.nextProbability, workspace.probability);
-        const winrate::Probability &next = *workspace.nextProbability;
+        std::optional<winrate::Probability> &nextProbability = workspace.nextProbability;
+        if (!nextProbability) nextProbability = Probability::analyze(board, basic, structure, shapes, distributions, workspace.probability);
+        else Probability::analyze(board, basic, structure, shapes, distributions, *nextProbability, workspace.probability);
+        const winrate::Probability &next = *nextProbability;
         const winrate::View nextInput(board, basic, structure, next, shapes);
 
         ++validValues;
@@ -343,7 +347,7 @@ JavaEval::Candidate JavaEval::evaluate(const winrate::Input &input, LongTermRisk
             dominatingLocation = singleSafestTile;
     }
     // 唯一结局为死格，推荐时垫底；记录在全部分支计算完成后构造。
-    return {cell, safety, secondarySafety * (1.0L + progressProb * cfg.progressContribution), expectedClears, validValues == 1, false, dominatingLocation, commonBoxes.cells};
+    return Candidate(cell, safety, secondarySafety * (1.0L + progressProb * cfg.progressContribution), expectedClears, validValues == 1, false, dominatingLocation, commonBoxes.cells);
 }
 
 winrate::Cells JavaEval::selectCandidates(const winrate::View &input, const LongTermRisk::Result &risk, winrate::Cells dead, const Config &cfg, Workspace &workspace) {
@@ -420,7 +424,8 @@ winrate::Cells JavaEval::selectCandidates(const winrate::View &input, const Long
                 if (nx < 0 || nx >= board.board.rows() || ny < 0 || ny >= board.board.cols())
                     return;
                 const winrate::CellId cell = board.id(nx, ny);
-                if (evaluateContains(offEdge, cell) && !evaluateContains(offEdgeCandidates, cell))
+                // Basic 的 T 已保证隐藏且无数字邻接，Structure 只纳入 H，与 offEdge 成员查询等价。
+                if (basic.marks[nx][ny] == Basic::Mark::T && !evaluateContains(offEdgeCandidates, cell))
                     offEdgeCandidates.push_back(cell);
             };
             for (int x = 0; x < board.board.rows(); ++x)

@@ -13,9 +13,9 @@ inline constexpr Config config{30, 16, 99, 20.0L, 1000000, mss::GameControl::Gam
 static_assert(config.time > 0.0L && config.games > 0, "测试时限与对局数上限必须均为正数");
 
 inline void harness() {
-    performance(config);
+    bruteforce();
+    // performance(config);
     // performance(config, true);
-    // bruteforce();
     // graphSolverFrequency(config);
     // probabilityCase();
     // monteCarlo();
