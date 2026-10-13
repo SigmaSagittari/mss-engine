@@ -19,6 +19,7 @@ inline constexpr int graphThreshold = 35;
 DistributionId analyze(const Structure::Shape &shape, const Structure::Pool &shapes, DistributionPool &distPool, Workspace &workspace, const OrderAlgo &algo = OrderAlgo::Auto);
 
 // 随机生成专用缓存：始终由 DFS 枚举所有合法 Box 雷数赋值，按 ShapeId 与普通分布分开保存。
+// pool 对应同一 shapes 且不可并发共享；返回引用由 pool 持有，下一次插入或清空 pool 后失效。
 const AssignmentPool::Result &assignments(Structure::ShapeId shapeId, const Structure::Shape &shape, const Structure::Pool &shapes, AssignmentPool &pool, Workspace &workspace);
 // componentMines 必须是 ways 中非零的雷数档；返回的视图在 pool 更新或清空后失效。
 std::span<const char> sampleAssignment(const AssignmentPool::Result &result, int componentMines, long double unit);

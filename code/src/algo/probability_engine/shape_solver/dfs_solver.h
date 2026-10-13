@@ -19,7 +19,7 @@ struct DfsSolver {
     // xBox 为点击格所属 Box 的 ID，或在该组件外时为 -1；非负时必须小于 shape.boxes.size()。
     // 覆写 result 为按邻居雷数和组件雷数联合统计的中间权重，供外层 DP 使用。
     static void observe(const Structure::Shape &shape, const Structure::Pool &shapes, const std::vector<int> &adjacentBoxCells, Structure::BoxId xBox, ObversedResult &result, Workspace &workspace);
-    // callback 必须非空且不会被保存；assignment 引用工作区复用的缓冲，只在回调期间有效，ways 是该赋值对应的具体布局权重。
+    // callback 必须非空且不会被保存；assignment 引用工作区复用的缓冲，只在回调期间有效，同一工作区不可并发或在回调期间重入；ways 是该赋值对应的具体布局权重。
     static void forEachAssignment(const Structure::Shape &shape, const Structure::Pool &shapes, Workspace &workspace, const AssignmentCallback &callback);
 
   private:

@@ -8,6 +8,8 @@
 #include <sstream>
 #include <system_error>
 
+#include "core/config.h"
+
 namespace mss::UI {
 
 Session::Session(const Config &config) : nextAnalysis_(1), stopped_(false), token_(makeToken()), config_(config) {}
@@ -249,12 +251,16 @@ void Session::writeProbabilities(std::ostream &result, const GameControl::Positi
 
 void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config, winrate::SuggestAlgo strategy) {
     GameControl::Position &position = analysis.position;
-    const GameControl::Position::SuggestResult safe = position.suggest(analysis.algo, winrate::SuggestAlgo::LowRisk, config);
-    if (safe.safeResult || strategy == winrate::SuggestAlgo::LowRisk) {
-        result << ",\"engine\":" << jsonString(safe.safeResult ? "Safe" : "LowRisk") << ",\"recommended\":";
-        writeCells(result, safe.suggest);
+    std::vector<ObservedBoard::CellId> suggested = position.safeMoves(analysis.algo);
+    const ObservedBoard::CellId lowRisk = suggested.empty() ? position.lowRiskMove(analysis.algo) : -1;
+    const bool safe = !suggested.empty() || lowRisk < 0;
+    if (safe || strategy == winrate::SuggestAlgo::LowRisk) {
+        if (!safe)
+            suggested.push_back(lowRisk);
+        result << ",\"engine\":" << jsonString(safe ? "Safe" : "LowRisk") << ",\"recommended\":";
+        writeCells(result, suggested);
         result << ",\"candidates\":";
-        writeCells(result, safe.suggest);
+        writeCells(result, suggested);
         return;
     }
     const winrate::Input input = position.input(analysis.algo);
@@ -391,7 +397,9 @@ std::string Session::playUntilNoSafe(const std::vector<FormField> &fields) {
                 return error("游玩观测与真实雷盘不符");
         }
     Workspace workspace;
-    GameControl::Game game(std::move(mineBoard), std::move(board), workspace);
+    // 只揭开确定安全格，不调用 suggest，招法池保持空。
+    GameControl::SuggestPool suggestions;
+    GameControl::Game game(std::move(mineBoard), std::move(board), workspace, suggestions);
     game.playUntilNoSafe(algo);
     std::ostringstream result;
     result << "{\"ok\":true,\"rows\":" << rows << ",\"cols\":" << cols << ",\"mines\":" << count << ",\"minefield\":" << jsonString(mines) << ",\"cells\":" << jsonString(cellString(game.position().observedBoard())) << ",\"lost\":" << (game.state() == GameControl::Game::State::Lost ? "true" : "false") << ",\"won\":" << (game.state() == GameControl::Game::State::Won ? "true" : "false");

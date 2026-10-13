@@ -1,5 +1,6 @@
 #include "ui/ui.h"
 
+#include "core/config.h"
 #include "ui/internal/http_server.h"
 
 namespace mss::UI {

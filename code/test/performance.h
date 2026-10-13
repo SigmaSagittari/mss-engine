@@ -21,7 +21,7 @@ inline void performance(const Config &config, bool multiThread = false) {
         const Config runConfig{config.cols, config.rows, config.mines, config.time, config.games, algorithm};
         const char *name = algorithm == Game::SuggestAlgo::LowRisk ? "LowRisk" : algorithm == Game::SuggestAlgo::JavaEval ? "JavaEval" : "JavaBrute";
         const int threadCount = multiThread ? (std::min)(engineConfig.global.threadLimit, config.games) : 1;
-        // 每个线程结束前写自己的统计槽；全部 join 后才汇总，不共享 Game、Workspace 或热路径计数。
+        // 每个线程结束前写自己的统计槽；全部 join 后才汇总，不共享 Game、Workspace、招法池或热路径计数。
         std::vector<std::pair<int, int>> results(threadCount);
         std::vector<std::jthread> threads;
         const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
@@ -30,7 +30,8 @@ inline void performance(const Config &config, bool multiThread = false) {
             // 0 号线程沿用单线程种子；其他线程使用各自固定的种子流。
             const mss::U128 workerSeed = worker == 0 ? seed : mss::U128{mss::splitmix64(seed.lo + worker), mss::splitmix64(seed.hi + worker)};
             int games = 0, wins = 0;
-            runGames(workerConfig, mss::ShapeSolver::OrderAlgo::Auto, workerSeed, [&](const Game &game) {
+            mss::GameControl::SuggestPool suggestions;
+            runGames(workerConfig, mss::ShapeSolver::OrderAlgo::Auto, workerSeed, suggestions, [&](const Game &game) {
                 if (game.state() == Game::State::Running) return;
                 ++games;
                 wins += game.state() == Game::State::Won;

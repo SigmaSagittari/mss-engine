@@ -20,15 +20,9 @@ bool JavaEval::evaluateContains(winrate::Cells cells, winrate::CellId cell) {
     return std::find(cells.begin(), cells.end(), cell) != cells.end();
 }
 
-// 单格雷迹 tally（Java Box.getTally() / offEdgeTally）。
-long double JavaEval::evaluateBoxTally(winrate::CellId cell, const winrate::View &input) {
-    const auto &[board, basic, structure, probability, shapes] = input;
-    return probability.mineProbability(cell, board, basic, structure) * probability.candidates();
-}
-
 // 未指定候选时计入全部热点；指定候选时忽略其豁免热点。
 // 热点惩罚为 (1 + P(安全)) × 0.5 的连乘。
-long double JavaEval::hotspotSafety(const LongTermRisk::Analysis &risk, winrate::CellId candidate, const winrate::View &input) {
+long double JavaEval::hotspotSafety(const LongTermRisk::Result &risk, winrate::CellId candidate, const winrate::View &input) {
     const auto &[board, basic, structure, probability, shapes] = input;
     long double result = 1.0L;
     for (const LongTermRisk::RiskHotspot &hotspot : risk.hotspots) {
@@ -41,7 +35,7 @@ long double JavaEval::hotspotSafety(const LongTermRisk::Analysis &risk, winrate:
 }
 
 // Java isTileExempt：候选格是否被某个热点豁免（点了它等于破 50/50，不惩罚）。
-bool JavaEval::hotspotExempt(const LongTermRisk::Analysis &risk, winrate::CellId cell) {
+bool JavaEval::hotspotExempt(const LongTermRisk::Result &risk, winrate::CellId cell) {
     for (const LongTermRisk::RiskHotspot &hotspot : risk.hotspots)
         if (hotspot.isExempt(cell))
             return true;
@@ -63,32 +57,11 @@ bool JavaEval::evalLess(const Candidate &lhs, const Candidate &rhs) {
     return lhs.cell < rhs.cell;
 }
 
-// Java getLivingClearCount / getEmptyBoxes / bestSafety 的一部分：
-// 强制安全后的 tally-0 盒格数及 dominated 判定。
-
-JavaEval::ForcedInfo JavaEval::inspectForced(const winrate::Structure &structure, const winrate::Probability &probability, winrate::CellId exclude, const winrate::Shapes &shapes, Workspace &workspace) {
-    EmptyBoxes &boxes = workspace.forcedBoxes;
-    collectEmptyBoxes(boxes, structure, probability, shapes);
-    bool dominated = false;
-    for (int i = 0; i + 1 < (int)boxes.offsets.size(); ++i) {
-        const winrate::Cells cells(boxes.cells.data() + boxes.offsets[i], boxes.offsets[i + 1] - boxes.offsets[i]);
-        if (cells.size() > 1 && !evaluateContains(cells, exclude)) {
-            dominated = true;
-            break;
-        }
-    }
-    return ForcedInfo(boxes.cells.size(), dominated);
-}
-
-// 临时施加强制事实并回滚，复用父状态的 Board、Basic、Structure 容量。
-
 // ── 新局面的摘要（Java ProbabilityEngineFast 的 bestSafety 族）──
 //   blendedSafety   = (最安全活格×weight1 + 次安全活格×weight2) / 和
 //   clears          = 已知安全格及 tally-0 前沿格数
 //   singleSafest    = 唯一最安全格（无则为 -1）
-//   emptyBoxes      = tally-0 盒格集（供 commonClears 交叉）
-
-JavaEval::BoardSummary JavaEval::summarizeBoard(const winrate::View &input, const Config &cfg, Workspace &workspace) {
+JavaEval::BoardSummary JavaEval::summarizeBoard(const winrate::View &input, const Config &cfg) {
     const auto &[board, basic, structure, probability, shapes] = input;
     long double clears = 0.0L;
     long double best = basic.unknownSum != 0 ? 1.0L - probability.tCellProbability() : 0.0L;
@@ -119,7 +92,6 @@ JavaEval::BoardSummary JavaEval::summarizeBoard(const winrate::View &input, cons
         addItem(cell, 1.0L - mine, mine == 0.0L);
     });
     const long double blendedSafety = (best * cfg.weight1 + second * cfg.weight2) / (cfg.weight1 + cfg.weight2);
-    collectEmptyBoxes(workspace.summaryBoxes, structure, probability, shapes);
     return BoardSummary(blendedSafety, clears, best > second ? bestCell : -1);
 }
 
@@ -164,10 +136,6 @@ void JavaEval::intersectBoxes(EmptyBoxes &out, const EmptyBoxes &next) {
     out.cells.resize(cellCount);
     out.offsets.resize(boxCount + 1);
 }
-
-// ── 单格评估（Java doFullEvaluateTile）──
-// board/basic/structure 会被临时修改并回滚。observation 是该格的观测分布。
-// best 为当前最高分；prune=false 不使用评分上界裁剪。
 
 // ── 候选窗 / 离网候选 ──
 
@@ -221,7 +189,8 @@ const JavaEval::Candidate *JavaEval::findAlternativeMove(const Candidate &move, 
     return nullptr;
 }
 
-JavaEval::ForcedInfo JavaEval::analyzeForced(const winrate::Input &input, winrate::CellId cell, Workspace &workspace) {
+// 强制本格安全，输出安全盒后回滚；out 复用调用方提供的容量。
+void JavaEval::analyzeForced(EmptyBoxes &out, const winrate::Input &input, winrate::CellId cell, Workspace &workspace) {
     const auto &[board, basic, structure, probability, shapes, distributions] = input;
     ObservedBoard::Delta &updates = workspace.boardDelta;
     const auto [row, col] = board.pos(cell);
@@ -232,14 +201,15 @@ JavaEval::ForcedInfo JavaEval::analyzeForced(const winrate::Input &input, winrat
     Structure::update(structure, workspace.structureDelta, board, basic, shapes, std::span{&cell, 1}, workspace.structure);
     if (!workspace.nextProbability) workspace.nextProbability = Probability::analyze(board, basic, structure, shapes, distributions, workspace.probability);
     else Probability::analyze(board, basic, structure, shapes, distributions, *workspace.nextProbability, workspace.probability);
-    ForcedInfo info = inspectForced(structure, *workspace.nextProbability, cell, shapes, workspace);
+    collectEmptyBoxes(out, structure, *workspace.nextProbability, shapes);
     Structure::reverseDelta(structure, shapes, workspace.structureDelta);
     Basic::reverseDelta(basic, workspace.basicDelta);
     ObservedBoard::reverseDelta(board, updates);
-    return info;
 }
 
-JavaEval::Candidate JavaEval::evaluate(const winrate::Input &input, LongTermRisk::Analysis &risk, winrate::CellId cell, const Config &cfg, const LongTermRisk::Config &riskConfig, Workspace &workspace, bool prune, bool allowDominated, const Candidate *best, const Observe::Result &observation) {
+// 数字分支临时修改 board/basic/structure 并回滚；observation 是本格的根观测分布。
+// best 为当前最高分；prune=false 不使用评分上界裁剪。
+JavaEval::Candidate JavaEval::evaluate(const winrate::Input &input, const LongTermRisk::Result &risk, winrate::CellId cell, const Config &cfg, const LongTermRisk::Config &riskConfig, Workspace &workspace, bool prune, bool allowDominated, const Candidate *best, const Observe::Result &observation) {
     const auto &[board, basic, structure, probability, shapes, distributions] = input;
     const long double safety = 1.0L - observation.probability[9];
     if (safety == 0.0L)
@@ -248,7 +218,8 @@ JavaEval::Candidate JavaEval::evaluate(const winrate::Input &input, LongTermRisk
 
     // fiftyFiftyInfluence = (安全迹 + 0.9×影响度) / 安全迹（Java findInfluence(tile)）。
     const long double tally = LongTermRisk::influence(cell, input, risk, riskConfig, workspace.risk);
-    const long double safetyTally = probability.candidates() - evaluateBoxTally(cell, input);
+    // 爆炸概率复用根概率；保留先算雷迹再相减的运算顺序。
+    const long double safetyTally = probability.candidates() - observation.probability[9] * probability.candidates();
     const long double fiftyFiftyInfluence = (safetyTally + cfg.influenceScale * tally) / safetyTally;
 
     const bool hotSpotTile = hotspotExempt(risk, cell);
@@ -256,10 +227,15 @@ JavaEval::Candidate JavaEval::evaluate(const winrate::Input &input, LongTermRisk
 
     // dominated 快路径（Java doFullEvaluateTile 前半段）：强制本格安全后，
     // 存在不含本格的全安全盒（size>1）→ 信息冗余，直接按一次翻开的收益记分。
-    const ForcedInfo dominatedInfo = analyzeForced(input, cell, workspace);
-    const long double linkedTilesCount = dominatedInfo.livingClears;
-    if (allowDominated && dominatedInfo.dominated)
-        return Candidate(cell, safety, safety * (1.0L + safety * cfg.progressContribution), linkedTilesCount, false, false, -1, workspace.forcedBoxes.cells);
+    EmptyBoxes &forcedBoxes = workspace.forcedBoxes;
+    analyzeForced(forcedBoxes, input, cell, workspace);
+    const long double linkedTilesCount = forcedBoxes.cells.size();
+    if (allowDominated)
+        for (int i = 0; i + 1 < (int)forcedBoxes.offsets.size(); ++i) {
+            const winrate::Cells cells(forcedBoxes.cells.data() + forcedBoxes.offsets[i], forcedBoxes.offsets[i + 1] - forcedBoxes.offsets[i]);
+            if (cells.size() > 1 && !evaluateContains(cells, cell))
+                return Candidate(cell, safety, safety * (1.0L + safety * cfg.progressContribution), linkedTilesCount, false, false, -1, forcedBoxes.cells);
+        }
 
     long double secondarySafety = 0.0L;
     long double progressProb = 0.0L;
@@ -274,7 +250,7 @@ JavaEval::Candidate JavaEval::evaluate(const winrate::Input &input, LongTermRisk
     commonBoxes.cells.clear();
     commonBoxes.offsets.clear();
     commonBoxes.offsets.push_back(0);
-    bool haveCommon = false;
+    EmptyBoxes &summaryBoxes = workspace.summaryBoxes;
 
     ObservedBoard::Delta &updates = workspace.boardDelta;
     updates.clear();
@@ -305,17 +281,15 @@ JavaEval::Candidate JavaEval::evaluate(const winrate::Input &input, LongTermRisk
         const winrate::View nextInput(board, basic, structure, next, shapes);
 
         ++validValues;
-        const long double prob = probV;
-        const BoardSummary summary = summarizeBoard(nextInput, cfg, workspace);
-        const long double clears = summary.clears;
-        const long double nextMoveSafety = summary.blendedSafety;
+        const BoardSummary summary = summarizeBoard(nextInput, cfg);
+        collectEmptyBoxes(summaryBoxes, structure, next, shapes);
         const long double nextHotspot = hotspotSafety(risk, cell, nextInput);
         const long double newFiftyFiftyInfluence = (hotSpotTile ? 1.0L : fiftyFiftyInfluence) * nextHotspot / baseHotspot;
 
-        expectedClears += clears * prob;
-        secondarySafety += prob * nextMoveSafety * newFiftyFiftyInfluence;
-        if (clears > linkedTilesCount)
-            progressProb += prob;
+        expectedClears += summary.clears * probV;
+        secondarySafety += probV * summary.blendedSafety * newFiftyFiftyInfluence;
+        if (summary.clears > linkedTilesCount)
+            progressProb += probV;
 
         if (summary.singleSafestTile == -1) {
             sameSingleSafestTile = false;
@@ -326,13 +300,12 @@ JavaEval::Candidate JavaEval::evaluate(const winrate::Input &input, LongTermRisk
         }
 
         // 逐结局交集：commonClears 只保留所有结局里都全安全的盒。
-        if (!haveCommon) {
-            commonBoxes = workspace.summaryBoxes;
-            haveCommon = true;
+        if (validValues == 1) {
+            commonBoxes = summaryBoxes;
         } else if (!commonBoxes.cells.empty()) {
-            intersectBoxes(commonBoxes, workspace.summaryBoxes);
+            intersectBoxes(commonBoxes, summaryBoxes);
         }
-        safetyThisTileLeft -= prob;
+        safetyThisTileLeft -= probV;
 
         Structure::reverseDelta(structure, shapes, workspace.structureDelta);
         Basic::reverseDelta(basic, workspace.basicDelta);
@@ -375,16 +348,13 @@ winrate::Cells JavaEval::selectCandidates(const winrate::View &input, const Long
     };
 
     // 没有 T 格时，离网候选集合为空，不能参与最高安全度比较。
-    long double bestLivingSafety = basic.unknownSum != 0 ? 1.0L - probability.tCellProbability() : 0.0L;
-    long double bestSafety = bestLivingSafety;
+    long double bestSafety = basic.unknownSum != 0 ? 1.0L - probability.tCellProbability() : 0.0L;
 
-    if (!boxes.empty()) {
-        bestLivingSafety = (std::max)(bestLivingSafety, boxes.front().safety);
+    if (!boxes.empty())
         bestSafety = (std::max)(bestSafety, boxes.front().safety);
-    }
 
-    long double test = bestSafety == 1.0L ? 1.0L : bestLivingSafety - cfg.selectionThreshold1;
-    long double test2 = bestSafety == 1.0L ? 1.0L : bestLivingSafety - cfg.selectionThreshold2;
+    long double test = bestSafety == 1.0L ? 1.0L : bestSafety - cfg.selectionThreshold1;
+    long double test2 = bestSafety == 1.0L ? 1.0L : bestSafety - cfg.selectionThreshold2;
 
     // 候选窗：优先最安全前沿盒，并保留原来的两个安全度门槛。
     std::vector<winrate::CellId> &onEdge = workspace.onEdge;
@@ -397,7 +367,7 @@ winrate::Cells JavaEval::selectCandidates(const winrate::View &input, const Long
     }
 
     // 长期风险影响格（Java evaluateLocations 加入 tileOfInterestOn）。
-    for (winrate::CellId cell : LongTermRisk::influencedTiles(risk, bestLivingSafety - cfg.selectionThreshold1, input, dead))
+    for (winrate::CellId cell : LongTermRisk::influencedTiles(risk, bestSafety - cfg.selectionThreshold1, input, dead))
         if (!evaluateContains(onEdge, cell))
             onEdge.push_back(cell);
 
@@ -405,12 +375,11 @@ winrate::Cells JavaEval::selectCandidates(const winrate::View &input, const Long
     //    故偏移恒为 4 向）──
     std::vector<winrate::CellId> &offEdge = workspace.offEdge;
     offEdge.clear();
+    // T 已保证隐藏且不属于前沿组件，直接按 Basic 标记收集。
     for (int x = 0; x < board.board.rows(); ++x)
-        for (int y = 0; y < board.board.cols(); ++y) {
-            const winrate::CellId cell = board.id(x, y);
-            if (board.board[x][y] == winrate::CellState::Hidden && basic.marks[x][y] == Basic::Mark::T && structure.cellLoc[cell].component == -1)
-                offEdge.push_back(cell);
-        }
+        for (int y = 0; y < board.board.cols(); ++y)
+            if (basic.marks[x][y] == Basic::Mark::T)
+                offEdge.push_back(board.id(x, y));
     std::vector<winrate::CellId> &offEdgeCandidates = workspace.offEdgeCandidates;
     offEdgeCandidates.clear();
     const long double offEdgeSafetyValue = 1.0L - probability.tCellProbability();
@@ -490,17 +459,14 @@ winrate::Cells JavaEval::selectCandidates(const winrate::View &input, const Long
     return notDeferred.empty() ? winrate::Cells(deferred) : winrate::Cells(notDeferred);
 }
 
-void JavaEval::evaluateCandidates(Scores &result, winrate::Cells cells, const winrate::Input &input, LongTermRisk::Analysis &risk, const Config &cfg, const LongTermRisk::Config &riskConfig, Workspace &workspace, bool prune, bool allowDominated) {
+void JavaEval::evaluateCandidates(Scores &result, winrate::Cells cells, const winrate::Input &input, const LongTermRisk::Result &risk, const Config &cfg, const LongTermRisk::Config &riskConfig, Workspace &workspace, bool prune, bool allowDominated) {
     const auto &[board, basic, structure, probability, shapes, distributions] = input;
     std::vector<Candidate> &evaluated = result;
     // -1 表示还未评估任何候选；首格仍按原算法使用支配快路径。
     int best = -1;
     for (winrate::CellId cell : cells) {
-        if (!workspace.observed[cell]) {
-            workspace.observations[cell] = Observe::observe(board, basic, structure, shapes, probability, distributions, cell, workspace.probability);
-            workspace.observed[cell] = 1;
-        }
-        Candidate candidate = evaluate(input, risk, cell, cfg, riskConfig, workspace, prune, allowDominated, best == -1 ? nullptr : &evaluated[best], workspace.observations[cell]);
+        const Observe::Result observation = Observe::observe(board, basic, structure, shapes, probability, distributions, cell, workspace.probability);
+        Candidate candidate = evaluate(input, risk, cell, cfg, riskConfig, workspace, prune, allowDominated, best == -1 ? nullptr : &evaluated[best], observation);
         if (best == -1 || (!candidate.pruned && ((evaluated[best].deferGuessing && !candidate.deferGuessing) || (evaluated[best].deferGuessing == candidate.deferGuessing && candidate.weight > evaluated[best].weight)))) best = evaluated.size();
         evaluated.push_back(std::move(candidate));
     }
@@ -532,18 +498,14 @@ void JavaEval::evaluateAutomatic(Scores &result, const winrate::Input &input, co
                 result.emplace_back(board.id(x, y), 1.0L, 1.0L, 0.0L, false, false, -1, std::vector<winrate::CellId>{});
                 return;
             }
-    const int cellCount = board.board.rows() * board.board.cols();
-    workspace.observations.resize(cellCount);
-    workspace.observed.assign(cellCount, 0);
-    LongTermRisk::Analysis &analysis = workspace.risk.analysis;
     Pseudo::Result &pseudo = workspace.pseudoResult;
-    if (analysis.pseudos.empty()) Pseudo::update(pseudo, input, dead, pseudoConfig, workspace.pseudo);
-    const std::vector<winrate::CellId> &pseudos = analysis.pseudos.empty() ? pseudo : analysis.pseudos;
+    if (risk.pseudos.empty()) Pseudo::update(pseudo, input, dead, pseudoConfig, workspace.pseudo);
+    const std::vector<winrate::CellId> &pseudos = risk.pseudos.empty() ? pseudo : risk.pseudos;
     const winrate::Cells cells = !pseudos.empty() ? winrate::Cells(pseudos) : selectCandidates(input, risk, dead, cfg, workspace);
     // 没有可点击格是已完成盘面的正常结果。
     if (cells.empty()) return;
     // 自动候选不使用强制安全后的支配快路径；数字分支仍按 prune 裁剪。
-    evaluateCandidates(result, cells, input, analysis, cfg, riskConfig, workspace, prune, false);
+    evaluateCandidates(result, cells, input, risk, cfg, riskConfig, workspace, prune, false);
     selectRecommendation(result, cfg);
 }
 
@@ -554,6 +516,7 @@ void JavaEval::exportScores(Result &result, const Scores &scores) {
 }
 
 void JavaEval::update(Result &result, const winrate::Input &input, const LongTermRisk::Result &risk, winrate::Cells dead, const Config &cfg, const LongTermRisk::Config &riskConfig, const Pseudo::Config &pseudoConfig, Workspace &workspace, bool prune) {
+    LongTermRisk::resetCache(workspace.risk, input.board.board.rows() * input.board.board.cols());
     evaluateAutomatic(workspace.scores, input, risk, dead, cfg, riskConfig, pseudoConfig, workspace, prune);
     exportScores(result, workspace.scores);
 }
@@ -565,11 +528,10 @@ JavaEval::Result JavaEval::analyze(const winrate::Input &input, const LongTermRi
 }
 
 void JavaEval::update(Result &result, const winrate::Input &input, const LongTermRisk::Result &risk, winrate::Cells cells, const Config &cfg, const LongTermRisk::Config &riskConfig, Workspace &workspace, bool prune) {
-    const int cellCount = risk.rows() * risk.cols();
-    workspace.observations.resize(cellCount);
-    workspace.observed.assign(cellCount, 0);
+    const int cellCount = input.board.board.rows() * input.board.board.cols();
+    LongTermRisk::resetCache(workspace.risk, cellCount);
     workspace.scores.clear();
-    evaluateCandidates(workspace.scores, cells, input, workspace.risk.analysis, cfg, riskConfig, workspace, prune, prune);
+    evaluateCandidates(workspace.scores, cells, input, risk, cfg, riskConfig, workspace, prune, prune);
     exportScores(result, workspace.scores);
 }
 

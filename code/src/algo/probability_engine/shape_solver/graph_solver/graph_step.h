@@ -64,7 +64,7 @@ struct GraphStepGenerator {
     using Callback = std::function<void(const StepPlan &)>;
 
     // order 必须是 shape 中所有 Box 的一个排列；callback 必须非空且不得保存 StepPlan 引用。
-    // 每个 Box 恰好回调一次；StepPlan 只在对应回调期间有效，工作区按调用方顺序复用且不得并发共享。
+    // 每个 Box 恰好回调一次；StepPlan 及其视图只在对应回调期间有效，同一工作区不可并发共享或在回调期间重入。
     static void forEach(const Structure::Shape &shape, const Structure::Pool &shapes, const std::vector<Structure::BoxId> &order, Workspace &workspace, const Callback &callback);
 };
 

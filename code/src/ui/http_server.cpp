@@ -12,6 +12,8 @@
 #include <shellapi.h>
 #include <objbase.h>
 
+#include "core/config.h"
+
 namespace mss::UI {
 
 struct HttpRequest {

@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "core/utility/rng.h"
+#include "core/config.h"
 #include "core/workspace.h"
 #include "game/game.h"
 
@@ -24,12 +25,12 @@ struct Config {
 // 配置须合法，time/games 均为有限正数；限制在整局之间检查，所有落子均由 suggest 选择，seed 决定对局种子序列。
 // callback(const Game &) 在空盘和每次 play 后调用，包括终局；借用的对象与局面内容仅在本次回调期间有效。
 template <typename Callback>
-void runGames(const Config &config, const mss::ShapeSolver::OrderAlgo &algo, mss::U128 seed, Callback &&callback) {
+void runGames(const Config &config, const mss::ShapeSolver::OrderAlgo &algo, mss::U128 seed, mss::GameControl::SuggestPool &suggestions, Callback &&callback) {
     using Game = mss::GameControl::Game;
     const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     mss::Workspace workspace;
     mss::Random random(seed.lo, seed.hi);
-    Game game(config.rows, config.cols, config.mines, {random.next(), random.next()}, workspace);
+    Game game(config.rows, config.cols, config.mines, {random.next(), random.next()}, workspace, suggestions);
     for (int games = 0; games < config.games && std::chrono::duration<long double>(std::chrono::steady_clock::now() - start).count() < config.time; ++games) {
         if (games != 0)
             game.reset({random.next(), random.next()});

@@ -19,15 +19,18 @@
 #include "algo/probability_engine/shape_solver/shape_solver_types.h"
 #include "algo/probability_engine/structure/structure.h"
 #include "algo/winrate_engine/types.h"
-#include "core/config.h"
+#include "core/utility/flat_hashtable.h"
 #include "core/utility/grid.h"
 #include "core/utility/hash.h"
 
 namespace mss {
 
 struct Workspace;
+struct Config;
 
 struct GameControl {
+    // 调用方持有招法池；按完整观测和算法复用猜测格，同算法使用固定配置；串行共用，clear 清空内容，销毁释放内存。
+    using SuggestPool = FlatHashTable<U128, ObservedBoard::CellId, U128Hash>;
     struct Game;
     struct MineBoard {
         // 实际雷盘中，1 表示雷，0 表示非雷。
@@ -56,7 +59,7 @@ struct GameControl {
             Error() : failed(false) {}
         };
 
-        // suggest() 的返回值由调用者持有；suggest 中的格子列表可直接交给 Game::play，Position 不缓存建议。
+        // suggest() 的返回值由调用者持有；suggest 中的格子列表可直接交给 Game::play。
         struct SuggestResult {
             std::vector<ObservedBoard::CellId> suggest;
             // true 表示格子全部确定安全；false 表示只有一个待猜格。空列表表示当前没有建议。
@@ -85,10 +88,15 @@ struct GameControl {
         long double mineProbability(ObservedBoard::CellId cell, const ShapeSolver::OrderAlgo &algo) const;
         // 局面必须合法，cell 必须是 Hidden 或 ForcedSafe；返回揭开后的数字与爆炸概率。
         Observe::Result observe(ObservedBoard::CellId cell, const ShapeSolver::OrderAlgo &algo) const;
+        // 局面必须合法；返回全部确定安全格，引用在下一次查询、更新或销毁前有效。
+        const std::vector<ObservedBoard::CellId> &safeMoves(const ShapeSolver::OrderAlgo &algo);
+        // 无确定安全格时选择最低雷概率格；同概率优先上行、右列，没有可点击格时返回 -1。
+        ObservedBoard::CellId lowRiskMove(const ShapeSolver::OrderAlgo &algo) const;
         // 局面必须合法；优先返回一批确定安全格，否则按 suggestAlgo 返回一个待猜格；没有可点击格时返回空列表。
         // LowRisk 按雷概率选择，JavaEval 使用 cfg 中的长期风险、伪 50/50 与评估配置；工作区借自 Position。
         // JavaBrute 在候选布局数 < cfg.bruteForce.candidateThreshold 时直接使用暴力，否则使用 JavaEval。
-        SuggestResult suggest(const ShapeSolver::OrderAlgo &algo, SuggestAlgo suggestAlgo, const Config &cfg);
+        // 调用方传入招法池，可跨 Position/Game 串行复用；按完整观测和落子算法缓存猜测格。
+        SuggestResult suggest(const ShapeSolver::OrderAlgo &algo, SuggestAlgo suggestAlgo, const Config &cfg, SuggestPool &pool);
 
       private:
         friend struct Game;
@@ -131,7 +139,6 @@ struct GameControl {
         void reset(ObservedBoard::Result observedBoard);
         void update(ObservedBoard::Delta &updates);
         void updateStructure() const;
-        const std::vector<ObservedBoard::CellId> &safeMoves(const ShapeSolver::OrderAlgo &algo);
 
         std::vector<ObservedBoard::CellId> safeCells_;
         std::vector<ObservedBoard::CellId> basicSafeCells_;
@@ -154,6 +161,8 @@ struct GameControl {
         // 每次批量 play 复用同一份观测变化，保留 changes 的容量。
         ObservedBoard::Delta playDelta_;
         Position position_;
+        // 借用调用方招法池；跨 reset 保留，生命周期覆盖 Game，串行使用。
+        SuggestPool &suggestions_;
 
         static int countRemainingSafe(const ObservedBoard::Result &observedBoard);
 
@@ -161,15 +170,15 @@ struct GameControl {
         using SuggestResult = Position::SuggestResult;
         using SuggestAlgo = Position::SuggestAlgo;
 
-        // 观测只含数字、Hidden、ForcedMine，且与 mineBoard 一致；工作区须比 Game 活得久，且不得并发共享。
-        Game(MineBoard mineBoard, ObservedBoard::Result observedBoard, Workspace &workspace);
+        // 观测只含数字、Hidden、ForcedMine，且与 mineBoard 一致；工作区和招法池须比 Game 活得久，且不得并发共享。
+        Game(MineBoard mineBoard, ObservedBoard::Result observedBoard, Workspace &workspace, SuggestPool &suggestions);
         // rows、cols 须为正且 0 <= mines < rows*cols；只创建空观测盘面并保存种子，首次实际点击时布雷并保证该格无雷。
-        Game(int rows, int cols, int mines, U128 seed, Workspace &workspace);
-        // 按原尺寸和雷数重开空盘，保存新种子，等待首次点击布雷，并清空本局池内 ID。
+        Game(int rows, int cols, int mines, U128 seed, Workspace &workspace, SuggestPool &suggestions);
+        // 按原尺寸和雷数重开空盘，保存新种子，等待首次点击布雷；清空本局结构和分布 ID。
         void reset(U128 seed);
         // 只读访问当前 Position；引用由 Game 持有，生命周期不超过 Game。
         const Position &position() const;
-        // 游戏必须处于 Running；返回的格子列表可交给 play。
+        // 返回当前观测的建议；安全格已全部揭开时返回空列表。
         SuggestResult suggest(const ShapeSolver::OrderAlgo &algo, SuggestAlgo suggestAlgo, const Config &cfg);
         // CellId 必须属于当前盘面且互不重复；只揭开 Hidden，其余格跳过。本局必须处于 Running；随机局按首个实际揭开格布雷，遇雷后停止，整批只更新一次 Position。
         void play(const std::vector<ObservedBoard::CellId> &cells);

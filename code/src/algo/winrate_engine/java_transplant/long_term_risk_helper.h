@@ -18,8 +18,6 @@ struct LongTermRisk {
         Config(long double influenceThreshold, long double hotspotEnablerSafety, long double eqEps) : influenceThreshold(influenceThreshold), hotspotEnablerSafety(hotspotEnablerSafety), eqEps(eqEps) {}
     };
 
-    using Result = RawGrid<long double>;
-
   private:
     friend struct JavaEval;
 
@@ -30,27 +28,31 @@ struct LongTermRisk {
         bool isExempt(winrate::CellId candidate) const;
     };
 
-    struct Analysis {
+  public:
+    struct Result {
+        RawGrid<long double> influences;
+
+      private:
+        friend struct LongTermRisk;
+        friend struct JavaEval;
         std::vector<long double> enablers;
         std::vector<winrate::CellId> pseudos;
         std::vector<RiskHotspot> hotspots;
-        // 全盘扫描与单格查询各有横、竖、方块三组缓存；只读取 ready 置位的槽。
-        std::array<std::vector<long double>, 6> values;
-        std::array<std::vector<unsigned char>, 6> ready;
+        Result() = default;
     };
 
-  public:
     struct Workspace {
       public:
         Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) : basic(basic), structure(structure), probability(probability) {}
 
       private:
         friend struct LongTermRisk;
-        friend struct JavaEval;
         Basic::Workspace &basic;
         Structure::Workspace &structure;
         Probability::Workspace &probability;
-        Analysis analysis;
+        // 横、竖、方块的单格查询缓存；只读取 ready 置位的槽。
+        std::array<std::vector<long double>, 3> values;
+        std::array<std::vector<unsigned char>, 3> ready;
         ObservedBoard::Delta boardDelta;
         Basic::Delta basicDelta;
         Structure::Delta structureDelta;
@@ -61,14 +63,16 @@ struct LongTermRisk {
 
     // 返回原全盘扫描的 tiles + enablers，单位为布局数，非单格查询的最大值与钳制结果。
     // 输入来自同一有效盘面且候选数 > 0；临时修改三个结果并在返回前逆序恢复。
-    // JavaEval 必须配合同盘面、同配置及本次扫描的工作区使用此网格；网格本身独立拥有数据。
+    // Result 独立持有影响网格、enabler、pseudo 和热点；评分不依赖扫描工作区的历史。
     // 池保留临时分支的缓存；同一工作区及其引用的下层工作区不可并发或重入。
     static Result analyze(const winrate::Input &input, winrate::Cells dead, const Config &cfg, Workspace &workspace);
-    // 全盘刷新并清除旧局面的事件缓存；全局雷数耦合使本层没有可局部撤回的 Delta。
+    // 全盘覆写 Result；全局雷数耦合使本层没有可局部撤回的 Delta。
     static void update(Result &out, const winrate::Input &input, winrate::Cells dead, const Config &cfg, Workspace &workspace);
   private:
-    // 单格查询使用本次全盘扫描的工作区，只对实际评分候选按原流程计数。
-    static long double influence(winrate::CellId cell, const winrate::Input &input, Analysis &full, const Config &cfg, Workspace &workspace);
+    // 每次评分开始时重置占用标记；缓存只在该次评分内复用，丢弃不改变结果。
+    static void resetCache(Workspace &workspace, int size);
+    // 单格查询读取同盘面扫描结果；工作区缓存仅避免本次评分内重复计数。
+    static long double influence(winrate::CellId cell, const winrate::Input &input, const Result &full, const Config &cfg, Workspace &workspace);
     // mines/safes 不相交、不重复，均为 Hidden；矛盾假设计数为 0，返回前恢复输入。
     static long double countWithForces(const winrate::Input &input, winrate::Cells mines, winrate::Cells safes, Workspace &workspace);
 
@@ -87,15 +91,15 @@ struct LongTermRisk {
         int size() const;
         winrate::Cells span() const;
     };
-    enum class TallyKind : unsigned char { Horizontal, Vertical, Box, CellHorizontal, CellVertical, CellBox };
+    enum class TallyKind : unsigned char { Horizontal, Vertical, Box };
 
     template <typename Compute>
-    static long double cachedTally(Analysis &result, TallyKind kind, int index, Compute &&compute) {
+    static long double cachedTally(Workspace &workspace, TallyKind kind, int index, Compute &&compute) {
         const int slot = (int)kind;
-        if (result.ready[slot][index]) return result.values[slot][index];
+        if (workspace.ready[slot][index]) return workspace.values[slot][index];
         const long double value = compute();
-        result.values[slot][index] = value;
-        result.ready[slot][index] = 1;
+        workspace.values[slot][index] = value;
+        workspace.ready[slot][index] = 1;
         return value;
     }
 
@@ -105,7 +109,7 @@ struct LongTermRisk {
     static CellList missingMines(const winrate::View &input, std::span<const std::pair<int, int>> source, long double eqEps);
     static bool hasRevealedSource(const winrate::Board &board, std::span<const std::pair<int, int>> source);
     static long double boxTally(winrate::CellId cell, const winrate::View &input);
-    static long double candidateTally(const winrate::Input &input, winrate::Cells tiles, std::span<const std::pair<int, int>> source, int mineCount, int maxMissing, int minesLeft, long double eqEps, Analysis &result, TallyKind kind, int index, LongTermRisk::Workspace &workspace);
+    static long double candidateTally(const winrate::Input &input, winrate::Cells tiles, std::span<const std::pair<int, int>> source, int mineCount, int maxMissing, int minesLeft, long double eqEps, TallyKind kind, int index, Workspace &workspace);
 };
 
 } // 命名空间 mss

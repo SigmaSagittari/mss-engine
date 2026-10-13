@@ -59,7 +59,8 @@ inline void graphSolverFrequency(const Config &config) {
             }
         }
     };
-    runGames(config, mss::ShapeSolver::OrderAlgo::Auto, seed, collectGraphSolverFrequency);
+    mss::GameControl::SuggestPool suggestions;
+    runGames(config, mss::ShapeSolver::OrderAlgo::Auto, seed, suggestions, collectGraphSolverFrequency);
     const double elapsedSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     const char *algorithm = config.algorithm == mss::GameControl::Game::SuggestAlgo::LowRisk ? "LowRisk" : config.algorithm == mss::GameControl::Game::SuggestAlgo::JavaEval ? "JavaEval" : "JavaBrute";
     mss::assert_(components > 0, "test::graphSolverFrequency: 没有采集到组件");

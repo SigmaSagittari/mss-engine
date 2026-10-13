@@ -5,6 +5,8 @@
 #include <utility>
 #include <vector>
 
+#include "core/assert.h"
+#include "core/config.h"
 #include "core/utility/neighbors.h"
 #include "core/utility/rng.h"
 #include "core/workspace.h"
@@ -210,10 +212,23 @@ const std::vector<ObservedBoard::CellId> &GameControl::Position::safeMoves(const
     return safeCells_;
 }
 
-GameControl::Position::SuggestResult GameControl::Position::suggest(const ShapeSolver::OrderAlgo &algo, SuggestAlgo suggestAlgo, const Config &cfg) {
+GameControl::Position::SuggestResult GameControl::Position::suggest(const ShapeSolver::OrderAlgo &algo, SuggestAlgo suggestAlgo, const Config &cfg, SuggestPool &pool) {
     const std::vector<ObservedBoard::CellId> &safe = safeMoves(algo);
     if (!safe.empty())
         return {safe, true};
+
+    U128Hasher hasher;
+    hasher.mix(observedBoard_.board.rows());
+    hasher.mix(observedBoard_.board.cols());
+    hasher.mix(observedBoard_.totalMines);
+    for (int row = 0; row < observedBoard_.board.rows(); ++row)
+        for (int col = 0; col < observedBoard_.board.cols(); ++col)
+            hasher.mix((int)observedBoard_.board[row][col]);
+    hasher.mix((int)suggestAlgo);
+    const U128 hash = hasher.finalize();
+    if (const ObservedBoard::CellId *cached = pool.find(hash))
+        return {{*cached}, false};
+    auto remember = [&](ObservedBoard::CellId cell) { pool.emplace(hash, cell); return SuggestResult({cell}, false); };
 
     const Probability::Result &currentProbability = *result_.probability;
     if (suggestAlgo == SuggestAlgo::JavaBrute && currentProbability.candidates() < cfg.bruteForce.candidateThreshold) {
@@ -225,7 +240,7 @@ GameControl::Position::SuggestResult GameControl::Position::suggest(const ShapeS
         for (int i = 1; i < (int)evaluated.moves.size(); ++i)
             if (evaluated.moves[i].wins > best->wins)
                 best = &evaluated.moves[i];
-        return {{best->cell}, false};
+        return remember(best->cell);
     }
     if (suggestAlgo == SuggestAlgo::JavaEval || suggestAlgo == SuggestAlgo::JavaBrute) {
         const winrate::Input input(observedBoard_, result_.basic, result_.structure, currentProbability, pool_.shapes, pool_.distributions);
@@ -235,9 +250,20 @@ GameControl::Position::SuggestResult GameControl::Position::suggest(const ShapeS
         // 自动评估首项就是推荐格；无可点击格的合法局面返回空列表。
         if (evaluated.empty())
             return {};
-        return {{evaluated.front().cellId}, false};
+        return remember(evaluated.front().cellId);
     }
 
+    if (suggestAlgo == SuggestAlgo::LowRisk) {
+        const ObservedBoard::CellId safest = lowRiskMove(algo);
+        if (safest < 0)
+            return {};
+        return remember(safest);
+    }
+    assert_(false, "Position::suggest: 未接入的建议算法");
+}
+
+ObservedBoard::CellId GameControl::Position::lowRiskMove(const ShapeSolver::OrderAlgo &algo) const {
+    const Probability::Result &currentProbability = probability(algo);
     ObservedBoard::CellId safest = -1;
     int safestRow = observedBoard_.board.rows();
     int safestCol = -1;
@@ -260,16 +286,14 @@ GameControl::Position::SuggestResult GameControl::Position::suggest(const ShapeS
                 if (observedBoard_.board[row][col] == ObservedBoard::CellState::Hidden && result_.basic.marks[row][col] == Basic::Mark::T)
                     consider(observedBoard_.id(row, col), currentProbability.tCellProbability());
     // Position 没有 Game 的胜负状态；合法局面只剩确定雷格时，没有可揭开的安全格，正常返回空建议。
-    if (safest < 0)
-        return {};
-    return {{safest}, false};
+    return safest;
 }
 
-GameControl::Game::Game(MineBoard mineBoard, ObservedBoard::Result observedBoard, Workspace &workspace)
-    : mineBoard_(std::move(mineBoard)), remainingSafe_(countRemainingSafe(observedBoard)), state_(remainingSafe_ == 0 ? State::Won : State::Running), position_(workspace, std::move(observedBoard)) {}
+GameControl::Game::Game(MineBoard mineBoard, ObservedBoard::Result observedBoard, Workspace &workspace, SuggestPool &suggestions)
+    : mineBoard_(std::move(mineBoard)), remainingSafe_(countRemainingSafe(observedBoard)), state_(remainingSafe_ == 0 ? State::Won : State::Running), position_(workspace, std::move(observedBoard)), suggestions_(suggestions) {}
 
-GameControl::Game::Game(int rows, int cols, int mines, U128 seed, Workspace &workspace)
-    : pendingSeed_(seed), remainingSafe_(rows * cols - mines), state_(State::Running), position_(workspace, ObservedBoard::Result(rows, cols, mines)) {}
+GameControl::Game::Game(int rows, int cols, int mines, U128 seed, Workspace &workspace, SuggestPool &suggestions)
+    : pendingSeed_(seed), remainingSafe_(rows * cols - mines), state_(State::Running), position_(workspace, ObservedBoard::Result(rows, cols, mines)), suggestions_(suggestions) {}
 
 int GameControl::Game::countRemainingSafe(const ObservedBoard::Result &observedBoard) {
     int remainingSafe = observedBoard.board.rows() * observedBoard.board.cols() - observedBoard.totalMines;
@@ -296,7 +320,7 @@ const GameControl::Position &GameControl::Game::position() const {
 }
 
 GameControl::Game::SuggestResult GameControl::Game::suggest(const ShapeSolver::OrderAlgo &algo, SuggestAlgo suggestAlgo, const Config &cfg) {
-    return position_.suggest(algo, suggestAlgo, cfg);
+    return position_.suggest(algo, suggestAlgo, cfg, suggestions_);
 }
 
 void GameControl::Game::play(const std::vector<ObservedBoard::CellId> &cells) {
