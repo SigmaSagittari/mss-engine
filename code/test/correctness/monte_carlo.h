@@ -1,14 +1,14 @@
 #pragma once
 
 #include "test/common.h"
-#include "test/boards.h"
+#include "test/cases.h"
 #include "core/assert.h"
 
 namespace test::correctness {
 
 inline void monteCarlo() {
     mss::Workspace workspace;
-    mss::GameControl::Position position(monteCarloBoard(), workspace);
+    mss::GameControl::Position position(beginnerCorners(), workspace);
     const mss::winrate::Input input = position.input(mss::ShapeSolver::OrderAlgo::Auto);
     mss::assert_(input.probability.candidates() == 6690509280.0L, "MonteCarlo 固定根盘面的布局数变化");
     std::vector<mss::ObservedBoard::CellId> targets;

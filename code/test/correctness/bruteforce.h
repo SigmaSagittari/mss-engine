@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "test/common.h"
-#include "test/boards.h"
+#include "test/cases.h"
 #include "core/assert.h"
 #include "core/config.h"
 #include "algo/probability_engine/bruteforce/bruteforce.h"
@@ -15,7 +15,7 @@ namespace test::correctness {
 
 inline void bruteforce() {
     auto runBruteForceFixedEndgame = [&](const mss::BruteForce::Config &config, bool independent) {
-        mss::ObservedBoard::Result board = bruteForceBoard(independent);
+        mss::ObservedBoard::Result board = endgame134550(independent);
 
         mss::Workspace analysisWorkspace;
         const mss::Basic::Result basic = mss::Basic::analyze(board, analysisWorkspace.basic);

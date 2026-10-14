@@ -5,7 +5,7 @@
 
 namespace test {
 
-inline mss::ObservedBoard::Result bruteForceBoard(bool independent) {
+inline mss::ObservedBoard::Result endgame134550(bool independent) {
     constexpr int kRows = 30;
     constexpr int kCols = 16;
     constexpr int kMines = 99;
@@ -36,7 +36,7 @@ inline mss::ObservedBoard::Result bruteForceBoard(bool independent) {
     return board;
 }
 
-inline mss::ObservedBoard::Result monteCarloBoard() {
+inline mss::ObservedBoard::Result beginnerCorners() {
     mss::ObservedBoard::Result board(9, 9, 10);
     board.board[0][0] = board.board[0][8] = board.board[8][0] = board.board[8][8] = mss::ObservedBoard::CellState::Num1;
     return board;

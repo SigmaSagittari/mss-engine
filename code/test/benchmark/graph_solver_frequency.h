@@ -3,7 +3,7 @@
 #include <iomanip>
 #include <iostream>
 
-#include "common.h"
+#include "test/common.h"
 #include "core/assert.h"
 
 namespace test::benchmark {

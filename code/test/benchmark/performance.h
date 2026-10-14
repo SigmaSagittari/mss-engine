@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include "common.h"
+#include "test/common.h"
 
 namespace test::benchmark {
 

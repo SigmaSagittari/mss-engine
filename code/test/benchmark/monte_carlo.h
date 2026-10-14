@@ -7,8 +7,8 @@
 #include <iostream>
 #include <vector>
 
-#include "common.h"
-#include "test/boards.h"
+#include "test/common.h"
+#include "test/cases.h"
 #include "core/assert.h"
 #include "algo/winrate_engine/monte_carlo/monte_carlo.h"
 
@@ -19,7 +19,7 @@ inline void monteCarlo(const Config &config = {9, 9, 10, 10.0L, 1000000, Algo::J
     mss::assert_(config.algorithm != Algo::JavaSearch, "test::monteCarlo: 后续策略只支持 LowRisk、JavaEval 和 JavaBrute");
     const mss::winrate::SuggestAlgo algorithm = config.algorithm == Algo::LowRisk ? mss::winrate::SuggestAlgo::LowRisk : config.algorithm == Algo::JavaEval ? mss::winrate::SuggestAlgo::JavaEval : mss::winrate::SuggestAlgo::JavaBrute;
     mss::Workspace workspace;
-    mss::ObservedBoard::Result board = monteCarloBoard();
+    mss::ObservedBoard::Result board = beginnerCorners();
     const std::chrono::steady_clock::time_point rootStart = std::chrono::steady_clock::now();
     mss::Basic::Result basic = mss::Basic::analyze(board, workspace.basic);
     mss::Structure::Pool shapes;
