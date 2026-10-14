@@ -10,7 +10,7 @@
 #include "core/utility/neighbors.h"
 #include "core/workspace.h"
 
-namespace test {
+namespace test::correctness {
 
 // 按固定安全点序列逐点打开，并检查增量更新后仍存在合法概率解。
 inline void probabilityCase() {

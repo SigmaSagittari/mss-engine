@@ -3,10 +3,10 @@
 #include <iomanip>
 #include <iostream>
 
-#include "test/common.h"
+#include "common.h"
 #include "core/assert.h"
 
-namespace test {
+namespace test::benchmark {
 
 inline void graphSolverFrequency(const Config &config) {
     const mss::U128 seed{0x123456789abcdef0ULL, 0xfedcba9876543210ULL};

@@ -10,7 +10,7 @@
 
 #include "common.h"
 
-namespace test {
+namespace test::benchmark {
 
 inline void performance(const Config &config, bool multiThread = false) {
     using Game = mss::GameControl::Game;
