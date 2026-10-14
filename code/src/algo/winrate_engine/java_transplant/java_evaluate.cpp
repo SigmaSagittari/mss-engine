@@ -54,7 +54,7 @@ void JavaEval::evaluateCandidates(Result &result, winrate::Cells cells, const wi
         if (automatic && live && MoveEval::isDead(observations[i])) { result.emplace_back(cells[i], -1.0L); continue; }
         MoveEval::Cursor cursor = MoveEval::begin(input, risk, cells[i], observations[i], cfg, riskConfig, workspace.moveEval);
         MoveEval::prepareAlternatives(cursor, active, peers, automatic || prune);
-        while (!MoveEval::advance(cursor, input, remainingSafe, forcedSafes, &risk, cfg, workspace.moveEval)) {
+        while (!MoveEval::advance(cursor, board, basic, structure, shapes, distributions, remainingSafe, forcedSafes, &risk, cfg, workspace.moveEval)) {
             if (prune && MoveEval::optimistic(cursor, cfg) < best) { cursor.analysis.value = -1.0L; cursor.analysis.branches.clear(); break; }
         }
         // 只有全部数字结局都能证明替代格安全才剪掉本招；完整指定格分析不做这一步。

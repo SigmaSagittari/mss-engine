@@ -64,8 +64,12 @@ struct MoveEval {
         int clears;
         // 该数字结局的基础子评分，供 Search 第零层发布。
         long double value;
-        winrate::Probability probability;
-        Branch(int digit, int clears, long double value, winrate::Probability probability) : digit(digit), clears(clears), value(value), probability(std::move(probability)) {}
+        // 真实结局权重和可重放状态；不持有整张概率结果。Delta 的实例 ID 借用当前 shapes 池，池不可清空。
+        long double probability;
+        ObservedBoard::Delta boardDelta;
+        Basic::Delta basicDelta;
+        Structure::Delta structureDelta;
+        Branch(int digit, int clears, long double value, long double probability, const ObservedBoard::Delta &boardDelta, const Basic::Delta &basicDelta, const Structure::Delta &structureDelta) : digit(digit), clears(clears), value(value), probability(probability), boardDelta(boardDelta), basicDelta(basicDelta), structureDelta(structureDelta) {}
     };
 
     struct Analysis {
@@ -112,15 +116,16 @@ struct MoveEval {
         int digit;
         long double progress;
         long double remainingSafety;
+        long double candidates;
         // 逐个数字结局保留可证明始终安全且更安全的替代格。
         std::vector<winrate::CellId> alternatives;
         // 借用调用方的固定候选池；Cursor 结束前不改变池或其顺序。
         std::span<const std::pair<long double, winrate::CellId>> peers;
-        Cursor(winrate::CellId cell, Observe::Result observation, long double influence, long double baseHotspot, bool safeSearch);
+        Cursor(winrate::CellId cell, Observe::Result observation, long double influence, long double baseHotspot, bool safeSearch, long double candidates);
     };
     static Cursor begin(const winrate::Input &input, const LongTermRisk::Result &risk, winrate::CellId cell, const Observe::Result &observation, const Config &cfg, const LongTermRisk::Config &riskConfig, Workspace &workspace);
     static void prepareAlternatives(Cursor &cursor, winrate::Cells cells, std::span<const std::pair<long double, winrate::CellId>> peers, bool prune);
-    static bool advance(Cursor &cursor, const winrate::Input &input, int remainingSafe, int forcedSafes, const LongTermRisk::Result *risk, const Config &cfg, Workspace &workspace);
+    static bool advance(Cursor &cursor, winrate::Board &board, winrate::Basic &basic, winrate::Structure &structure, winrate::Shapes &shapes, winrate::Distributions &distributions, int remainingSafe, int forcedSafes, const LongTermRisk::Result *risk, const Config &cfg, Workspace &workspace);
     static long double optimistic(const Cursor &cursor, const Config &cfg);
     static bool isDead(const Observe::Result &observation);
     static bool offEdgeCandidate(const winrate::Board &board, winrate::CellId cell);

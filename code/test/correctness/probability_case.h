@@ -52,7 +52,7 @@ inline void probabilityCase() {
             mss::forEachAdjacent(row, col, kRows, kCols, [&](int neighborRow, int neighborCol) { adjacentMines += mines[neighborRow][neighborCol]; });
             updates.clear();
             updates.changes.push_back({cell, board.board[row][col], (mss::ObservedBoard::CellState)adjacentMines});
-            mss::ObservedBoard::update(board, updates);
+            mss::ObservedBoard::applyDelta(board, updates);
             mss::Basic::update(basic, basicDelta, board, updates, workspace.basic);
             mss::Structure::update(structure, structureDelta, board, basic, shapes, {&cell, 1}, workspace.structure);
             mss::Probability::analyze(board, basic, structure, shapes, distributions, probability, workspace.probability, mss::ShapeSolver::OrderAlgo::SA);

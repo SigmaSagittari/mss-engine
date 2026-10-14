@@ -322,25 +322,13 @@ void Structure::update(Result &result, Delta &delta, const ObservedBoard::Result
         scratch.staged.push_back(buildComponent(scratch.cells, board, basic, scratch.cellHash, pool, workspace));
     }
     delta.removed.clear();
-    delta.addedCount = 0;
+    delta.added.assign(scratch.staged.begin(), scratch.staged.end());
     for (int i = (int)(result.components.size()) - 1; i >= 0; --i) {
         if (!scratch.removed[i])
             continue;
         delta.removed.push_back({i, result.components[i]});
-        const ComponentId last = (ComponentId)(result.components.size()) - 1;
-        if (i != last) {
-            result.components[i] = std::move(result.components[last]);
-            scratch.removed[i] = scratch.removed[last];
-            remapInstance(result.components[i], i, pool, result.cellLoc);
-        }
-        result.components.pop_back();
     }
-    for (InstanceId instance : scratch.staged) {
-        const ComponentId component = result.components.size();
-        result.components.push_back(instance);
-        ++delta.addedCount;
-        remapInstance(result.components.back(), component, pool, result.cellLoc);
-    }
+    applyDelta(result, pool, delta);
     // 新连接只会出现在变化格及其邻格；远端传播变化落在已命中的旧组件中，前面的失效流程已登记整组格子。因此 collectComponent 访问的格子均在 dirtyCells，按 dirtyCells 清理即可。
     for (ObservedBoard::CellId cell : scratch.dirtyCells) {
         const auto [row, col] = board.pos(cell);
@@ -350,21 +338,38 @@ void Structure::update(Result &result, Delta &delta, const ObservedBoard::Result
     }
 }
 
-void Structure::reverseDelta(Result &result, const Pool &pool, const Delta &delta) {
-    for (int i = delta.addedCount; i > 0; --i) {
-        clearInstance(result.components.back(), pool, result.cellLoc);
+void Structure::applyDelta(Result &result, const Pool &pool, const Delta &delta, bool reverse) {
+    if (reverse) {
+        for (int i = (int)delta.added.size() - 1; i >= 0; --i) {
+            clearInstance(result.components.back(), pool, result.cellLoc);
+            result.components.pop_back();
+        }
+        for (int i = (int)(delta.removed.size()) - 1; i >= 0; --i) {
+            const Delta::Change &change = delta.removed[i];
+            const ComponentId tail = result.components.size();
+            if (change.component != tail) {
+                result.components.push_back(std::move(result.components[change.component]));
+                remapInstance(result.components.back(), tail, pool, result.cellLoc);
+                result.components[change.component] = change.previous;
+            } else
+                result.components.push_back(change.previous);
+            remapInstance(result.components[change.component], change.component, pool, result.cellLoc);
+        }
+        return;
+    }
+    for (const Delta::Change &change : delta.removed) {
+        clearInstance(result.components[change.component], pool, result.cellLoc);
+        const ComponentId last = result.components.size() - 1;
+        if (change.component != last) {
+            result.components[change.component] = result.components[last];
+            remapInstance(result.components[change.component], change.component, pool, result.cellLoc);
+        }
         result.components.pop_back();
     }
-    for (int i = (int)(delta.removed.size()) - 1; i >= 0; --i) {
-        const Delta::Change &change = delta.removed[i];
-        const ComponentId tail = result.components.size();
-        if (change.component != tail) {
-            result.components.push_back(std::move(result.components[change.component]));
-            remapInstance(result.components.back(), tail, pool, result.cellLoc);
-            result.components[change.component] = change.previous;
-        } else
-            result.components.push_back(change.previous);
-        remapInstance(result.components[change.component], change.component, pool, result.cellLoc);
+    for (InstanceId instance : delta.added) {
+        const ComponentId component = result.components.size();
+        result.components.push_back(instance);
+        remapInstance(instance, component, pool, result.cellLoc);
     }
 }
 

@@ -127,7 +127,7 @@ void Basic::update(Result &result, Delta &delta, const ObservedBoard::Result &bo
         if (mark == Mark::F)
             ++result.mineSum;
         current = mark;
-        delta.changes.push_back({board.id(row, col), previous});
+        delta.changes.push_back({board.id(row, col), previous, mark});
 
         const bool previousMine = previous == Mark::F;
         const bool nextMine = mark == Mark::F;
@@ -198,39 +198,40 @@ void Basic::update(Result &result, Delta &delta, const ObservedBoard::Result &bo
     }
 }
 
-void Basic::reverseDelta(Result &result, const Delta &delta) {
-    // 同一格可能因 T→H→S/F 分多次记录；必须逐条逆序恢复，才能同步还原汇总和邻域计数。
-    for (int i = (int)delta.changes.size() - 1; i >= 0; --i) {
-        const Delta::Change &change = delta.changes[i];
-        const int row = change.cell / result.marks.cols();
-        const int col = change.cell % result.marks.cols();
+void Basic::applyDelta(Result &result, const Delta &delta, bool reverse) {
+    // 同一格可能分多次记录；正向依序重放，逆向倒序撤回。
+    for (int i = 0; i < (int)delta.changes.size(); ++i) {
+        const Delta::Change &change = delta.changes[reverse ? delta.changes.size() - 1 - i : i];
+        const ObservedBoard::CellId cell = change.cell;
+        const Mark mark = reverse ? change.previous : change.next;
+        const int row = cell / result.marks.cols();
+        const int col = cell % result.marks.cols();
         const Mark current = result.marks[row][col];
-        const Mark previous = change.previous;
         if (current == Mark::T)
             --result.unknownSum;
         if (current == Mark::F)
             --result.mineSum;
-        if (previous == Mark::T)
+        if (mark == Mark::T)
             ++result.unknownSum;
-        if (previous == Mark::F)
+        if (mark == Mark::F)
             ++result.mineSum;
 
         const bool currentMine = current == Mark::F;
-        const bool previousMine = previous == Mark::F;
+        const bool nextMine = mark == Mark::F;
         const bool currentCandidate = isCandidate(current);
-        const bool previousCandidate = isCandidate(previous);
-        if (currentMine != previousMine || currentCandidate != previousCandidate)
+        const bool nextCandidate = isCandidate(mark);
+        if (currentMine != nextMine || currentCandidate != nextCandidate)
             forEachAdjacent(row, col, result.marks.rows(), result.marks.cols(), [&](int neighborRow, int neighborCol) {
                 if (currentMine)
                     --result.mineAround[neighborRow][neighborCol];
-                if (previousMine)
+                if (nextMine)
                     ++result.mineAround[neighborRow][neighborCol];
                 if (currentCandidate)
                     --result.hideAround[neighborRow][neighborCol];
-                if (previousCandidate)
+                if (nextCandidate)
                     ++result.hideAround[neighborRow][neighborCol];
             });
-        result.marks[row][col] = previous;
+        result.marks[row][col] = mark;
     }
 }
 

@@ -57,7 +57,7 @@ inline void anytimeEquivalent() {
     for (int branch = 0; branch < 2; ++branch) {
         mss::ObservedBoard::Delta delta;
         delta.changes.emplace_back(branch == 0 ? 422 : 452, mss::ObservedBoard::CellState::Hidden, branch == 0 ? mss::ObservedBoard::CellState::Num6 : mss::ObservedBoard::CellState::Num3);
-        mss::ObservedBoard::update(root.board, delta);
+        mss::ObservedBoard::applyDelta(root.board, delta);
         mss::Basic::Delta basicDelta; mss::Basic::update(root.basic, basicDelta, root.board, delta, workspace.basic);
         mss::Structure::Delta structureDelta; const mss::winrate::CellId changed = delta.changes.front().cell; mss::Structure::update(root.structure, structureDelta, root.board, root.basic, root.shapes, std::span{&changed, 1}, workspace.structure);
         const mss::Probability::Result probability = mss::Probability::analyze(root.board, root.basic, root.structure, root.shapes, root.distributions, workspace.probability);
@@ -74,9 +74,9 @@ inline void anytimeEquivalent() {
         mss::assert_((input.basic.marks[13][1] == mss::Basic::Mark::F) == (branch == 0), "test::anytimeEquivalent: 固定盘面应覆盖 Basic 标雷与仅概率确认雷两种路径");
         const std::array<mss::winrate::CellId, 5> expected{25, 26, 27, 28, 29};
         mss::assert_(selected.size() == expected.size() && std::equal(selected.begin(), selected.end(), expected.begin()), "test::anytimeEquivalent: 把必雷当通路会使七格区域跨过八格阈值");
-        mss::Structure::reverseDelta(root.structure, root.shapes, structureDelta);
-        mss::Basic::reverseDelta(root.basic, basicDelta);
-        mss::ObservedBoard::reverseDelta(root.board, delta);
+        mss::Structure::applyDelta(root.structure, root.shapes, structureDelta, true);
+        mss::Basic::applyDelta(root.basic, basicDelta, true);
+        mss::ObservedBoard::applyDelta(root.board, delta, true);
     }
     const mss::LongTermRisk::Result risk = mss::LongTermRisk::analyze(root, {}, engineConfig.longTermRisk, workspace.longTermRisk);
     for (bool full : {false, true}) {
@@ -276,7 +276,57 @@ inline void anytimePruning() {
     std::cout << "test/anytime_pruning: equivalent_roots=2->1, mixed_classes=3, dead_fallback=1, G_roots=2, zero_layer_nodes=" << selected.node << '\n';
 }
 
+inline void anytimeReplay() {
+    mss::Workspace workspace;
+    mss::ObservedBoard::Result board(9, 9, 10);
+    board.board[0][0] = board.board[0][8] = board.board[8][0] = board.board[8][8] = mss::ObservedBoard::CellState::Num1;
+    board.board[4][4] = mss::ObservedBoard::CellState::ForcedSafe;
+    mss::Basic::Result basic = mss::Basic::analyze(board, workspace.basic);
+    mss::Structure::Pool shapes;
+    mss::Structure::Result structure = mss::Structure::analyze(board, basic, shapes, workspace.structure);
+    const std::array<mss::ObservedBoard::CellId, 2> cells{40, 20};
+    const std::array<int, 2> digits{0, 1};
+    std::array<mss::ObservedBoard::Delta, 2> boards;
+    std::array<mss::Basic::Delta, 2> basics;
+    std::array<mss::Structure::Delta, 2> structures;
+    std::vector<mss::ObservedBoard::Result> boardStates{board};
+    std::vector<mss::Basic::Result> basicStates{basic};
+    std::vector<mss::Structure::Result> structureStates{structure};
+    for (int i = 0; i < 2; ++i) {
+        const auto [row, col] = board.pos(cells[i]);
+        boards[i].changes.emplace_back(cells[i], board.board[row][col], (mss::ObservedBoard::CellState)digits[i]);
+        mss::ObservedBoard::applyDelta(board, boards[i]);
+        mss::Basic::update(basic, basics[i], board, boards[i], workspace.basic);
+        mss::Structure::update(structure, structures[i], board, basic, shapes, std::span{&cells[i], 1}, workspace.structure);
+        boardStates.push_back(board); basicStates.push_back(basic); structureStates.push_back(structure);
+    }
+    mss::assert_(std::count_if(basics[0].changes.begin(), basics[0].changes.end(), [](const mss::Basic::Delta::Change &change) { return change.cell == 31; }) == 2, "test::anytimeReplay: 未覆盖同格 T→H→S 的两次变化");
+    auto check = [&](int state) {
+        mss::assert_(mss::Basic::checkValid(board, basic) && structure.components == structureStates[state].components, "test::anytimeReplay: 重放后邻域计数或组件顺序改变");
+        for (int cell = 0; cell < 81; ++cell) {
+            const auto [row, col] = board.pos(cell);
+            mss::assert_(board.board[row][col] == boardStates[state].board[row][col] && basic.marks[row][col] == basicStates[state].marks[row][col] && structure.cellLoc[cell].component == structureStates[state].cellLoc[cell].component && structure.cellLoc[cell].box == structureStates[state].cellLoc[cell].box, "test::anytimeReplay: 重放没有恢复完整状态");
+        }
+    };
+    for (int repeat = 0; repeat < 3; ++repeat) {
+        for (int i = 1; i >= 0; --i) {
+            mss::Structure::applyDelta(structure, shapes, structures[i], true);
+            mss::Basic::applyDelta(basic, basics[i], true);
+            mss::ObservedBoard::applyDelta(board, boards[i], true);
+            check(i);
+        }
+        for (int i = 0; i < 2; ++i) {
+            mss::ObservedBoard::applyDelta(board, boards[i]);
+            mss::Basic::applyDelta(basic, basics[i]);
+            mss::Structure::applyDelta(structure, shapes, structures[i]);
+            check(i + 1);
+        }
+    }
+    std::cout << "test/anytime_replay: steps=2 repeats=3 forced_safe=true\n";
+}
+
 inline void anytimeSearch() {
+    anytimeReplay();
     anytimeEndgame();
     anytimeEquivalent();
     anytimeFiftyFifty();
@@ -346,7 +396,7 @@ inline void anytimeSearch() {
     const mss::LongTermRisk::Result terminalRisk = mss::LongTermRisk::analyze(terminalInput, {}, cfg.longTermRisk, terminalWorkspace.longTermRisk);
     const mss::winrate::CellId lastSafe = 0;
     const mss::JavaEval::Result terminal = mss::JavaEval::analyze(terminalInput, terminalRisk, std::span{&lastSafe, 1}, cfg.moveEval, cfg.longTermRisk, terminalWorkspace.javaEval, false);
-    mss::assert_(terminal.front().value == 1.0L && terminal.front().branches.size() == 1 && terminal.front().branches.front().probability.candidates() == terminalInput.probability.candidates(), "test::anytimeSearch: 揭开最后安全格的终局价值不是 1");
+    mss::assert_(terminal.front().value == 1.0L && terminal.front().branches.size() == 1 && terminal.front().branches.front().probability == 1.0L, "test::anytimeSearch: 揭开最后安全格的终局价值不是 1");
     // 两组约束为 A+D=1、D+B+C=1；A 安全必推出 B/C 安全，B 比 A 更安全。
     const std::array<const char *, 3> dominanceRows{"?34M??", "?MMM??", "?3?M??"};
     mss::ObservedBoard::Result dominanceBoard(3, 6, 8);

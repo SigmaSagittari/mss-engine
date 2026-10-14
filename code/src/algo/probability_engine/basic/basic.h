@@ -32,8 +32,9 @@ struct Basic {
     struct Delta {
         struct Change {
             ObservedBoard::CellId cell;
-            // 只记录更新前的标记；撤回时必须按 changes 的逆序恢复。
+            // 保留前后标记；重放按记录顺序，撤回按逆序。
             Mark previous;
+            Mark next;
         };
 
         // 按 update 实际改动顺序记录；同一 CellId 可因 T→H→S/F 多次出现，不得去重，撤回时逐条逆序恢复。
@@ -50,11 +51,11 @@ struct Basic {
     // state 必须是有效观测盘面；返回同尺寸标记并将单格数字约束传播至队列耗尽，不修改 state；全盘雷数不参与推导。
     static Result analyze(const ObservedBoard::Result &state, Workspace &workspace);
     // 前置条件：result 与 board 尺寸相同；result 对应 updates 应用前的状态，board 已应用同一批 updates。
-    // delta 会先清空，再按标记变更顺序记录旧值；reverseDelta 必须在匹配状态上按 LIFO 撤回。
+    // delta 会先清空，再按标记变更顺序记录前后值；撤回必须在匹配状态上按 LIFO 进行。
     static void update(Result &result, Delta &delta, const ObservedBoard::Result &board, const ObservedBoard::Delta &updates,
                        Workspace &workspace);
-    // 调用前须保证 result 是产生该 Delta 后的状态；必须后进先出，当前标记用于逆向恢复邻域计数。
-    static void reverseDelta(Result &result, const Delta &delta);
+    // 正向时 result 对应更新前状态；reverse 时对应更新后状态且必须后进先出。同步重放标记和邻域计数，不重新推导。
+    static void applyDelta(Result &result, const Delta &delta, bool reverse = false);
     // 供界面层调用；board/result 尺寸必须相同。发现任一标记、缓存、局部约束或全局雷数不一致时返回 false，不修改输入。
     static bool checkValid(const ObservedBoard::Result &board, const Result &result);
 

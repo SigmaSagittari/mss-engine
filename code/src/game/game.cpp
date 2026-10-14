@@ -54,7 +54,7 @@ void GameControl::Position::initialize() {
     result_.probabilityDirty = true;
     delta_.basic.changes.clear();
     delta_.structure.removed.clear();
-    delta_.structure.addedCount = 0;
+    delta_.structure.added.clear();
     structureLazyUpdate_.clear();
     pool_.shapes.clear();
     pool_.distributions.clear();
@@ -75,7 +75,7 @@ void GameControl::Position::reset(ObservedBoard::Result board) {
 }
 
 void GameControl::Position::update(ObservedBoard::Delta &updates) {
-    ObservedBoard::update(observedBoard_, updates);
+    ObservedBoard::applyDelta(observedBoard_, updates);
     Basic::update(result_.basic, delta_.basic, observedBoard_, updates, workspace_.basic);
     for (const ObservedBoard::Delta::Change &change : updates.changes)
         structureLazyUpdate_.push_back(change.cell);

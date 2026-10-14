@@ -120,10 +120,8 @@ struct Structure {
 
         // 被删除的旧组件按下标降序记录；逆序恢复时依赖此顺序。
         std::vector<Change> removed;
-        // update 追加的新组件数；reverseDelta 先弹出这些尾项，再恢复 removed。
-        int addedCount;
-
-        Delta() : addedCount(0) {}
+        // 按追加顺序保存实例 ID；重放复用池内实例，撤回先弹出这些尾项。
+        std::vector<InstanceId> added;
     };
 
     // 池拥有 Shape、Instance 及其切片的存储；ID 只在池未 clear 时有效。
@@ -211,8 +209,8 @@ struct Structure {
     // 只重建受影响组件，delta 记录回到调用前 result 所需的信息。
     static void update(Result &result, Delta &delta, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool,
                        std::span<const ObservedBoard::CellId> changedCells, Workspace &workspace);
-    // 只撤回与当前 result 匹配的最近一次 update；后续更新必须先撤回，且不改动 board/basic。
-    static void reverseDelta(Result &result, const Pool &pool, const Delta &delta);
+    // 正向时 result 对应更新前状态；reverse 时对应更新后状态且必须后进先出。池不得清空，重放组件及格子映射，不改动 board/basic。
+    static void applyDelta(Result &result, const Pool &pool, const Delta &delta, bool reverse = false);
 };
 
 } // 命名空间 mss

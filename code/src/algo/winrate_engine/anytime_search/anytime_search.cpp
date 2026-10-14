@@ -11,11 +11,13 @@ namespace mss {
 struct AnytimeSearch::State {
     struct Node;
     struct Move {
-        MoveEval::Analysis analysis;
+        winrate::CellId cellId;
+        std::vector<MoveEval::Branch> branches;
+        std::optional<U128> equivalence;
         std::vector<std::unique_ptr<Node>> children;
         long double value;
         bool finished;
-        explicit Move(MoveEval::Analysis analysis) : analysis(std::move(analysis)), children(this->analysis.branches.size()), value(this->analysis.value), finished(this->analysis.branches.empty()) {}
+        explicit Move(MoveEval::Analysis analysis) : cellId(analysis.cellId), branches(std::move(analysis.branches)), equivalence(analysis.equivalence), children(branches.size()), value(analysis.value), finished(branches.empty()) {}
     };
     struct Node {
         std::vector<Move> moves;
@@ -31,7 +33,6 @@ struct AnytimeSearch::State {
     };
     struct Frame {
         Node &node;
-        const winrate::Probability &probability;
         int horizon;
         std::vector<int> order;
         int move;
@@ -46,10 +47,9 @@ struct AnytimeSearch::State {
         int next;
         std::optional<MoveEval::Cursor> cursor;
         bool safe;
-        ObservedBoard::Delta boardDelta;
-        Basic::Delta basicDelta;
-        Structure::Delta structureDelta;
-        Frame(Node &node, const winrate::Probability &probability, int horizon) : node(node), probability(probability), horizon(horizon), move(0), branch(0), value(0.0L), settled(true), next(0), safe(false) {}
+        // 根帧没有入边；其余帧借用树中分支的固定 Delta。
+        const MoveEval::Branch *transition;
+        Frame(Node &node, int horizon, const MoveEval::Branch *transition) : node(node), horizon(horizon), move(0), branch(0), value(0.0L), settled(true), next(0), safe(false), transition(transition) {}
         void orderMoves() {
             order.resize(node.moves.size());
             std::iota(order.begin(), order.end(), 0);
@@ -61,7 +61,6 @@ struct AnytimeSearch::State {
     winrate::Board board;
     winrate::Basic basic;
     winrate::Structure structure;
-    winrate::Probability rootProbability;
     winrate::Shapes &shapes;
     winrate::Distributions &distributions;
     int remainingSafe;
@@ -72,7 +71,7 @@ struct AnytimeSearch::State {
     Node root;
     std::vector<std::unique_ptr<Frame>> frames;
 
-    State(const winrate::Input &input, std::vector<MoveEval::Analysis> analyses) : board(input.board), basic(input.basic), structure(input.structure), rootProbability(input.probability), shapes(input.shapes), distributions(input.distributions), remainingSafe(board.board.rows() * board.board.cols() - board.totalMines) {
+    State(const winrate::Input &input, std::vector<MoveEval::Analysis> analyses) : board(input.board), basic(input.basic), structure(input.structure), shapes(input.shapes), distributions(input.distributions), remainingSafe(board.board.rows() * board.board.cols() - board.totalMines) {
         for (int row = 0; row < board.board.rows(); ++row)
             for (int col = 0; col < board.board.cols(); ++col)
                 if (board.board[row][col] <= winrate::CellState::Num8) { --remainingSafe; rootWitnesses.push_back(board.id(row, col)); }
@@ -86,18 +85,22 @@ struct AnytimeSearch::State {
                 }
         for (MoveEval::Analysis &analysis : analyses) root.moves.emplace_back(std::move(analysis));
         root.ready = true;
-        frames.push_back(std::make_unique<Frame>(root, rootProbability, 1));
+        frames.push_back(std::make_unique<Frame>(root, 1, nullptr));
         frames.back()->orderMoves();
     }
 
-    winrate::Input input(const Frame &frame) {
-        return winrate::Input(board, basic, structure, frame.probability, shapes, distributions);
+    winrate::Input input(Workspace &workspace) {
+        // 只在准备新节点或新候选时重建工作概率；旧节点重访只重放 Delta。
+        std::optional<winrate::Probability> &probability = workspace.moveEval.nextProbability;
+        if (!probability) probability = Probability::analyze(board, basic, structure, shapes, distributions, workspace.moveEval.probability);
+        else Probability::analyze(board, basic, structure, shapes, distributions, *probability, workspace.moveEval.probability);
+        return winrate::Input(board, basic, structure, *probability, shapes, distributions);
     }
 
     void fill(Frame &frame, Workspace &workspace) {
         for (const std::pair<long double, winrate::CellId> &candidate : frame.pending) {
             const winrate::CellId cell = candidate.second;
-            const Observe::Result observation = Observe::observe(board, basic, structure, shapes, frame.probability, distributions, cell, workspace.moveEval.probability);
+            const Observe::Result observation = Observe::observe(board, basic, structure, shapes, *workspace.moveEval.nextProbability, distributions, cell, workspace.moveEval.probability);
             if (!frame.safe && MoveEval::isDead(observation)) continue;
             frame.cells.push_back(cell);
             frame.observations.push_back(observation);
@@ -105,7 +108,7 @@ struct AnytimeSearch::State {
     }
 
     void prepare(Frame &frame, const mss::Config &cfg, Workspace &workspace) {
-        const winrate::Input current = input(frame);
+        const winrate::Input current = input(workspace);
         MoveEval::Workspace &evaluation = workspace.moveEval;
         winrate::CellId safe = -1;
         auto consider = [&](winrate::CellId cell) { if (safe == -1 || cell < safe) safe = cell; };
@@ -116,16 +119,16 @@ struct AnytimeSearch::State {
         for (winrate::CellId cell : rootBasicSafe) basicSafe(cell);
         // 分支新增的 Basic 安全格都在路径 Delta 中；只筛掉已经揭开的项。
         for (const std::unique_ptr<Frame> &path : frames)
-            for (const Basic::Delta::Change &change : path->basicDelta.changes) basicSafe(change.cell);
+            if (path->transition) for (const Basic::Delta::Change &change : path->transition->basicDelta.changes) basicSafe(change.cell);
         for (int component = 0; component < (int)structure.components.size(); ++component) {
             const Structure::Instance &instance = shapes.getInstance(structure.components[component]);
             const std::span<const int> offsets = instance.boxes.boxOf.span(shapes.boxOf);
             const winrate::Cells cells = instance.boxes.cells.span(shapes.cells);
             for (int box = 0; box < (int)instance.boxes.count(); ++box)
-                if (frame.probability.boxProbability(component, box) == 0.0L)
+                if (current.probability.boxProbability(component, box) == 0.0L)
                     for (int i = offsets[box]; i < offsets[box + 1]; ++i) consider(cells[i]);
         }
-        if (basic.unknownSum != 0 && frame.probability.tCellProbability() == 0.0L)
+        if (basic.unknownSum != 0 && current.probability.tCellProbability() == 0.0L)
             for (winrate::CellId cell : rootOffEdge) {
                 const auto [row, col] = board.pos(cell);
                 if (basic.marks[row][col] == Basic::Mark::T) { consider(cell); break; }
@@ -141,7 +144,7 @@ struct AnytimeSearch::State {
             if (frame.cells.empty()) {
                 frame.cells = rootWitnesses;
                 for (const std::unique_ptr<Frame> &path : frames)
-                    for (const ObservedBoard::Delta::Change &change : path->boardDelta.changes) frame.cells.push_back(change.cell);
+                    if (path->transition) for (const ObservedBoard::Delta::Change &change : path->transition->boardDelta.changes) frame.cells.push_back(change.cell);
                 std::sort(frame.cells.begin(), frame.cells.end());
                 winrate::CellId firstOffEdge = -1;
                 if (basic.unknownSum != 0)
@@ -156,15 +159,15 @@ struct AnytimeSearch::State {
         auto allCells = [&]() {
             frame.pending.clear();
             // 安全分支不会走到全候选退路；剩余可点击格属于 H 或 T。
-            frame.probability.frontierCells(structure, shapes, [&](winrate::CellId cell, long double mine) { if (mine < 1.0L) frame.pending.emplace_back(mine, cell); });
-            if (frame.probability.tCellProbability() < 1.0L)
+            current.probability.frontierCells(structure, shapes, [&](winrate::CellId cell, long double mine) { if (mine < 1.0L) frame.pending.emplace_back(mine, cell); });
+            if (current.probability.tCellProbability() < 1.0L)
                 for (winrate::CellId cell : rootOffEdge) {
                     const auto [row, col] = board.pos(cell);
-                    if (basic.marks[row][col] == Basic::Mark::T) frame.pending.emplace_back(frame.probability.tCellProbability(), cell);
+                    if (basic.marks[row][col] == Basic::Mark::T) frame.pending.emplace_back(current.probability.tCellProbability(), cell);
                 }
         };
         const bool global = frame.cells.empty();
-        for (winrate::CellId cell : frame.cells) frame.pending.emplace_back(frame.probability.mineProbability(cell, board, basic, structure), cell);
+        for (winrate::CellId cell : frame.cells) frame.pending.emplace_back(current.probability.mineProbability(cell, board, basic, structure), cell);
         frame.cells.clear();
         if (global) allCells();
         // 同概率按格子编号排序；组件重建后的存储顺序不参与候选截断。
@@ -184,7 +187,7 @@ struct AnytimeSearch::State {
             if (frame.cells.empty()) {
                 const winrate::CellId cell = frame.pending.front().second;
                 frame.cells.push_back(cell);
-                frame.observations.push_back(Observe::observe(board, basic, structure, shapes, frame.probability, distributions, cell, evaluation.probability));
+                frame.observations.push_back(Observe::observe(board, basic, structure, shapes, current.probability, distributions, cell, evaluation.probability));
             }
         }
         assert_(!frame.cells.empty(), "AnytimeSearch: 非终局没有内层候选");
@@ -193,8 +196,8 @@ struct AnytimeSearch::State {
     void finishBranch(Result &result, long double value, bool finished) {
         Frame &frame = *frames.back();
         const int index = frame.order[frame.move];
-        const MoveEval::Branch &branch = frame.node.moves[index].analysis.branches[frame.branch];
-        frame.value += branch.probability.candidates() / frame.probability.candidates() * value;
+        const MoveEval::Branch &branch = frame.node.moves[index].branches[frame.branch];
+        frame.value += branch.probability * value;
         frame.settled = frame.settled && finished;
         if (frames.size() == 1) result.candidates[index].branches[frame.branch] = Candidate::Branch(branch.digit, value, frame.horizon);
         ++frame.branch;
@@ -204,19 +207,19 @@ struct AnytimeSearch::State {
         Frame &child = *frames.back();
         const long double value = child.node.best();
         const bool finished = child.node.finished();
-        Structure::reverseDelta(structure, shapes, child.structureDelta);
-        Basic::reverseDelta(basic, child.basicDelta);
-        ObservedBoard::reverseDelta(board, child.boardDelta);
+        Structure::applyDelta(structure, shapes, child.transition->structureDelta, true);
+        Basic::applyDelta(basic, child.transition->basicDelta, true);
+        ObservedBoard::applyDelta(board, child.transition->boardDelta, true);
         frames.pop_back();
         finishBranch(result, value, finished);
     }
 
     bool advance(Result &result, const mss::Config &cfg, Workspace &workspace, long long &nodeBudget) {
         Frame &frame = *frames.back();
-        const winrate::Input current = input(frame);
         if (!frame.node.ready) {
             if (nodeBudget == 0 && (frame.cells.empty() || frame.next != (int)frame.cells.size())) return false;
-            if (frame.cells.empty()) prepare(frame, cfg, workspace);
+            const bool prepared = frame.cells.empty();
+            if (prepared) prepare(frame, cfg, workspace);
             if (frame.next == (int)frame.cells.size()) {
                 frame.node.ready = true;
                 frame.orderMoves();
@@ -224,17 +227,18 @@ struct AnytimeSearch::State {
             } else {
                 const int index = frame.next;
                 if (!frame.cursor) {
+                    const winrate::Input current = prepared ? winrate::Input(board, basic, structure, *workspace.moveEval.nextProbability, shapes, distributions) : input(workspace);
                     LongTermRisk::resetCache(workspace.moveEval.risk, board.board.rows() * board.board.cols());
-                    frame.cursor = frame.safe ? MoveEval::Cursor(frame.cells[index], frame.observations[index], 1.0L, 1.0L, true) : MoveEval::begin(current, *frame.risk, frame.cells[index], frame.observations[index], cfg.moveEval, cfg.longTermRisk, workspace.moveEval);
+                    frame.cursor = frame.safe ? MoveEval::Cursor(frame.cells[index], frame.observations[index], 1.0L, 1.0L, true, current.probability.candidates()) : MoveEval::begin(current, *frame.risk, frame.cells[index], frame.observations[index], cfg.moveEval, cfg.longTermRisk, workspace.moveEval);
                     MoveEval::prepareAlternatives(*frame.cursor, frame.cells, frame.pending, true);
                 }
                 const long long before = frame.cursor->analysis.node;
                 // 路径每帧只揭开一格；有 ForcedSafe 时必走 safeSearch，不计算强制安全。
-                const bool complete = MoveEval::advance(*frame.cursor, current, remainingSafe - (int)frames.size() + 1, 0, frame.risk ? &*frame.risk : nullptr, cfg.moveEval, workspace.moveEval);
+                const bool complete = MoveEval::advance(*frame.cursor, board, basic, structure, shapes, distributions, remainingSafe - (int)frames.size() + 1, 0, frame.risk ? &*frame.risk : nullptr, cfg.moveEval, workspace.moveEval);
                 const long long expanded = frame.cursor->analysis.node - before;
                 result.node += expanded;
                 nodeBudget -= expanded;
-                const bool equivalent = frame.cursor->analysis.equivalence && std::any_of(frame.node.moves.begin(), frame.node.moves.end(), [&](const Move &move) { return move.analysis.equivalence == frame.cursor->analysis.equivalence; });
+                const bool equivalent = frame.cursor->analysis.equivalence && std::any_of(frame.node.moves.begin(), frame.node.moves.end(), [&](const Move &move) { return move.equivalence == frame.cursor->analysis.equivalence; });
                 const int width = frame.safe ? 1 : cfg.anytimeSearch.width[frames.size() == 2 ? 1 : 2];
                 const bool pruned = !complete && (int)frame.node.moves.size() == width && MoveEval::optimistic(*frame.cursor, cfg.moveEval) < frame.node.moves.back().value;
                 if (equivalent || pruned || (complete && !frame.cursor->alternatives.empty())) {
@@ -242,7 +246,7 @@ struct AnytimeSearch::State {
                     frame.cursor.reset();
                 } else if (complete) {
                     frame.node.moves.emplace_back(std::move(frame.cursor->analysis));
-                    std::stable_sort(frame.node.moves.begin(), frame.node.moves.end(), [](const Move &lhs, const Move &rhs) { return lhs.value != rhs.value ? lhs.value > rhs.value : lhs.analysis.cellId < rhs.analysis.cellId; });
+                    std::stable_sort(frame.node.moves.begin(), frame.node.moves.end(), [](const Move &lhs, const Move &rhs) { return lhs.value != rhs.value ? lhs.value > rhs.value : lhs.cellId < rhs.cellId; });
                     if ((int)frame.node.moves.size() > width) frame.node.moves.erase(frame.node.moves.begin() + width, frame.node.moves.end());
                     ++frame.next;
                     frame.cursor.reset();
@@ -258,7 +262,7 @@ struct AnytimeSearch::State {
             else {
                 const int horizon = frame.horizon + 1;
                 frames.clear();
-                frames.push_back(std::make_unique<Frame>(root, rootProbability, horizon));
+                frames.push_back(std::make_unique<Frame>(root, horizon, nullptr));
                 frames.back()->orderMoves();
             }
             return true;
@@ -270,7 +274,7 @@ struct AnytimeSearch::State {
             ++frame.move;
             return true;
         }
-        if (frame.branch == (int)move.analysis.branches.size()) {
+        if (frame.branch == (int)move.branches.size()) {
             move.value = frame.value;
             move.finished = frame.settled;
             if (frames.size() == 1) result.candidates[index].value.push_back(move.value);
@@ -280,7 +284,7 @@ struct AnytimeSearch::State {
             frame.settled = true;
             return true;
         }
-        const MoveEval::Branch &branch = move.analysis.branches[frame.branch];
+        const MoveEval::Branch &branch = move.branches[frame.branch];
         // 启发式只用于叶子评分；路径期望必须使用真实结局概率，不能反复乘奖励。
         const bool terminal = remainingSafe == (int)frames.size() || board.totalMines == basic.mineSum;
         // 第零层 javaLite 还要两步安全率；续搜 horizon 步后仍须留下两个安全格。
@@ -294,13 +298,10 @@ struct AnytimeSearch::State {
             finishBranch(result, node->best(), node->finished());
             return true;
         }
-        std::unique_ptr<Frame> child = std::make_unique<Frame>(*node, branch.probability, frame.horizon - 1);
-        const auto [row, col] = board.pos(move.analysis.cellId);
-        child->boardDelta.changes.emplace_back(move.analysis.cellId, board.board[row][col], (winrate::CellState)branch.digit);
-        ObservedBoard::update(board, child->boardDelta);
-        Basic::update(basic, child->basicDelta, board, child->boardDelta, workspace.moveEval.basic);
-        const winrate::CellId cell = move.analysis.cellId;
-        Structure::update(structure, child->structureDelta, board, basic, shapes, std::span{&cell, 1}, workspace.moveEval.structure);
+        std::unique_ptr<Frame> child = std::make_unique<Frame>(*node, frame.horizon - 1, &branch);
+        ObservedBoard::applyDelta(board, branch.boardDelta);
+        Basic::applyDelta(basic, branch.basicDelta);
+        Structure::applyDelta(structure, shapes, branch.structureDelta);
         if (node->ready) child->orderMoves();
         frames.push_back(std::move(child));
         return true;

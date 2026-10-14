@@ -137,7 +137,7 @@ long double LongTermRisk::countWithForces(const winrate::Input &input, winrate::
         updates.changes.emplace_back(cell, board.board[row][col], winrate::CellState::ForcedSafe);
         workspace.changedCells.push_back(cell);
     }
-    ObservedBoard::update(board, updates);
+    ObservedBoard::applyDelta(board, updates);
     Basic::update(basic, workspace.basicDelta, board, updates, workspace.basic);
     // 根局面有效，只重算本次标记变化所影响的数字约束；最后一个 H 被移走的矛盾数字会从 Structure 消失，不能漏掉。
     bool valid = true;
@@ -169,10 +169,10 @@ long double LongTermRisk::countWithForces(const winrate::Input &input, winrate::
         if (!workspace.forcedProbability) workspace.forcedProbability = Probability::analyze(board, basic, structure, shapes, distributions, workspace.probability);
         else Probability::analyze(board, basic, structure, shapes, distributions, *workspace.forcedProbability, workspace.probability);
         candidates = workspace.forcedProbability->candidates();
-        Structure::reverseDelta(structure, shapes, workspace.structureDelta);
+        Structure::applyDelta(structure, shapes, workspace.structureDelta, true);
     }
-    Basic::reverseDelta(basic, workspace.basicDelta);
-    ObservedBoard::reverseDelta(board, updates);
+    Basic::applyDelta(basic, workspace.basicDelta, true);
+    ObservedBoard::applyDelta(board, updates, true);
     return candidates;
 }
 

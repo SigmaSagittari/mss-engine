@@ -62,10 +62,8 @@ struct ObservedBoard {
 
     // 参数必须描述合法盘面；只记录尺寸和总雷数并创建全 Hidden 盘面，不检查输入或推断数字、雷位。
     static Result analyze(int rows, int cols, int mines);
-    // 调用者须满足 Delta 的状态转换契约；实现断言 next 非 Hidden 和旧状态一致。成功后修改 board，不消费 delta。
-    static void update(Result &board, Delta &delta);
-    // 调用前须保证 board 是该 Delta 更新后的状态；按 changes 逆序恢复 previous，后续 Delta 必须先撤回。
-    static void reverseDelta(Result &board, const Delta &delta);
+    // 正向时 board 对应更新前状态，满足 Delta 转换契约；reverse 时对应更新后状态且必须后进先出。不消费 delta。
+    static void applyDelta(Result &board, const Delta &delta, bool reverse = false);
 };
 
 } // namespace mss

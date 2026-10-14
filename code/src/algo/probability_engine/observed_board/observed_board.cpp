@@ -15,20 +15,15 @@ void ObservedBoard::Delta::clear() { changes.clear(); }
 
 ObservedBoard::Result ObservedBoard::analyze(int rows, int cols, int mines) { return Result(rows, cols, mines); }
 
-void ObservedBoard::update(Result &board, Delta &delta) {
-    for (Delta::Change &change : delta.changes) {
-        assert_(change.next != CellState::Hidden, "ObservedBoard::update: next state must not be Hidden");
+void ObservedBoard::applyDelta(Result &board, const Delta &delta, bool reverse) {
+    for (int i = 0; i < (int)delta.changes.size(); ++i) {
+        const Delta::Change &change = delta.changes[reverse ? delta.changes.size() - 1 - i : i];
         const std::pair<int, int> position = board.pos(change.cell);
-        assert_(board.board[position.first][position.second] == change.previous, "ObservedBoard::update: previous state mismatch");
-        board.board[position.first][position.second] = change.next;
-    }
-}
-
-void ObservedBoard::reverseDelta(Result &board, const Delta &delta) {
-    for (int i = (int)delta.changes.size() - 1; i >= 0; --i) {
-        const Delta::Change &change = delta.changes[i];
-        const std::pair<int, int> position = board.pos(change.cell);
-        board.board[position.first][position.second] = change.previous;
+        if (!reverse) {
+            assert_(change.next != CellState::Hidden, "ObservedBoard::applyDelta: 新状态不能是隐藏格");
+            assert_(board.board[position.first][position.second] == change.previous, "ObservedBoard::applyDelta: 旧状态不匹配");
+        }
+        board.board[position.first][position.second] = reverse ? change.previous : change.next;
     }
 }
 
