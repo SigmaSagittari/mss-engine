@@ -119,7 +119,7 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) clamp(360px, 29vw, 4
 .cell.prob-mine { background: #f8dada; }
 .cell.forced-safe { color: #008000; background: #d8f1df; }
 .cell.forced-mine { color: #c23b3b; background: #f8dada; }
-.cell.probability-cell { font-size: 12px; font-weight: 650; }
+.cell.probability-cell { font-size: min(16px, calc((var(--cell-size, 34px) - 8px) * .45)); font-weight: 650; font-variant-numeric: tabular-nums; }
 .cell.flagged { color: #c23b3b; background: #c6c6c6; }
 .cell.mine { font-size: 28px; line-height: 1; }
 .cell.endgame-candidate { background: #f0b447; }
@@ -177,8 +177,8 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) clamp(360px, 29vw, 4
 .cell.search-best { background: #69bf8c; color: #123d25; }
 .score-history { width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
 .score-history caption { margin-bottom: 4px; text-align: left; color: #66738a; }
-.score-history tbody { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
-.score-history tr { display: flex; justify-content: space-between; gap: 6px; border-bottom: 1px solid #edf0f4; }
-.score-history th, .score-history td { padding: 3px 0; text-align: right; }
+.score-history tbody { display: grid; gap: 4px; }
+.score-history tr { display: flex; justify-content: space-between; gap: 6px; }
+.score-history th, .score-history td { padding: 0; text-align: right; }
 .score-history th { color: #66738a; font-weight: 400; }
 .score-history th:first-child { text-align: left; }

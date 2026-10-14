@@ -91,7 +91,7 @@ function showDetail(data, cell) {
     }
     observeResult.append(heading);
     for (let number = 0; number <= 9; ++number) {
-        if (data.observe[number] === "0") continue;
+        if (/^0(?:\.0+)?(?:e[+-]?\d+)?$/i.test(data.observe[number])) continue;
         const item = document.createElement("div");
         item.className = "observe-item";
         const label = document.createElement("span");
@@ -209,7 +209,7 @@ function updateCell(button, cell, state) {
                 className += " prob-safe";
             else if (probability === 1)
                 className += " prob-mine";
-            text = (probability * 100).toFixed(1);
+            text = (probability * 100).toFixed(1).replace(/^100\.0$/, "100");
         } else {
             // 概率请求串行等待时保留当前显示，结果返回后再覆盖数字和底色。
             if (button.classList.contains("prob-safe"))
