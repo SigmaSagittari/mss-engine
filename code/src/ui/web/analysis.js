@@ -1,6 +1,6 @@
 // 普通分析串行引用同一个计算 ID；候选标记 G 不改变观测约束。
 function calculate(state, options = {}) {
-    const config = options.suggest ? analysisConfig() : { algo: shapeAlgo.value };
+    const config = options.suggest ? { ...analysisConfig(), strategy: "javaBrute" } : { algo: shapeAlgo.value };
     const snapshot = { rows: state.rows, cols: state.cols, mines: state.mines, cells: state.cells.replace(/[G*]/g, "?"), algo: config.algo };
     const key = JSON.stringify(snapshot);
     const includeProbabilities = options.includeProbabilities ?? true;
@@ -25,7 +25,7 @@ function analysisConfig() {
     const maxThreads = Number(endgameMaxThreads.value);
     if (!Number.isInteger(maxThreads) || maxThreads < 1 || maxThreads > 2147483647)
         throw new Error("BruteForce 核心数必须是正整数。");
-    return { strategy: suggestStrategy.value, limit, maxThreads, algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, checkAllMoves: endgameCheckAllMoves.checked, multiThread: endgameMultithread.checked };
+    return { limit, maxThreads, algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, checkAllMoves: endgameCheckAllMoves.checked, multiThread: endgameMultithread.checked };
 }
 
 async function requestDetail(cell) {
@@ -37,7 +37,8 @@ async function requestDetail(cell) {
         showDetail({ probability: "0.000000", candidateCount, observe: null }, cell);
         return;
     }
-    detailEmpty.hidden = !analysisElapsedText;
+    detailEmpty.hidden = false;
+    detailEmpty.textContent = "正在读取所选格…";
     detailContent.hidden = true;
     try {
         const data = await calculate(state, { cell, includeProbabilities: false });
@@ -67,6 +68,7 @@ function openAnalysis() {
 
 function scheduleProbabilityUpdate() {
     stopMcts(true);
+    stopSearch(true);
     const revision = ++probabilityRevision;
     clearDetail();
     probabilities = null;
@@ -88,10 +90,9 @@ function scheduleProbabilityUpdate() {
                 return;
             probabilities = result.probabilities;
             candidateCount = result.candidateCount;
-            analysisElapsedText = `概率分析耗时（前端）：${(performance.now() - startedAt).toFixed(1)} ms`;
             probabilityPending = false;
             render();
-            setMessage("概率已更新。", "success");
+            setMessage(`概率已更新 · ${(performance.now() - startedAt).toFixed(1)} ms`, "success");
             if (mode === "analysis" && selectedCell >= 0)
                 requestDetail(selectedCell);
         } catch (error) {
@@ -114,9 +115,10 @@ function editAnalysisCell(cell, state) {
     analysisState = { ...analysisState, cells: cells.join("") };
     if (selectedCell >= 0)
         cellState.value = analysisState.cells[selectedCell];
-    if ((previous === "?" || previous === "G") && (state === "?" || state === "G"))
+    if ((previous === "?" || previous === "G") && (state === "?" || state === "G")) {
         stopMcts(true);
-    else
+        stopSearch(true);
+    } else
         scheduleProbabilityUpdate();
     render();
     setMessage("盘面已修改。", "success");
@@ -126,8 +128,10 @@ async function requestSuggestion() {
     if (operationBusy || (mode === "play" && (playState.lost || playState.won)))
         return;
     stopMcts(true);
+    stopSearch(true);
     operationBusy = true;
     renderMcts();
+    renderSearch();
     document.getElementById("play-until-no-safe").disabled = true;
     document.getElementById("endgame-analysis").disabled = true;
     ++probabilityRevision;

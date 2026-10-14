@@ -1,5 +1,7 @@
 #include "ui/internal/session.h"
 
+#include <algorithm>
+#include <array>
 #include <charconv>
 #include <chrono>
 #include <cstdint>
@@ -12,7 +14,7 @@
 
 namespace mss::UI {
 
-Session::Session(const Config &config) : nextAnalysis_(1), stopped_(false), token_(makeToken()), config_(config) {}
+Session::Session(const Config &config) : nextAnalysis_(1), stopped_(false), token_(makeToken()), config_(config), searchBudget_(0), searchRunning_(false) {}
 
 const std::string &Session::token() const {
     return token_;
@@ -152,15 +154,17 @@ bool Session::parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolver::
     return true;
 }
 
-bool Session::parseConfig(const std::vector<FormField> &fields, int &candidateThreshold, int &threadLimit, winrate::SuggestAlgo &strategy, std::string &response) {
-    if (!parseInteger(value(fields, "limit"), candidateThreshold) || candidateThreshold < 1) {
+bool Session::parseConfig(const std::vector<FormField> &fields, BruteForce::Config &config, winrate::SuggestAlgo &strategy, std::string &response) {
+    if (!parseInteger(value(fields, "limit"), config.candidateThreshold) || config.candidateThreshold < 1) {
         response = error("JavaBrute 切换阈值无效");
         return false;
     }
-    if (!parseInteger(value(fields, "maxThreads"), threadLimit) || threadLimit < 1) {
+    if (!parseInteger(value(fields, "maxThreads"), config.threadLimit) || config.threadLimit < 1) {
         response = error("BruteForce 核心数必须是正整数");
         return false;
     }
+    config.checkAllMoves = value(fields, "checkAllMoves") == "true";
+    config.solver = value(fields, "multiThread") == "true" ? BruteForce::Config::Solver::BitwiseRootParallel : BruteForce::Config::Solver::Bitwise;
     const std::string name = value(fields, "strategy");
     if (name == "lowrisk")
         strategy = winrate::SuggestAlgo::LowRisk;
@@ -180,7 +184,7 @@ bool Session::parseBoard(const std::vector<FormField> &fields, int &rows, int &c
         response = error("盘面参数无效");
         return false;
     }
-    if (rows < 1 || cols < 1 || rows > 50 || cols > 50 || mines < 0 || mines >= rows * cols) {
+    if (rows < 1 || cols < 1 || rows > 100 || cols > 100 || mines < 0 || mines >= rows * cols) {
         response = error("自定义盘面范围无效");
         return false;
     }
@@ -289,11 +293,11 @@ void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Co
         result << ']';
     } else {
         const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, config.longTermRisk, analysis.workspace.longTermRisk);
-        const JavaEval::Result evaluated = JavaEval::analyze(input, risk, {}, config.javaEval, config.longTermRisk, config.pseudo, analysis.workspace.javaEval);
+        const JavaEval::Result evaluated = JavaEval::analyze(input, risk, {}, config.javaEval, config.moveEval, config.longTermRisk, config.pseudo, analysis.workspace.javaEval);
         std::vector<ObservedBoard::CellId> candidates;
         std::vector<ObservedBoard::CellId> recommended;
-        // 被裁剪的项仍是显示候选；推荐使用自动评估的首项，与 Game 的策略一致。
-        for (const JavaEval::Evaluation &move : evaluated)
+        // dead 和评分剪枝项仍作橙色显示候选；Search 会排除 dead，推荐仍使用自动评估的首项。
+        for (const JavaEval::Analysis &move : evaluated)
             candidates.push_back(move.cellId);
         if (!evaluated.empty())
             recommended.push_back(evaluated.front().cellId);
@@ -325,11 +329,11 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
     if (value(fields, "includeProbabilities") == "true")
         writeProbabilities(result, position, analysis_->algo);
     if (value(fields, "suggest") == "true") {
-        int candidateThreshold, threadLimit;
+        BruteForce::Config bruteForce = config_.bruteForce;
         winrate::SuggestAlgo strategy;
-        if (!parseConfig(fields, candidateThreshold, threadLimit, strategy, response))
+        if (!parseConfig(fields, bruteForce, strategy, response))
             return response;
-        const Config config(Config::Global(threadLimit), value(fields, "checkAllMoves") == "true", value(fields, "multiThread") == "true" ? BruteForce::Config::Solver::BitwiseRootParallel : BruteForce::Config::Solver::Bitwise, candidateThreshold, config_.longTermRisk, config_.pseudo, config_.javaEval, config_.monteCarlo);
+        const Config config(bruteForce, config_.longTermRisk, config_.pseudo, config_.moveEval, config_.javaEval, config_.anytimeSearch, config_.monteCarlo);
         writeSuggestion(result, *analysis_, config, strategy);
     }
     const std::string cellText = value(fields, "cell");
@@ -344,11 +348,12 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
             result << ",\"observe\":null";
         } else {
             const Observe::Result observed = position.observe(cell, analysis_->algo);
-            result << ",\"observe\":[";
+            // 保留概率精度；前端只省略原值为 0 的结局，不能按六位小数舍入后的值筛选。
+            result << std::setprecision(18) << ",\"observe\":[";
             for (int i = 0; i < (int)observed.probability.size(); ++i) {
                 if (i != 0)
                     result << ',';
-                result << jsonString(fixedProbability(observed.probability[i]));
+                result << '"' << observed.probability[i] << '"';
             }
             result << ']';
             if (state == ObservedBoard::CellState::ForcedSafe || observed.probability[9] == 1.0L) {
@@ -358,7 +363,7 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
                 const winrate::Input input = position.input(analysis_->algo);
                 const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, config_.longTermRisk, analysis_->workspace.longTermRisk);
                 // 详情只完整评估所选格，不使用候选筛选、剪枝或支配快路径。
-                const JavaEval::Result evaluated = JavaEval::analyze(input, risk, std::span{&cell, 1}, config_.javaEval, config_.longTermRisk, analysis_->workspace.javaEval, false);
+                const JavaEval::Result evaluated = JavaEval::analyze(input, risk, std::span{&cell, 1}, config_.moveEval, config_.longTermRisk, analysis_->workspace.javaEval, false);
                 result << ",\"javaScore\":" << jsonString(fixedProbability(evaluated.front().value));
             }
         }
@@ -440,11 +445,11 @@ bool Session::startMcts(const std::string &body, std::string &response) {
     if (mctsWorker_.joinable())
         mctsWorker_.join();
     const std::vector<FormField> fields = parseForm(body);
-    int candidateThreshold, threadLimit;
+    BruteForce::Config bruteForce = config_.bruteForce;
     winrate::SuggestAlgo strategy;
-    if (!parseConfig(fields, candidateThreshold, threadLimit, strategy, response))
+    if (!parseConfig(fields, bruteForce, strategy, response))
         return false;
-    const Config config(Config::Global(threadLimit), value(fields, "checkAllMoves") == "true", value(fields, "multiThread") == "true" ? BruteForce::Config::Solver::BitwiseRootParallel : BruteForce::Config::Solver::Bitwise, candidateThreshold, config_.longTermRisk, config_.pseudo, config_.javaEval, config_.monteCarlo);
+    const Config config(bruteForce, config_.longTermRisk, config_.pseudo, config_.moveEval, config_.javaEval, config_.anytimeSearch, config_.monteCarlo);
     std::unique_ptr<Analysis> analysis;
     if (!createAnalysis(fields, analysis, response))
         return false;
@@ -511,6 +516,109 @@ std::string Session::mctsUpdate() const {
     return mctsUpdate_;
 }
 
+bool Session::startSearch(const std::string &body, std::string &response) {
+    stopSearch();
+    if (searchWorker_.joinable()) searchWorker_.join();
+    const std::vector<FormField> fields = parseForm(body);
+    std::array<int, 3> width;
+    const std::array<const char *, 3> names{"rootWidth", "middleWidth", "deepWidth"};
+    for (int i = 0; i < 3; ++i)
+        if (!parseInteger(value(fields, names[i]), width[i]) || width[i] < 1) { response = error("搜索候选宽度必须是正整数"); return false; }
+    std::unique_ptr<Analysis> analysis;
+    if (!createAnalysis(fields, analysis, response)) return false;
+    std::vector<ObservedBoard::CellId> targets;
+    const std::string cells = value(fields, "cells");
+    for (int cell = 0; cell < (int)cells.size(); ++cell)
+        if (cells[cell] == 'G') targets.push_back(cell);
+    std::vector<ObservedBoard::CellId> safe = analysis->position.safeMoves(analysis->algo);
+    if (safe.empty())
+        for (ObservedBoard::CellId cell : targets)
+            if (analysis->position.mineProbability(cell, analysis->algo) == 1.0L) { response = error("Search 目标格已确定为雷"); return false; }
+    const Config config(config_.bruteForce, config_.longTermRisk, config_.pseudo, config_.moveEval, config_.javaEval, {width, !targets.empty()}, config_.monteCarlo);
+    {
+        const std::lock_guard<std::mutex> lock(searchMutex_);
+        searchBudget_ = 0;
+        searchRunning_ = value(fields, "run") == "true";
+        searchUpdate_ = "{\"ok\":true,\"nodes\":0,\"completedDepth\":0,\"finished\":false,\"safe\":false,\"recommended\":-1,\"moves\":[]";
+    }
+    searchWorker_ = std::jthread([this, analysis = std::move(analysis), config, targets = std::move(targets), safe = std::move(safe)](std::stop_token stop) {
+        const winrate::Input input = analysis->position.input(analysis->algo);
+        AnytimeSearch::Result result;
+        if (!safe.empty()) {
+            // 专用 anytime 入口也接受有安全格的盘面，并完整返回全部安全格。
+            for (ObservedBoard::CellId cell : safe) result.candidates.emplace_back(cell, 1.0L);
+            result.finished = true;
+        } else {
+            const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, config.longTermRisk, analysis->workspace.longTermRisk);
+            JavaEval::Result evaluated = targets.empty() ? JavaEval::analyze(input, risk, {}, config.javaEval, config.moveEval, config.longTermRisk, config.pseudo, analysis->workspace.javaEval, false) : JavaEval::analyze(input, risk, targets, config.moveEval, config.longTermRisk, analysis->workspace.javaEval, false);
+            // 先算完第零层；用户停止或预算为零都不会留下空推荐。
+            result = AnytimeSearch::analyze(input, std::move(evaluated), config, analysis->workspace.anytimeSearch, 0, stop);
+        }
+        auto publish = [&]() {
+            std::ostringstream json;
+            json << std::setprecision(18) << "{\"ok\":true,\"nodes\":" << result.node << ",\"completedDepth\":" << result.completedDepth << ",\"finished\":" << (result.finished ? "true" : "false") << ",\"safe\":" << (!safe.empty() ? "true" : "false") << ",\"recommended\":" << result.recommended() << ",\"moves\":[";
+            for (int i = 0; i < (int)result.candidates.size(); ++i) {
+                const AnytimeSearch::Candidate &candidate = result.candidates[i];
+                if (i != 0) json << ',';
+                json << "{\"cell\":" << candidate.cellId << ",\"depth\":" << candidate.value.size() - 1 << ",\"value\":[";
+                for (int depth = 0; depth < (int)candidate.value.size(); ++depth) {
+                    if (depth != 0) json << ',';
+                    json << candidate.value[depth];
+                }
+                json << "],\"branches\":[";
+                for (int branch = 0; branch < (int)candidate.branches.size(); ++branch) {
+                    const AnytimeSearch::Candidate::Branch &score = candidate.branches[branch];
+                    if (branch != 0) json << ',';
+                    json << "{\"digit\":" << score.digit << ",\"value\":" << score.value << ",\"depth\":" << score.depth << '}';
+                }
+                json << "]}";
+            }
+            const std::lock_guard<std::mutex> lock(searchMutex_);
+            json << ']';
+            searchUpdate_ = json.str();
+        };
+        publish();
+        while (!result.finished && !stop.stop_requested()) {
+            long long budget;
+            {
+                std::unique_lock<std::mutex> lock(searchMutex_);
+                if (!searchWake_.wait(lock, stop, [&]() { return searchRunning_ || searchBudget_ > 0; })) break;
+                budget = searchRunning_ ? 100 : (std::min)(searchBudget_, 100LL);
+                if (!searchRunning_) searchBudget_ -= budget;
+            }
+            AnytimeSearch::update(result, config, analysis->workspace.anytimeSearch, budget, stop);
+            publish();
+        }
+    });
+    return true;
+}
+
+std::string Session::controlSearch(const std::string &body) {
+    const std::vector<FormField> fields = parseForm(body);
+    const std::string action = value(fields, "action");
+    int nodes = 0;
+    if (action == "step" && (!parseInteger(value(fields, "nodes"), nodes) || nodes < 1)) return error("节点预算必须是正整数");
+    if (action != "pause" && action != "resume" && action != "step") return error("搜索操作无效");
+    {
+        const std::lock_guard<std::mutex> lock(searchMutex_);
+        searchRunning_ = action == "resume";
+        if (action == "step") searchBudget_ += nodes;
+        else searchBudget_ = 0;
+    }
+    searchWake_.notify_one();
+    return "{\"ok\":true}";
+}
+
+void Session::stopSearch() {
+    searchWorker_.request_stop();
+}
+
+std::string Session::searchUpdate() const {
+    const std::lock_guard<std::mutex> lock(searchMutex_);
+    // 缓存保存计算结果前缀；暂停状态读取时补齐，控制操作无需等待下一次计算发布。
+    return searchUpdate_ + ",\"paused\":" + (!searchRunning_ && searchBudget_ == 0 ? "true" : "false") + '}';
+}
+
 std::string Session::handle(const std::string &path, const std::string &body) {
     const std::vector<FormField> fields = parseForm(body);
     if (path == "/api/analyze")
@@ -520,6 +628,7 @@ std::string Session::handle(const std::string &path, const std::string &body) {
     if (path == "/api/quit") {
         stopped_ = true;
         stopMcts();
+        stopSearch();
         return "{\"ok\":true}";
     }
     return error("未知接口");

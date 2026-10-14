@@ -244,9 +244,9 @@ GameControl::Position::SuggestResult GameControl::Position::suggest(const ShapeS
     }
     if (suggestAlgo == SuggestAlgo::JavaEval || suggestAlgo == SuggestAlgo::JavaBrute) {
         const winrate::Input input(observedBoard_, result_.basic, result_.structure, currentProbability, pool_.shapes, pool_.distributions);
-        // Position 没有单独的根死格列表；JavaEval 仍按原数字分支判断推迟猜测的候选。
+        // Position 不另存根死格列表；JavaEval 在候选准备时按数字分布筛掉死格。
         const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, cfg.longTermRisk, workspace_.longTermRisk);
-        const JavaEval::Result evaluated = JavaEval::analyze(input, risk, {}, cfg.javaEval, cfg.longTermRisk, cfg.pseudo, workspace_.javaEval);
+        const JavaEval::Result evaluated = JavaEval::analyze(input, risk, {}, cfg.javaEval, cfg.moveEval, cfg.longTermRisk, cfg.pseudo, workspace_.javaEval);
         // 自动评估首项就是推荐格；无可点击格的合法局面返回空列表。
         if (evaluated.empty())
             return {};
@@ -316,6 +316,10 @@ void GameControl::Game::reset(U128 seed) {
 }
 
 const GameControl::Position &GameControl::Game::position() const {
+    return position_;
+}
+
+GameControl::Position &GameControl::Game::position() {
     return position_;
 }
 

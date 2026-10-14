@@ -14,7 +14,9 @@
 namespace test {
 
 // 固定盘面为 9x9/10；配置提供本次采样时限、样本上限和后续策略。
-inline void monteCarlo(const Config &config = {9, 9, 10, 10.0L, 1000000, mss::GameControl::Game::SuggestAlgo::JavaEval}) {
+inline void monteCarlo(const Config &config = {9, 9, 10, 10.0L, 1000000, Algo::JavaEval, 0}) {
+    mss::assert_(config.algorithm != Algo::JavaSearch, "test::monteCarlo: 后续策略只支持 LowRisk、JavaEval 和 JavaBrute");
+    const mss::winrate::SuggestAlgo algorithm = config.algorithm == Algo::LowRisk ? mss::winrate::SuggestAlgo::LowRisk : config.algorithm == Algo::JavaEval ? mss::winrate::SuggestAlgo::JavaEval : mss::winrate::SuggestAlgo::JavaBrute;
     mss::Workspace workspace;
     mss::ObservedBoard::Result board(config.rows, config.cols, config.mines);
     board.board[0][0] = board.board[0][config.cols - 1] = board.board[config.rows - 1][0] = board.board[config.rows - 1][config.cols - 1] = mss::ObservedBoard::CellState::Num1;
@@ -35,10 +37,10 @@ inline void monteCarlo(const Config &config = {9, 9, 10, 10.0L, 1000000, mss::Ga
                 targets.push_back(board.id(row, col));
     const mss::winrate::Input root(board, basic, structure, probability, shapes, distributions);
     const std::chrono::steady_clock::time_point prepareStart = std::chrono::steady_clock::now();
-    mss::MonteCarlo::Result result = mss::MonteCarlo::analyze(root, config.algorithm, engineConfig, workspace.monteCarlo, targets);
+    mss::MonteCarlo::Result result = mss::MonteCarlo::analyze(root, algorithm, engineConfig, workspace.monteCarlo, targets);
     const long double prepareMilliseconds = std::chrono::duration<long double, std::milli>(std::chrono::steady_clock::now() - prepareStart).count();
     mss::assert_(!result.winrate && result.candidates.size() == 14, "test::monteCarlo: 应比较 14 个首招");
-    const char *strategy = config.algorithm == mss::GameControl::Game::SuggestAlgo::LowRisk ? "LowRisk" : config.algorithm == mss::GameControl::Game::SuggestAlgo::JavaEval ? "JavaEval" : "JavaBrute";
+    const char *strategy = config.algorithm == Algo::LowRisk ? "LowRisk" : config.algorithm == Algo::JavaEval ? "JavaEval" : "JavaBrute";
     std::cout << "test/monte-carlo: " << config.cols << 'x' << config.rows << " mines=" << config.mines << " corners=1 targets=" << targets.size() << " strategy=" << strategy << " time_limit=" << config.time << " samples_limit=" << config.games << " layouts=" << probability.candidates() << "\n";
     std::cout << "  seed_bases=0x123456789ABCDEF,0xF123456789ABCDE0 scheduler_seed=0xC0FFEE12345\n";
     for (int row = 0; row < config.rows; ++row) {

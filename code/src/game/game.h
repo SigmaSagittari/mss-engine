@@ -178,6 +178,8 @@ struct GameControl {
         void reset(U128 seed);
         // 只读访问当前 Position；引用由 Game 持有，生命周期不超过 Game。
         const Position &position() const;
+        // 借用分析输入时可临时修改 Position；分支返回前恢复，禁止跨 play/reset 持有输入。
+        Position &position();
         // 返回当前观测的建议；安全格已全部揭开时返回空列表。
         SuggestResult suggest(const ShapeSolver::OrderAlgo &algo, SuggestAlgo suggestAlgo, const Config &cfg);
         // CellId 必须属于当前盘面且互不重复；只揭开 Hidden，其余格跳过。本局必须处于 Running；随机局按首个实际揭开格布雷，遇雷后停止，整批只更新一次 Position。

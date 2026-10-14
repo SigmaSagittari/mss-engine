@@ -1,5 +1,5 @@
 function renderMcts() {
-    mctsButton.textContent = mctsController ? "停止 MC" : "MC 分析";
+    mctsButton.textContent = mctsController ? "结束模拟" : "蒙特卡洛";
     mctsButton.setAttribute("aria-pressed", String(mctsController !== null));
     mctsButton.hidden = mode !== "analysis";
     mctsButton.disabled = operationBusy || (mode === "play" && (playState.lost || playState.won));
@@ -15,7 +15,7 @@ function renderMcts() {
         const baseline = first.simulations + (next.simulations - first.simulations) * (start - first.time) / (next.time - first.time);
         speed = (mctsResult.simulations - baseline) * 1000 / (now - start);
     }
-    mctsSummary.textContent = mctsResult && mctsResult.simulations > 0 ? `MC · ${formatCount(mctsResult.simulations)} 次模拟 · ${mctsCountFormat.format(Math.round(speed))} 局/s · ${mctsResult.winrate ? "整局胜率" : "最佳胜率"} ${(mctsResult.value * 100).toFixed(2)}% · ${mctsController ? "搜索中" : "已停止"}` : "MC 正在开始分析…";
+    mctsSummary.textContent = mctsResult && mctsResult.simulations > 0 ? `蒙特卡洛 · ${formatCount(mctsResult.simulations)} 次模拟 · ${mctsCountFormat.format(Math.round(speed))} 局/s · ${mctsResult.winrate ? "整局胜率" : "最佳胜率"} ${(mctsResult.value * 100).toFixed(2)}% · ${mctsController ? "搜索中" : "已停止"}` : "正在开始模拟…";
     const move = mode === "analysis" ? mctsMoves.get(selectedCell) : null;
     mctsDetail.hidden = !move;
     if (move) {
@@ -68,6 +68,7 @@ async function requestMcts() {
     }
     if (mode !== "analysis" || operationBusy)
         return;
+    stopSearch(true);
     clearEndgameResult();
     mctsResult = null;
     mctsMoves.clear();
@@ -79,7 +80,7 @@ async function requestMcts() {
     probabilityPending = false;
     render();
     try {
-        await mctsStopQueue;
+        await Promise.all([mctsStopQueue, searchStopQueue]);
         if (mctsController !== controller)
             return;
         const state = activeState();
@@ -87,28 +88,10 @@ async function requestMcts() {
         const response = await fetch("/api/mcts/start", {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Mss-Token": token },
-            body: new URLSearchParams({ mode, rows: state.rows, cols: state.cols, mines: state.mines, cells, ...analysisConfig() }),
+            body: new URLSearchParams({ mode, rows: state.rows, cols: state.cols, mines: state.mines, cells, ...analysisConfig(), strategy: suggestStrategy.value }),
             signal: controller.signal
         });
-        if (!response.ok || !response.headers.get("Content-Type").startsWith("text/event-stream")) {
-            const result = await response.json();
-            throw new Error(result.error || `请求失败（${response.status}）`);
-        }
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let pending = "";
-        while (mctsController === controller) {
-            const { value, done } = await reader.read();
-            if (done || mctsController !== controller)
-                break;
-            pending += decoder.decode(value, { stream: true });
-            let end;
-            while ((end = pending.indexOf("\n\n")) >= 0) {
-                const event = pending.slice(0, end);
-                pending = pending.slice(end + 2);
-                updateMcts(JSON.parse(event.slice(6)));
-            }
-        }
+        await readUpdates(response, controller, updateMcts);
     } catch (error) {
         if (!controller.signal.aborted)
             setMessage(error.message, "error");

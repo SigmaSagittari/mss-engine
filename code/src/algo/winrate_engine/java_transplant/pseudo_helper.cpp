@@ -116,22 +116,28 @@ void Pseudo::collectLinks(const winrate::View &input, winrate::Cells dead, long 
     std::vector<std::vector<winrate::CellId>> &pseudoWitnesses = workspace.witnesses;
     links.clear();
     pseudoWitnesses.clear();
-    // 遍历全部"还差一雷"的 witness（约束 sum == 1）。
-    for (const Structure::InstanceId instanceId : structure.components) {
-        const Structure::Instance &instance = shapes.getInstance(instanceId);
+    // 先按完整概率扣除必雷，再找还差一雷的约束；仅用 Basic 会使等价分支产生不同的链。
+    for (int component = 0; component < (int)structure.components.size(); ++component) {
+        const Structure::Instance &instance = shapes.getInstance(structure.components[component]);
         const Structure::Shape &shape = shapes.get(instance.shape);
         for (int i = 0; i < (int)(shape.constraintCount()); ++i) {
             const Structure::Shape::ConstraintView constraint = shape.constraint(shapes, i);
-            if (constraint.sum != 1)
-                continue;
+            int sum = constraint.sum;
             std::vector<winrate::CellId> &cells = workspace.cells;
             cells.clear();
-            for (Structure::BoxId box : constraint.boxIds)
+            for (Structure::BoxId box : constraint.boxIds) {
+                const long double mine = probability.boxProbability(component, box);
+                if (mine == 1.0L) { sum -= instance.boxes.cellCount(shapes, box); continue; }
+                if (mine == 0.0L) continue;
                 for (int k = instance.boxes.boxOf.span(shapes.boxOf)[box]; k < instance.boxes.boxOf.span(shapes.boxOf)[box + 1]; ++k)
                     cells.push_back(instance.boxes.cells.span(shapes.cells)[k]);
+            }
+            if (sum != 1) continue;
             if (cells.size() < 2)
                 continue;
             if (cells.size() == 2) {
+                // 不同数字可给出同一条边；重复加入会让链折返并错误封口。
+                if (std::any_of(links.begin(), links.end(), [&](const Link &link) { return !link.pseudo && ((link.first == cells[0] && link.second == cells[1]) || (link.first == cells[1] && link.second == cells[0])); })) continue;
                 Link link(cells[0], cells[1], pseudoContains(dead, cells[0]), pseudoContains(dead, cells[1]), false, 2);
                 assess(link, input, eqEps);
                 links.push_back(std::move(link));

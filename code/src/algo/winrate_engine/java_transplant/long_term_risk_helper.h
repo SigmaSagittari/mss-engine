@@ -20,6 +20,8 @@ struct LongTermRisk {
 
   private:
     friend struct JavaEval;
+    friend struct MoveEval;
+    friend struct AnytimeSearch;
 
     struct RiskHotspot {
         winrate::CellId cell;
@@ -35,6 +37,7 @@ struct LongTermRisk {
       private:
         friend struct LongTermRisk;
         friend struct JavaEval;
+        friend struct MoveEval;
         std::vector<long double> enablers;
         std::vector<winrate::CellId> pseudos;
         std::vector<RiskHotspot> hotspots;

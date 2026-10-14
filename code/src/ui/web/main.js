@@ -48,7 +48,7 @@ document.getElementById("close-settings").addEventListener("click", () => settin
 document.getElementById("export-davidnhill").addEventListener("click", () => {
     try {
         const board = JSON.parse(boardStringInput.value);
-        if (!board || !Number.isInteger(board.rows) || !Number.isInteger(board.cols) || !Number.isInteger(board.mines) || board.rows < 1 || board.cols < 1 || board.rows > 50 || board.cols > 50 || board.mines < 0 || board.mines >= board.rows * board.cols)
+        if (!board || !Number.isInteger(board.rows) || !Number.isInteger(board.cols) || !Number.isInteger(board.mines) || board.rows < 1 || board.cols < 1 || board.rows > 100 || board.cols > 100 || board.mines < 0 || board.mines >= board.rows * board.cols)
             throw new Error("盘面参数无效");
         if (typeof board.cells !== "string" || board.cells.length !== board.rows * board.cols || /[^0-8?MSG]/.test(board.cells))
             throw new Error("盘面数据无效");
@@ -82,7 +82,7 @@ importBoardStringButton.addEventListener("click", () => {
             throw new Error("盘面参数无效");
         if (!Number.isInteger(board.rows) || !Number.isInteger(board.cols) || !Number.isInteger(board.mines))
             throw new Error("盘面参数无效");
-        if (board.rows < 1 || board.cols < 1 || board.rows > 50 || board.cols > 50 || board.rows * board.cols > 2500 || board.mines < 0 || board.mines >= board.rows * board.cols)
+        if (board.rows < 1 || board.cols < 1 || board.rows > 100 || board.cols > 100 || board.rows * board.cols > 10000 || board.mines < 0 || board.mines >= board.rows * board.cols)
             throw new Error("自定义盘面范围无效");
         if (typeof board.cells !== "string" || board.cells.length !== board.rows * board.cols)
             throw new Error("盘面数据长度无效");
@@ -93,6 +93,11 @@ importBoardStringButton.addEventListener("click", () => {
         }
         clearEndgameResult();
         analysisState = { rows: board.rows, cols: board.cols, mines: board.mines, cells: board.cells };
+        difficulty.value = "custom";
+        setDifficultyValues("custom");
+        document.getElementById("rows").value = board.rows;
+        document.getElementById("cols").value = board.cols;
+        document.getElementById("mines").value = board.mines;
         hoveredCell = -1;
         selectedCell = -1;
         scheduleProbabilityUpdate();
@@ -105,11 +110,14 @@ importBoardStringButton.addEventListener("click", () => {
     }
 });
 cellSizeSetting.addEventListener("change", render);
+window.addEventListener("resize", render);
 probabilityDisplay.addEventListener("change", () => {
     scheduleProbabilityUpdate();
     render();
 });
 shapeAlgo.addEventListener("change", () => {
+    stopSearch(true);
+    stopMcts(true);
     if (probabilityDisplay.checked) {
         scheduleProbabilityUpdate();
         render();
@@ -141,6 +149,9 @@ document.getElementById("analysis-mode").addEventListener("click", openAnalysis)
 document.getElementById("play-until-no-safe").addEventListener("click", playUntilNoSafe);
 document.getElementById("endgame-analysis").addEventListener("click", requestSuggestion);
 mctsButton.addEventListener("click", requestMcts);
+searchButton.addEventListener("click", requestSearch);
+searchNodeBudget.addEventListener("input", renderSearch);
+for (const input of searchWidths) input.addEventListener("change", () => { stopSearch(true); render(); });
 cellState.addEventListener("change", () => editAnalysisCell(selectedCell, cellState.value));
 
 document.addEventListener("click", (event) => {

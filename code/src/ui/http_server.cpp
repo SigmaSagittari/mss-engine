@@ -1,5 +1,6 @@
 #include "ui/internal/http_server.h"
 
+#include <array>
 #include <charconv>
 #include <chrono>
 #include <filesystem>
@@ -200,7 +201,7 @@ void HttpServer::run() {
         return;
     }
     const std::filesystem::path assets = assetDirectory();
-    std::jthread mctsStream;
+    std::jthread analysisStream;
     while (!session_.stopped()) {
         const SOCKET client = accept(listener, nullptr, nullptr);
         if (client == INVALID_SOCKET)
@@ -215,7 +216,7 @@ void HttpServer::run() {
         }
         if (request.host != host) {
             sendResponse(client, 403, "text/plain; charset=utf-8", "Forbidden");
-        } else if (request.path == "/" || request.path == "/state.js" || request.path == "/game.js" || request.path == "/view.js" || request.path == "/analysis.js" || request.path == "/monte_carlo.js" || request.path == "/main.js" || request.path == "/style.css") {
+        } else if (request.path == "/" || request.path == "/state.js" || request.path == "/game.js" || request.path == "/view.js" || request.path == "/analysis.js" || request.path == "/monte_carlo.js" || request.path == "/anytime_search.js" || request.path == "/main.js" || request.path == "/style.css") {
             if (request.method != "GET") {
                 sendResponse(client, 405, "text/plain; charset=utf-8", "Method Not Allowed");
             } else {
@@ -228,11 +229,13 @@ void HttpServer::run() {
                     const std::string thresholdMarker = "__MSS_BRUTE_FORCE_THRESHOLD__";
                     content.replace(content.find(thresholdMarker), thresholdMarker.size(), std::to_string(config.bruteForce.candidateThreshold));
                     const std::string threadsMarker = "__MSS_THREAD_LIMIT__";
-                    content.replace(content.find(threadsMarker), threadsMarker.size(), std::to_string(config.global.threadLimit));
+                    content.replace(content.find(threadsMarker), threadsMarker.size(), std::to_string(config.bruteForce.threadLimit));
                     const std::string checkAllMarker = "__MSS_BRUTE_FORCE_CHECK_ALL__";
                     content.replace(content.find(checkAllMarker), checkAllMarker.size(), config.bruteForce.checkAllMoves ? "checked" : "");
                     const std::string multiThreadMarker = "__MSS_BRUTE_FORCE_MULTITHREAD__";
                     content.replace(content.find(multiThreadMarker), multiThreadMarker.size(), config.bruteForce.solver == BruteForce::Config::Solver::BitwiseRootParallel ? "checked" : "");
+                    const std::array<const char *, 3> widthMarkers{"__MSS_SEARCH_ROOT_WIDTH__", "__MSS_SEARCH_MIDDLE_WIDTH__", "__MSS_SEARCH_DEEP_WIDTH__"};
+                    for (int i = 0; i < 3; ++i) content.replace(content.find(widthMarkers[i]), std::string(widthMarkers[i]).size(), std::to_string(config.anytimeSearch.width[i]));
                     const std::string versionMarker = "__MSS_VERSION__";
                     std::size_t version = content.find(versionMarker);
                     while (version != std::string::npos) {
@@ -248,36 +251,43 @@ void HttpServer::run() {
                 sendResponse(client, 405, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"只接受 POST 请求\"}");
             } else if (request.origin != origin || request.token != session_.token()) {
                 sendResponse(client, 403, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"请求来源无效\"}");
-            } else if (request.path == "/api/mcts/stop") {
-                mctsStream.request_stop();
+            } else if (request.path == "/api/mcts/stop" || request.path == "/api/anytime-search/stop") {
+                analysisStream.request_stop();
                 session_.stopMcts();
+                session_.stopSearch();
                 sendResponse(client, 200, "application/json; charset=utf-8", "{\"ok\":true}");
-            } else if (request.path == "/api/mcts/start") {
-                mctsStream.request_stop();
+            } else if (request.path == "/api/mcts/start" || request.path == "/api/anytime-search/start") {
+                analysisStream.request_stop();
                 session_.stopMcts();
-                if (mctsStream.joinable())
-                    mctsStream.join();
+                session_.stopSearch();
+                if (analysisStream.joinable())
+                    analysisStream.join();
                 std::string response;
-                if (!session_.startMcts(request.body, response)) {
+                const bool search = request.path == "/api/anytime-search/start";
+                if (!(search ? session_.startSearch(request.body, response) : session_.startMcts(request.body, response))) {
                     sendResponse(client, 200, "application/json; charset=utf-8", response);
                 } else if (sendAll(client, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n")) {
                     DWORD sendTimeout = 1000;
                     setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, (const char *)&sendTimeout, sizeof(sendTimeout));
-                    mctsStream = std::jthread([this, client](std::stop_token stop) {
+                    analysisStream = std::jthread([this, client, search](std::stop_token stop) {
                         std::chrono::steady_clock::time_point next = std::chrono::steady_clock::now();
                         while (!stop.stop_requested()) {
                             next += std::chrono::milliseconds(100);
                             std::this_thread::sleep_until(next);
-                            if (stop.stop_requested() || !sendAll(client, "data: " + session_.mctsUpdate() + "\n\n"))
+                            if (stop.stop_requested() || !sendAll(client, "data: " + (search ? session_.searchUpdate() : session_.mctsUpdate()) + "\n\n"))
                                 break;
                         }
                         session_.stopMcts();
+                        session_.stopSearch();
                         closesocket(client);
                     });
                     continue;
                 } else {
                     session_.stopMcts();
+                    session_.stopSearch();
                 }
+            } else if (request.path == "/api/anytime-search/control") {
+                sendResponse(client, 200, "application/json; charset=utf-8", session_.controlSearch(request.body));
             } else {
                 sendResponse(client, 200, "application/json; charset=utf-8", session_.handle(request.path, request.body));
             }
@@ -286,10 +296,11 @@ void HttpServer::run() {
         }
         closesocket(client);
     }
-    mctsStream.request_stop();
+    analysisStream.request_stop();
     session_.stopMcts();
-    if (mctsStream.joinable())
-        mctsStream.join();
+    session_.stopSearch();
+    if (analysisStream.joinable())
+        analysisStream.join();
     closesocket(listener);
 }
 

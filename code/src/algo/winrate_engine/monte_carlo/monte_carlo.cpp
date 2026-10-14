@@ -75,7 +75,7 @@ int MonteCarlo::remainingSafe(const winrate::Board &board) {
 
 JavaEval::Result MonteCarlo::evaluate(const winrate::Input &root, const mss::Config &cfg, Workspace &workspace, bool prune) {
     const LongTermRisk::Result risk = LongTermRisk::analyze(root, {}, cfg.longTermRisk, workspace.risk);
-    return JavaEval::analyze(root, risk, {}, cfg.javaEval, cfg.longTermRisk, cfg.pseudo, workspace.javaEval, prune);
+    return JavaEval::analyze(root, risk, {}, cfg.javaEval, cfg.moveEval, cfg.longTermRisk, cfg.pseudo, workspace.javaEval, prune);
 }
 
 void MonteCarlo::estimate(Candidate &candidate, const Config &cfg) {
@@ -98,7 +98,7 @@ MonteCarlo::Result MonteCarlo::analyze(const winrate::Input &root, winrate::Sugg
         return Result(strategy, {}, false, std::move(candidates), 0, false, cellCount);
     }
     const LongTermRisk::Result risk = LongTermRisk::analyze(root, {}, cfg.longTermRisk, workspace.risk);
-    const JavaEval::Result evaluated = JavaEval::analyze(root, risk, targets, cfg.javaEval, cfg.longTermRisk, workspace.javaEval, false);
+    const JavaEval::Result evaluated = JavaEval::analyze(root, risk, targets, cfg.moveEval, cfg.longTermRisk, workspace.javaEval, false);
     long double maximum = evaluated.front().value;
     int recommended = 0;
     for (int i = 0; i < (int)evaluated.size(); ++i)
@@ -107,10 +107,10 @@ MonteCarlo::Result MonteCarlo::analyze(const winrate::Input &root, winrate::Sugg
             recommended = i;
         }
     long double total = 0.0L;
-    for (const JavaEval::Evaluation &candidate : evaluated)
+    for (const JavaEval::Analysis &candidate : evaluated)
         total += std::exp((candidate.value - maximum) / cfg.monteCarlo.temperature);
     candidates.reserve(evaluated.size());
-    for (const JavaEval::Evaluation &candidate : evaluated)
+    for (const JavaEval::Analysis &candidate : evaluated)
         candidates.push_back(Candidate(candidate.cellId, candidate.value, std::exp((candidate.value - maximum) / cfg.monteCarlo.temperature) / total, cfg.monteCarlo));
     return Result(strategy, {}, false, std::move(candidates), recommended, true, cellCount);
 }
@@ -119,20 +119,20 @@ void MonteCarlo::expand(Result &result, const winrate::Input &root, const mss::C
     const JavaEval::Result evaluated = evaluate(root, cfg, workspace, false);
     // 首个推荐已完成一局；补齐评分只调整先验，保留同一 Candidate 中的实际胜负和雷盘序号。
     Candidate &first = result.candidates.front();
-    for (const JavaEval::Evaluation &candidate : evaluated)
+    for (const JavaEval::Analysis &candidate : evaluated)
         if (candidate.cellId == first.cellId)
             first.weight = candidate.value;
     long double maximum = first.weight;
-    for (const JavaEval::Evaluation &candidate : evaluated)
+    for (const JavaEval::Analysis &candidate : evaluated)
         maximum = (std::max)(maximum, candidate.value);
     long double total = std::exp((first.weight - maximum) / cfg.monteCarlo.temperature);
-    for (const JavaEval::Evaluation &candidate : evaluated)
+    for (const JavaEval::Analysis &candidate : evaluated)
         if (candidate.cellId != first.cellId)
             total += std::exp((candidate.value - maximum) / cfg.monteCarlo.temperature);
     first.prior = std::exp((first.weight - maximum) / cfg.monteCarlo.temperature) / total;
     estimate(first, cfg.monteCarlo);
     const winrate::CellId firstCell = first.cellId;
-    for (const JavaEval::Evaluation &candidate : evaluated) {
+    for (const JavaEval::Analysis &candidate : evaluated) {
         int index;
         if (candidate.cellId == firstCell) {
             index = 0;

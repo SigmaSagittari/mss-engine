@@ -1,15 +1,5 @@
 function setMessage(text, kind = "") {
-    if (mode === "play") {
-        detailEmpty.hidden = !text;
-        detailEmpty.className = kind ? `muted message ${kind}` : "muted";
-        detailEmpty.textContent = text;
-        detailContent.hidden = true;
-        messageElement.hidden = true;
-        messageElement.textContent = "";
-        messageElement.className = "message";
-        return;
-    }
-    messageElement.hidden = false;
+    messageElement.hidden = !text;
     messageElement.textContent = text;
     messageElement.className = `message ${kind}`;
 }
@@ -66,8 +56,7 @@ function formatCount(value) {
 }
 
 function showDetail(data, cell) {
-    detailEmpty.hidden = !analysisElapsedText;
-    detailEmpty.textContent = analysisElapsedText;
+    detailEmpty.hidden = true;
     detailContent.hidden = false;
     const state = activeState();
     const row = Math.floor(cell / state.cols) + 1;
@@ -85,7 +74,7 @@ function showDetail(data, cell) {
         return;
     }
     const score = document.createElement("div");
-    score.className = "observe-item";
+    score.className = "observe-item java-score";
     score.style.gridColumn = "1 / -1";
     const scoreLabel = document.createElement("span");
     scoreLabel.textContent = "Java 评分";
@@ -93,22 +82,35 @@ function showDetail(data, cell) {
     scoreValue.textContent = data.javaScore;
     score.append(scoreLabel, scoreValue);
     observeResult.append(score);
+    const heading = document.createElement("div");
+    heading.className = "observe-item search-branch-heading";
+    for (const text of ["结局", "概率", "子评分"]) {
+        const label = document.createElement("span");
+        label.textContent = text;
+        heading.append(label);
+    }
+    observeResult.append(heading);
     for (let number = 0; number <= 9; ++number) {
+        if (data.observe[number] === "0") continue;
         const item = document.createElement("div");
         item.className = "observe-item";
         const label = document.createElement("span");
         label.textContent = number === 9 ? "爆炸" : `数字 ${number}`;
         const value = document.createElement("span");
-        value.textContent = data.observe[number];
-        item.append(label, value);
+        value.textContent = Number(data.observe[number]).toFixed(6);
+        const branch = document.createElement("strong");
+        branch.className = "search-branch-score";
+        branch.dataset.digit = number;
+        item.append(label, value, branch);
         observeResult.append(item);
     }
+    renderSearch();
 }
 
 function clearDetail() {
     ++detailRequest;
-    analysisElapsedText = "";
-    detailEmpty.hidden = true;
+    detailEmpty.hidden = false;
+    detailEmpty.textContent = "点击格子查看详情。";
     detailEmpty.className = "muted";
     detailContent.hidden = true;
 }
@@ -153,6 +155,8 @@ function updateCell(button, cell, state) {
     const isHidden = value === "?" || value === "G";
     const move = mode === "analysis" ? mctsMoves.get(cell) : null;
     const showMcts = (isHidden || value === "S") && move;
+    const searchMove = mode === "analysis" ? searchMoves.get(cell) : null;
+    const showSearch = (isHidden || value === "S") && searchMove;
     const wasMcts = button.classList.contains("mcts-cell");
     // 先算出最终样式和文字；概率刷新时只写变化项，不清空再恢复整格。
     let className = "cell";
@@ -163,6 +167,7 @@ function updateCell(button, cell, state) {
         button.removeAttribute("data-mcts-winrate");
         button.removeAttribute("data-mcts-visits");
     }
+    if (!showSearch) button.removeAttribute("data-search-depth");
     button.removeAttribute("title");
     button.setAttribute("aria-label", `第 ${Math.floor(cell / state.cols) + 1} 行，第 ${cell % state.cols + 1} 列`);
     if (value >= "0" && value <= "8")
@@ -181,6 +186,13 @@ function updateCell(button, cell, state) {
         if (cell === playState.lostCell)
             className += " hit-mine";
         text = "✹";
+    } else if (showSearch) {
+        className += " search-cell";
+        if (searchResult.safe || cell === searchResult.recommended) className += " search-best";
+        text = `${(Number(searchMove.value[searchMove.depth]) * 100).toFixed(1)}%`;
+        button.dataset.searchDepth = `${searchMove.depth} 层`;
+        button.title = `完成第 ${searchMove.depth} 层，评分 ${Number(searchMove.value[searchMove.depth]).toFixed(6)}`;
+        button.setAttribute("aria-label", `${button.getAttribute("aria-label")}，${button.title}`);
     } else if (showMcts) {
         className += " mcts-cell";
         if (cell === mctsResult.recommended)
@@ -256,9 +268,14 @@ function render() {
     const state = activeState();
     if (!state)
         return;
+    if (mode === "play") {
+        detailEmpty.hidden = false;
+        detailEmpty.textContent = "左键揭格，右键标旗。";
+        detailContent.hidden = true;
+    }
     clearPressedCells();
     boardElement.style.gridTemplateColumns = `repeat(${state.cols}, var(--cell-size, 34px))`;
-    const cellSize = cellSizeSetting.value === "auto" ? Math.max(25, Math.min(38, Math.floor((window.innerWidth - 370) / state.cols))) : Number(cellSizeSetting.value);
+    const cellSize = cellSizeSetting.value === "auto" ? Math.max(25, Math.min(38, Math.floor((boardElement.closest(".game-area").clientWidth - 60) / state.cols))) : Number(cellSizeSetting.value);
     boardElement.style.setProperty("--cell-size", `${cellSize}px`);
     if (boardElement.children.length !== state.cells.length) {
         boardElement.replaceChildren();
@@ -281,6 +298,7 @@ function render() {
     const marked = mode === "play" ? flags.size : 0;
     document.getElementById("mine-counter").textContent = `${state.mines - marked} 雷`;
     renderMcts();
+    renderSearch();
 }
 
 function showSuggestion(result, elapsedMs) {

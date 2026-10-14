@@ -1,5 +1,6 @@
 #pragma once
 
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <ostream>
@@ -20,6 +21,10 @@ struct Session {
     bool startMcts(const std::string &body, std::string &response);
     void stopMcts();
     std::string mctsUpdate() const;
+    bool startSearch(const std::string &body, std::string &response);
+    std::string controlSearch(const std::string &body);
+    void stopSearch();
+    std::string searchUpdate() const;
 
   private:
     struct FormField {
@@ -47,7 +52,7 @@ struct Session {
     std::string value(const std::vector<FormField> &fields, const std::string &key) const;
     std::string error(const std::string &message) const;
     bool parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolver::OrderAlgo &algo);
-    bool parseConfig(const std::vector<FormField> &fields, int &candidateThreshold, int &threadLimit, winrate::SuggestAlgo &strategy, std::string &response);
+    bool parseConfig(const std::vector<FormField> &fields, BruteForce::Config &config, winrate::SuggestAlgo &strategy, std::string &response);
     bool parseBoard(const std::vector<FormField> &fields, int &rows, int &cols, int &mines, std::string &cells, std::string &response);
     static ObservedBoard::Result makeBoard(int rows, int cols, int mines, const std::string &cells);
     bool createAnalysis(const std::vector<FormField> &fields, std::unique_ptr<Analysis> &analysis, std::string &response);
@@ -65,7 +70,13 @@ struct Session {
     // 借用 UI 入口的配置，生命周期覆盖 Session 和后台任务。
     const Config &config_;
     // 后台任务独占自己的 Analysis；线程先销毁，发布缓存与互斥锁后销毁。
+    mutable std::mutex searchMutex_;
+    std::condition_variable_any searchWake_;
+    std::string searchUpdate_;
+    long long searchBudget_;
+    bool searchRunning_;
     std::jthread mctsWorker_;
+    std::jthread searchWorker_;
 };
 
 } // namespace mss::UI

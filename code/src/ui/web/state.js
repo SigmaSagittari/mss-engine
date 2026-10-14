@@ -45,7 +45,6 @@ let hoveredCell = -1;
 let selectedCell = -1;
 let flags = new Set();
 let detailRequest = 0;
-let analysisElapsedText = "";
 let leftMouseDown = false;
 let pressedCells = new Set();
 let analysisRequestQueue = Promise.resolve();
@@ -57,6 +56,16 @@ let operationBusy = false;
 let endgameResultAvailable = false;
 let endgameCandidateCells = new Set();
 let endgameBestCells = new Set();
+const searchButton = document.getElementById("anytime-search");
+const searchSummary = document.getElementById("anytime-search-summary");
+const searchHistory = document.getElementById("anytime-search-history");
+const searchNodeBudget = document.getElementById("anytime-search-nodes");
+const searchWidths = ["search-root-width", "search-middle-width", "search-deep-width"].map((id) => document.getElementById(id));
+let searchController = null;
+let searchStopQueue = Promise.resolve();
+let searchResult = null;
+let searchMoves = new Map();
+let searchSamples = [];
 let mctsController = null;
 let mctsStopQueue = Promise.resolve();
 let mctsResult = null;
@@ -83,6 +92,27 @@ async function post(path, fields = {}) {
     return result;
 }
 
+async function readUpdates(response, controller, update) {
+    if (!response.ok || !response.headers.get("Content-Type").startsWith("text/event-stream")) {
+        const result = await response.json();
+        throw new Error(result.error || `请求失败（${response.status}）`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    while (!controller.signal.aborted) {
+        const { value, done } = await reader.read();
+        if (done || controller.signal.aborted) break;
+        pending += decoder.decode(value, { stream: true });
+        let end;
+        while ((end = pending.indexOf("\n\n")) >= 0) {
+            const event = pending.slice(0, end);
+            pending = pending.slice(end + 2);
+            update(JSON.parse(event.slice(6)));
+            if (controller.signal.aborted) break;
+        }
+    }
+}
 function activeState() {
     return mode === "play" ? playState : analysisState;
 }

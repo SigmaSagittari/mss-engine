@@ -38,11 +38,10 @@ struct BruteForce {
         Solver solver;
         // JavaBrute 建议模式在全盘候选布局数严格小于此值时调用暴力；solve 本身不受此阈值限制。
         int candidateThreshold;
-        // 引用主 Config::Global 的线程上限，包含调用线程；目标须比本配置活得久。
-        int &threadLimit;
+        // 线程上限由本配置持有，包含调用线程；须为正数。
+        int threadLimit;
 
-        Config(bool checkAllMoves, Solver solver, int candidateThreshold, int &threadLimit) : checkAllMoves(checkAllMoves), solver(solver), candidateThreshold(candidateThreshold), threadLimit(threadLimit) {}
-        Config(const Config &other, int &threadLimit) : checkAllMoves(other.checkAllMoves), solver(other.solver), candidateThreshold(other.candidateThreshold), threadLimit(threadLimit) {}
+        Config(bool checkAllMoves, Solver solver, int candidateThreshold, int threadLimit) : checkAllMoves(checkAllMoves), solver(solver), candidateThreshold(candidateThreshold), threadLimit(threadLimit) {}
     };
 
     struct Result {
@@ -245,7 +244,7 @@ struct BruteForce {
 
     // board、basic、structure 必须描述同一观测状态，shapes 必须是 structure 所属的池。
     // checkAllMoves 为 true 时逐一返回所有 H/T 候选格；否则搜索最高胜局数并返回一条推荐步。
-    // options.threadLimit 引用主 Config::Global，须为正数；串行后端不启用额外线程。
+    // options.threadLimit 须为正数；串行后端不启用额外线程。
     static Result solve(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes, const Config &options, Workspace &workspace);
     // components 按对应 Structure 池中的 InstanceId 给出，offFrontierCells 是自由选雷格；两者合计恰有 mines 个雷。
     // 输出模式仍只由 checkAllMoves 决定，不会因入口类型自动展开所有候选格。

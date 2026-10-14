@@ -62,7 +62,7 @@ inline void graphSolverFrequency(const Config &config) {
     mss::GameControl::SuggestPool suggestions;
     runGames(config, mss::ShapeSolver::OrderAlgo::Auto, seed, suggestions, collectGraphSolverFrequency);
     const double elapsedSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-    const char *algorithm = config.algorithm == mss::GameControl::Game::SuggestAlgo::LowRisk ? "LowRisk" : config.algorithm == mss::GameControl::Game::SuggestAlgo::JavaEval ? "JavaEval" : "JavaBrute";
+    const char *algorithm = config.algorithm == Algo::LowRisk ? "LowRisk" : config.algorithm == Algo::JavaEval ? "JavaEval" : config.algorithm == Algo::JavaBrute ? "JavaBrute" : "JavaSearch";
     mss::assert_(components > 0, "test::graphSolverFrequency: 没有采集到组件");
     std::cout << "test/graphSolverFrequency: board=" << config.cols << 'x' << config.rows << '/' << config.mines << ", mode=" << algorithm << ", target_seconds=" << config.time << ", target_games=" << config.games << ", seed=(" << seed.lo << ',' << seed.hi << "), games=" << games << ", wins=" << wins << ", losses=" << games - wins << ", decisions=" << decisions << ", components=" << components << ", graph_components=" << graphComponents << ", graph_ratio=" << std::fixed << std::setprecision(2) << 100.0 * graphComponents / components << "%, elapsed=" << elapsedSeconds << "s\n";
 }

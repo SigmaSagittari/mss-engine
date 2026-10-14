@@ -18,8 +18,8 @@
             <option value="custom">自定义</option>
         </select>
         <div id="custom-settings" class="custom-settings" hidden>
-            <label>行 <input id="rows" type="number" min="1" max="50" value="16"></label>
-            <label>列 <input id="cols" type="number" min="1" max="50" value="30"></label>
+            <label>行 <input id="rows" type="number" min="1" max="100" value="16"></label>
+            <label>列 <input id="cols" type="number" min="1" max="100" value="30"></label>
             <label>雷 <input id="mines" type="number" min="0" value="99"></label>
         </div>
         <button id="new-game" class="primary">新游戏</button>
@@ -27,8 +27,9 @@
             <button id="play-mode" class="mode active" role="tab">游玩</button>
             <button id="analysis-mode" class="mode" role="tab">分析</button>
         </div>
-        <button id="endgame-analysis" class="secondary">分析</button>
-        <button id="mcts-analysis" class="secondary" aria-pressed="false">MC 分析</button>
+        <button id="endgame-analysis" class="secondary">JavaEval</button>
+        <button id="mcts-analysis" class="secondary" aria-pressed="false" hidden>蒙特卡洛</button>
+        <button id="anytime-search" class="secondary" hidden>开始搜索</button>
         <div id="play-actions" class="play-actions">
             <button id="play-until-no-safe">开到无安全格</button>
         </div>
@@ -41,28 +42,18 @@
                 <div id="mine-counter"></div>
             </div>
             <div id="mcts-summary" class="mcts-summary" hidden></div>
+            <div id="anytime-search-summary" class="mcts-summary" hidden></div>
             <div class="board-scroll"><div id="board" class="board" role="grid"></div></div>
             <div id="message" class="message" aria-live="polite" hidden></div>
         </section>
         <aside class="details">
             <h2>详细信息</h2>
             <div id="detail-empty" class="muted">左键揭格，右键标旗。</div>
-            <div id="detail-content" hidden>
-                <div id="detail-position" class="detail-position"></div>
-                <div class="risk-row"><span>雷概率</span><strong id="detail-risk">—</strong></div>
-                <div class="candidate-row"><span>总候选方案数</span><strong id="detail-candidates">—</strong></div>
-                <div id="observe-result" class="observe-result"></div>
-            </div>
-            <div id="mcts-detail" class="mcts-detail" hidden>
-                <div class="candidate-row"><span>采样局数</span><strong id="mcts-visits"></strong></div>
-                <div class="candidate-row"><span>总获胜数</span><strong id="mcts-wins"></strong></div>
-                <div class="risk-row"><span>胜率</span><strong id="mcts-winrate"></strong></div>
-            </div>
             <section id="analysis-editor" class="analysis-editor" hidden>
                 <div class="editor-row">
-                    <select id="cell-state">
+                    <select id="cell-state" aria-label="所选格状态">
                         <option value="?">隐藏（H）</option>
-                        <option value="G">蒙特卡洛目标格（G）</option>
+                        <option value="G">分析目标格（G）</option>
                         <option value="0">0</option>
                         <option value="1">1</option>
                         <option value="2">2</option>
@@ -77,6 +68,21 @@
                     </select>
                 </div>
             </section>
+            <div id="detail-content" hidden>
+                <div id="detail-position" class="detail-position"></div>
+                <div class="risk-row"><span>雷概率</span><strong id="detail-risk">—</strong></div>
+                <div class="candidate-row"><span>总候选方案数</span><strong id="detail-candidates">—</strong></div>
+                <div id="observe-result" class="observe-result"></div>
+                <table id="anytime-search-history" class="score-history" hidden>
+                    <caption>逐层评分</caption>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div id="mcts-detail" class="mcts-detail" hidden>
+                <div class="candidate-row"><span>采样局数</span><strong id="mcts-visits"></strong></div>
+                <div class="candidate-row"><span>总获胜数</span><strong id="mcts-wins"></strong></div>
+                <div class="risk-row"><span>胜率</span><strong id="mcts-winrate"></strong></div>
+            </div>
             <section id="endgame-result" class="endgame-result" hidden>
                 <h3>分析结果</h3>
                 <div id="endgame-summary" class="muted"></div>
@@ -97,11 +103,20 @@
             <div class="settings-panels">
                 <section id="settings-analysis" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-analysis">
                     <label class="settings-row"><span>显示分析概率</span><input id="probability-display" type="checkbox" checked></label>
-                    <label class="settings-row"><span>建议与 MC 对局策略</span><select id="suggest-strategy"><option value="lowrisk">LowRisk</option><option value="java">JavaEval</option><option value="javaBrute" selected>JavaBrute</option></select></label>
+                    <label class="settings-row"><span>蒙特卡洛对局策略</span><select id="suggest-strategy"><option value="lowrisk">LowRisk</option><option value="java">JavaEval</option><option value="javaBrute" selected>JavaBrute</option></select></label>
+                    <h3>BruteForce</h3>
                     <label class="settings-row"><span>少于此方案数尝试暴力</span><input id="endgame-candidate-limit" type="number" min="1" step="1" value="__MSS_BRUTE_FORCE_THRESHOLD__"></label>
                     <label class="settings-row"><span>BruteForce 分析所有候选格</span><input id="endgame-check-all-moves" type="checkbox" __MSS_BRUTE_FORCE_CHECK_ALL__></label>
                     <label class="settings-row"><span>BruteForce 多线程</span><input id="endgame-multithread" type="checkbox" __MSS_BRUTE_FORCE_MULTITHREAD__></label>
                     <label class="settings-row"><span>核心数</span><input id="endgame-max-threads" type="number" min="1" max="2147483647" step="1" value="__MSS_THREAD_LIMIT__"></label>
+                    <h3>逐层搜索</h3>
+                    <div class="search-widths">
+                        <label>根层候选宽度<input id="search-root-width" type="number" min="1" max="2147483647" value="__MSS_SEARCH_ROOT_WIDTH__"></label>
+                        <label>中层候选宽度<input id="search-middle-width" type="number" min="1" max="2147483647" value="__MSS_SEARCH_MIDDLE_WIDTH__"></label>
+                        <label>深层候选宽度<input id="search-deep-width" type="number" min="1" max="2147483647" value="__MSS_SEARCH_DEEP_WIDTH__"></label>
+                    </div>
+                    <label class="settings-row"><span>手动搜索节点数</span><input id="anytime-search-nodes" type="number" min="-1" max="2147483647" value="-1"></label>
+                    <h3>概率求解</h3>
                     <label class="settings-row"><span>ShapeSolver 算法</span><select id="shape-algo"><option value="auto" selected>auto（默认）</option><option value="autoSA">autoSA</option></select></label>
                 </section>
                 <section id="settings-board" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-board">
@@ -134,6 +149,7 @@
     <script src="/view.js" defer></script>
     <script src="/analysis.js" defer></script>
     <script src="/monte_carlo.js" defer></script>
+    <script src="/anytime_search.js" defer></script>
     <script src="/main.js" defer></script>
 </body>
 </html>

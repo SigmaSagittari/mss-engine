@@ -205,7 +205,7 @@ function startNewGame(seed = null) {
         };
         [rows, cols, mines] = presets[difficulty.value];
     }
-    if (!Number.isInteger(rows) || !Number.isInteger(cols) || !Number.isInteger(mines) || rows < 1 || cols < 1 || rows > 50 || cols > 50 || rows * cols > 2500 || mines < 0 || mines >= rows * cols) {
+    if (!Number.isInteger(rows) || !Number.isInteger(cols) || !Number.isInteger(mines) || rows < 1 || cols < 1 || rows > 100 || cols > 100 || rows * cols > 10000 || mines < 0 || mines >= rows * cols) {
         setMessage("自定义盘面范围无效。", "error");
         return;
     }
@@ -228,6 +228,7 @@ async function playUntilNoSafe() {
     if (mode !== "play" || operationBusy || playState.lost || playState.won)
         return;
     stopMcts(true);
+    stopSearch(true);
     operationBusy = true;
     ++probabilityRevision;
     probabilityPending = false;

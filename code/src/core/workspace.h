@@ -5,7 +5,7 @@
 #include "algo/probability_engine/probability/probability.h"
 #include "algo/probability_engine/shape_solver/shape_solver_types.h"
 #include "algo/probability_engine/structure/structure.h"
-#include "algo/winrate_engine/java_transplant/java_evaluate.h"
+#include "algo/winrate_engine/anytime_search/anytime_search.h"
 #include "algo/winrate_engine/monte_carlo/monte_carlo.h"
 #include "core/utility/combination.h"
 
@@ -21,10 +21,12 @@ struct Workspace {
     Probability::Workspace probability;
     LongTermRisk::Workspace longTermRisk;
     Pseudo::Workspace pseudo;
+    MoveEval::Workspace moveEval;
     JavaEval::Workspace javaEval;
+    AnytimeSearch::Workspace anytimeSearch;
     MonteCarlo::Workspace monteCarlo;
 
-    Workspace() : bruteForce(shapeSolver), probability(shapeSolver, combination), longTermRisk(basic, structure, probability), javaEval(basic, structure, probability, longTermRisk, pseudo), monteCarlo(probability, longTermRisk, javaEval, *this) {}
+    Workspace() : bruteForce(shapeSolver), probability(shapeSolver, combination), longTermRisk(basic, structure, probability), moveEval(basic, structure, probability, longTermRisk), javaEval(moveEval, pseudo), anytimeSearch(moveEval, pseudo), monteCarlo(probability, longTermRisk, javaEval, *this) {}
 };
 
 } // 命名空间 mss
