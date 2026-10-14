@@ -39,7 +39,8 @@ struct AnytimeSearch::State {
         int branch;
         long double value;
         bool settled;
-        std::optional<LongTermRisk::Result> risk;
+        // 新节点准备时保存真实布局数；工作概率随后会被结局计算覆写。
+        std::optional<long double> candidates;
         std::vector<winrate::CellId> cells;
         std::vector<Observe::Result> observations;
         // 固定候选池；先评分，再按宽度保留最高分招法。
@@ -109,6 +110,7 @@ struct AnytimeSearch::State {
 
     void prepare(Frame &frame, const mss::Config &cfg, Workspace &workspace) {
         const winrate::Input current = input(workspace);
+        frame.candidates = current.probability.candidates();
         MoveEval::Workspace &evaluation = workspace.moveEval;
         winrate::CellId safe = -1;
         auto consider = [&](winrate::CellId cell) { if (safe == -1 || cell < safe) safe = cell; };
@@ -137,7 +139,6 @@ struct AnytimeSearch::State {
         if (safe != -1) frame.cells.push_back(safe);
         frame.safe = !frame.cells.empty();
         if (!frame.safe) {
-            frame.risk = LongTermRisk::analyze(current, {}, cfg.longTermRisk, evaluation.risk);
             // 根层由 JavaEval 交接；内层沿原搜索使用 Pseudo 的局部候选。
             Pseudo::update(workspace.pseudoResult, current, {}, cfg.pseudo, workspace.pseudo);
             frame.cells = workspace.pseudoResult;
@@ -152,7 +153,7 @@ struct AnytimeSearch::State {
                         const auto [row, col] = board.pos(cell);
                         if (basic.marks[row][col] == Basic::Mark::T) { firstOffEdge = cell; break; }
                     }
-                const winrate::Cells selected = MoveEval::Selection::select(current, *frame.risk, {}, basic.unknownSum < 30 ? rootOffEdge : rootOffEdgeCandidates, frame.cells, firstOffEdge, cfg.javaEval, workspace.selection);
+                const winrate::Cells selected = MoveEval::Selection::select(current, nullptr, {}, basic.unknownSum < 30 ? rootOffEdge : rootOffEdgeCandidates, frame.cells, firstOffEdge, cfg.javaEval, workspace.selection);
                 frame.cells.assign(selected.begin(), selected.end());
             }
         }
@@ -218,8 +219,7 @@ struct AnytimeSearch::State {
         Frame &frame = *frames.back();
         if (!frame.node.ready) {
             if (nodeBudget == 0 && (frame.cells.empty() || frame.next != (int)frame.cells.size())) return false;
-            const bool prepared = frame.cells.empty();
-            if (prepared) prepare(frame, cfg, workspace);
+            if (frame.cells.empty()) prepare(frame, cfg, workspace);
             if (frame.next == (int)frame.cells.size()) {
                 frame.node.ready = true;
                 frame.orderMoves();
@@ -227,14 +227,12 @@ struct AnytimeSearch::State {
             } else {
                 const int index = frame.next;
                 if (!frame.cursor) {
-                    const winrate::Input current = prepared ? winrate::Input(board, basic, structure, *workspace.moveEval.nextProbability, shapes, distributions) : input(workspace);
-                    LongTermRisk::resetCache(workspace.moveEval.risk, board.board.rows() * board.board.cols());
-                    frame.cursor = frame.safe ? MoveEval::Cursor(frame.cells[index], frame.observations[index], 1.0L, 1.0L, true, current.probability.candidates()) : MoveEval::begin(current, *frame.risk, frame.cells[index], frame.observations[index], cfg.moveEval, cfg.longTermRisk, workspace.moveEval);
+                    frame.cursor.emplace(frame.cells[index], frame.observations[index], 1.0L, 1.0L, frame.safe, *frame.candidates);
                     MoveEval::prepareAlternatives(*frame.cursor, frame.cells, frame.pending, true);
                 }
                 const long long before = frame.cursor->analysis.node;
                 // 路径每帧只揭开一格；有 ForcedSafe 时必走 safeSearch，不计算强制安全。
-                const bool complete = MoveEval::advance(*frame.cursor, board, basic, structure, shapes, distributions, remainingSafe - (int)frames.size() + 1, 0, frame.risk ? &*frame.risk : nullptr, cfg.moveEval, workspace.moveEval);
+                const bool complete = MoveEval::advance(*frame.cursor, board, basic, structure, shapes, distributions, remainingSafe - (int)frames.size() + 1, 0, nullptr, cfg.moveEval, workspace.moveEval);
                 const long long expanded = frame.cursor->analysis.node - before;
                 result.node += expanded;
                 nodeBudget -= expanded;

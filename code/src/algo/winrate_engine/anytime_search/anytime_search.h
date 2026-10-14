@@ -14,7 +14,7 @@ struct Config;
 
 struct AnytimeSearch {
     struct Config {
-        // 根层、中层、其余层按完整启发式评分保留的候选数，均为正数。
+        // 根层按 JavaEval、中层和其余层按短期评分保留的候选数，均为正数。
         std::array<int, 3> width;
         // 指定格分析保留全部根招法；自动分析先排 dead 和等价项，再取根宽度内的最高分候选。
         bool fullAnalysis;

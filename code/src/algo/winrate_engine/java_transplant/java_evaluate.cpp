@@ -85,7 +85,7 @@ void JavaEval::update(Result &result, const winrate::Input &input, const LongTer
         }
     if (risk.pseudos.empty()) Pseudo::update(workspace.pseudoResult, input, dead, pseudoConfig, workspace.pseudo);
     const std::vector<winrate::CellId> &pseudos = risk.pseudos.empty() ? workspace.pseudoResult : risk.pseudos;
-    const winrate::Cells cells = pseudos.empty() ? MoveEval::Selection::select(input, risk, dead, workspace.offEdge, workspace.witnesses, firstOffEdge, cfg, workspace.selection) : winrate::Cells(pseudos);
+    const winrate::Cells cells = pseudos.empty() ? MoveEval::Selection::select(input, &risk, dead, workspace.offEdge, workspace.witnesses, firstOffEdge, cfg, workspace.selection) : winrate::Cells(pseudos);
     evaluateCandidates(result, cells, input, risk, evaluationConfig, riskConfig, workspace, prune, true);
     std::stable_sort(result.begin(), result.end(), [](const Analysis &lhs, const Analysis &rhs) { return lhs.value > rhs.value; });
 }

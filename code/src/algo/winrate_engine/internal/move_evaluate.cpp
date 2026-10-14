@@ -54,7 +54,7 @@ bool MoveEval::Selection::meetsSpaceThreshold(int startX, int startY, const winr
     return count >= threshold;
 }
 
-winrate::Cells MoveEval::Selection::select(const winrate::View &input, const LongTermRisk::Result &risk, winrate::Cells dead, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, Workspace &workspace) {
+winrate::Cells MoveEval::Selection::select(const winrate::View &input, const LongTermRisk::Result *risk, winrate::Cells dead, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, Workspace &workspace) {
     const auto &[board, basic, structure, probability, shapes] = input;
     // ── 3. 前沿盒（Java pe.getBestCandidates 的数据源）──
     std::vector<FrontierBox> &boxes = workspace.boxes;
@@ -98,9 +98,10 @@ winrate::Cells MoveEval::Selection::select(const winrate::View &input, const Lon
     }
 
     // 长期风险影响格（Java evaluateLocations 加入 tileOfInterestOn）。
-    for (winrate::CellId cell : LongTermRisk::influencedTiles(risk, bestSafety - cfg.selectionThreshold1, input, dead))
-        if (!contains(onEdge, cell))
-            onEdge.push_back(cell);
+    if (risk)
+        for (winrate::CellId cell : LongTermRisk::influencedTiles(*risk, bestSafety - cfg.selectionThreshold1, input, dead))
+            if (!contains(onEdge, cell))
+                onEdge.push_back(cell);
 
     // ── 5. 离网候选（Java evaluateOffEdgeCandidates；高密度门控在 Java 恒假，
     //    故偏移恒为 4 向）──
@@ -262,7 +263,7 @@ bool MoveEval::advance(Cursor &cursor, winrate::Board &board, winrate::Basic &ba
     } else {
         std::erase_if(cursor.alternatives, [&](winrate::CellId alternative) { return next.mineProbability(alternative, board, basic, structure) != 0.0L; });
         const long double probabilityDigit = cursor.observation.probability[cursor.digit];
-        const long double weight = probabilityDigit * (cursor.safeSearch ? 1.0L : cursor.influence * hotspotSafety(*risk, cell, nextInput) / cursor.baseHotspot);
+        const long double weight = probabilityDigit * (risk ? cursor.influence * hotspotSafety(*risk, cell, nextInput) / cursor.baseHotspot : 1.0L);
         cursor.analysis.value += weight * summary.blendedSafety;
         // T 零雷格用于安全步截断；Java 原进度奖励只计已知安全格和前沿安全格。
         if (summary.clears - offEdgeClears > *cursor.linkedClears) cursor.progress += probabilityDigit;

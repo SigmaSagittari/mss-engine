@@ -13,7 +13,7 @@ namespace mss {
 struct JavaEval;
 struct AnytimeSearch;
 
-// JavaEval 与 AnytimeSearch 共用的分支计算，组合内部 javaLite 与 50-50 influence。
+// JavaEval 与 AnytimeSearch 共用的分支计算；树内只用 javaLite，JavaEval 另计长期风险。
 struct MoveEval {
     struct Config {
         long double progressContribution;
@@ -21,7 +21,7 @@ struct MoveEval {
         Config(long double progressContribution, long double influenceScale) : progressContribution(progressContribution), influenceScale(influenceScale) {}
     };
 
-    // 共用候选窗只准备招法，不计算评分；Search 与 JavaEval 在此保持相同选择规则。
+    // 共用概率候选窗只准备招法，不计算评分；JavaEval 可另补长期风险影响格。
     struct Selection {
         struct Config {
             long double selectionThreshold1;
@@ -53,7 +53,8 @@ struct MoveEval {
         };
         // 候选借用 workspace，下一次 select 即失效；只读根盘面，不计算评分或概率分支。
         // offEdge 在 T 少于 30 时覆盖全部 T，否则只给 2/3 隐藏邻格的 T；witnesses 按 CellId 排序。
-        static winrate::Cells select(const winrate::View &input, const LongTermRisk::Result &risk, winrate::Cells dead, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, Workspace &workspace);
+        // risk 为空时只按概率准备候选；非空时须来自同一盘面。
+        static winrate::Cells select(const winrate::View &input, const LongTermRisk::Result *risk, winrate::Cells dead, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, Workspace &workspace);
       private:
         static bool contains(winrate::Cells cells, winrate::CellId cell);
         static bool meetsSpaceThreshold(int startX, int startY, const winrate::View &input, int threshold, Workspace &workspace);
@@ -125,6 +126,7 @@ struct MoveEval {
     };
     static Cursor begin(const winrate::Input &input, const LongTermRisk::Result &risk, winrate::CellId cell, const Observe::Result &observation, const Config &cfg, const LongTermRisk::Config &riskConfig, Workspace &workspace);
     static void prepareAlternatives(Cursor &cursor, winrate::Cells cells, std::span<const std::pair<long double, winrate::CellId>> peers, bool prune);
+    // risk 为空时仅计短期评分和进度奖励；非空时须与 begin 使用的风险结果一致。
     static bool advance(Cursor &cursor, winrate::Board &board, winrate::Basic &basic, winrate::Structure &structure, winrate::Shapes &shapes, winrate::Distributions &distributions, int remainingSafe, int forcedSafes, const LongTermRisk::Result *risk, const Config &cfg, Workspace &workspace);
     static long double optimistic(const Cursor &cursor, const Config &cfg);
     static bool isDead(const Observe::Result &observation);

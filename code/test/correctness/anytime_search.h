@@ -69,7 +69,7 @@ inline void anytimeEquivalent() {
             else if (input.basic.marks[cell / 30][cell % 30] == mss::Basic::Mark::T) offEdge.push_back(cell);
         }
         mss::MoveEval::Selection::Workspace selection;
-        const mss::winrate::Cells selected = mss::MoveEval::Selection::select(input, risk, {}, offEdge, witnesses, offEdge.empty() ? -1 : offEdge.front(), engineConfig.javaEval, selection);
+        const mss::winrate::Cells selected = mss::MoveEval::Selection::select(input, &risk, {}, offEdge, witnesses, offEdge.empty() ? -1 : offEdge.front(), engineConfig.javaEval, selection);
         mss::assert_(input.probability.mineProbability(391, input.board, input.basic, input.structure) == 1.0L, "test::anytimeEquivalent: 两个分支的 (14,2) 都必须为雷");
         mss::assert_((input.basic.marks[13][1] == mss::Basic::Mark::F) == (branch == 0), "test::anytimeEquivalent: 固定盘面应覆盖 Basic 标雷与仅概率确认雷两种路径");
         const std::array<mss::winrate::CellId, 5> expected{25, 26, 27, 28, 29};
@@ -161,31 +161,16 @@ inline void anytimeBeginner() {
     mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(input, baseline, cfg, workspace.anytimeSearch, 0, {});
     while (result.completedDepth < 6 && result.node < 300000 && !result.finished) mss::AnytimeSearch::update(result, cfg, workspace.anytimeSearch, 1000, {});
     mss::assert_(result.completedDepth >= 6 && result.candidates.size() == 14, "test::anytimeBeginner: 第六层未完成或 G 根候选丢失");
-    // 覆盖全部候选的七层评分；路径只乘结局概率，候选按完整启发式评分取宽度。
-    std::array<std::array<long double, 7>, 14> expected{
-        std::array{0.657981504876447721394L, 0.650745885049992927099L, 0.649560092737888372368L, 0.648237852253656323407L, 0.647638352385196604255L, 0.646586725487754242724L, 0.646301207490232518379L},
-        std::array{0.646189011317588389723L, 0.638355352641443591353L, 0.637291211057767068059L, 0.636655767875946975636L, 0.636277136243856946459L, 0.635783012494065895043L, 0.635238499745072201011L},
-        std::array{0.876240560814474462518L, 0.870556255753386014676L, 0.867139417534803380583L, 0.865085336263613611889L, 0.862836954029777326977L, 0.862185483590237018345L, 0.861678426060261314133L},
-        std::array{0.865723613879276960399L, 0.857613410887882052821L, 0.855622604119642980508L, 0.854241801877234007421L, 0.851916675253683497091L, 0.850811831242372296625L, 0.850319635021757353453L},
-        std::array{0.856059830528734228396L, 0.842675851522605986273L, 0.840622680260774860904L, 0.838207717426323771525L, 0.836549766222766108276L, 0.836045789561395703761L, 0.835411273679033944482L},
-        std::array{0.878586161829212212277L, 0.868108698557694083539L, 0.866480372402876541362L, 0.865575315176634387426L, 0.86504076206236576107L, 0.864396672083874148919L, 0.86421013069500772979L},
-        std::array{0.865088528923938564165L, 0.850185914719137213202L, 0.848031210374054830866L, 0.847344671426672776504L, 0.8467108071198132402L, 0.845968865586547485265L, 0.845952041186422303769L},
-        std::array{0.865052381602145583294L, 0.85418021760602601413L, 0.852068621288156900578L, 0.850372021255668980469L, 0.849420318827929474636L, 0.848794511472128801444L, 0.848548478487023763288L},
-        std::array{0.865052381602145583294L, 0.8501859217729693889L, 0.847830094184558794338L, 0.846442391893081634341L, 0.845572809475890292122L, 0.844948058490863972841L, 0.844796809912372751296L},
-        std::array{0.878586161829212212277L, 0.868001149599241213944L, 0.866480372402876541362L, 0.865575315176634387426L, 0.865027360557410697614L, 0.864346563679264898801L, 0.864198473183458191181L},
-        std::array{0.865088528923938564165L, 0.850284869999868983949L, 0.848661219400580476646L, 0.84828797325398407693L, 0.847947075698757652036L, 0.847074789862802259846L, 0.846941622336126848222L},
-        std::array{0.865052381602145583294L, 0.854129342509657122988L, 0.852068621288156900578L, 0.850384670317257669635L, 0.849496211311998589979L, 0.848942962534830125956L, 0.848669677551335820327L},
-        std::array{0.865052381602145583294L, 0.850185789193280491358L, 0.84782996595505729059L, 0.846495287910699665212L, 0.84535480660886971779L, 0.843959318636671470106L, 0.843587583122528022409L},
-        std::array{0.865052381602145583294L, 0.850094468831204983124L, 0.84782996595505729059L, 0.846486743203124602998L, 0.845513234303577060054L, 0.844036218273648953679L, 0.843736249088646666616L},
-    };
-    long double maxError = 0.0L;
-    for (int i = 0; i < (int)result.candidates.size(); ++i)
-        for (int depth = 0; depth <= 6; ++depth) {
-            const long double error = std::abs(result.candidates[i].value[depth] - expected[i][depth]);
-            mss::assert_(error < (depth <= 3 ? 1e-12L : 1e-7L), "test::anytimeBeginner: 候选的逐层评分变化");
-            maxError = (std::max)(maxError, error);
-        }
-    std::cout << "test/anytime_beginner_scores: checked=98 max_error=" << maxError << '\n';
+    // 固定根层 JavaEval，改变长期风险参数；树内候选、展开顺序和各层评分都不应变化。
+    const mss::Config otherConfig(cfg.bruteForce, {0.5L, 0.5L, 1e-6L}, cfg.pseudo, {cfg.moveEval.progressContribution, 0.0L}, cfg.javaEval, cfg.anytimeSearch, cfg.monteCarlo);
+    mss::AnytimeSearch::Result other = mss::AnytimeSearch::analyze(input, baseline, otherConfig, workspace.anytimeSearch, 0, {});
+    while (other.completedDepth < 6 && other.node < 300000 && !other.finished) mss::AnytimeSearch::update(other, otherConfig, workspace.anytimeSearch, 1000, {});
+    mss::assert_(other.node == result.node && other.completedDepth == result.completedDepth && other.finished == result.finished && other.candidates.size() == result.candidates.size(), "test::anytimeBeginner: 树内展开仍依赖长期风险参数");
+    for (int i = 0; i < (int)result.candidates.size(); ++i) {
+        mss::assert_(result.candidates[i].cellId == baseline[i].cellId && result.candidates[i].value.front() == baseline[i].value, "test::anytimeBeginner: 根层 JavaEval 被短期评分覆写");
+        mss::assert_(other.candidates[i].cellId == result.candidates[i].cellId && other.candidates[i].value == result.candidates[i].value, "test::anytimeBeginner: 树内逐层评分仍依赖长期风险参数");
+    }
+    std::cout << "test/anytime_beginner_scores: roots=14 risk_independent=true\n";
     for (int depth : {5, 6}) {
         const mss::AnytimeSearch::Candidate &best = *std::max_element(result.candidates.begin(), result.candidates.end(), [&](const mss::AnytimeSearch::Candidate &lhs, const mss::AnytimeSearch::Candidate &rhs) { return lhs.value[depth] < rhs.value[depth]; });
         mss::assert_(best.cellId == 27, "test::anytimeBeginner: 深层搜索把 (1,5) 排到 (1,4) 前面");
