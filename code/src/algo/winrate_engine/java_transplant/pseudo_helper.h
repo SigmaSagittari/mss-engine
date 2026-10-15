@@ -14,6 +14,8 @@ struct Pseudo {
         explicit Config(long double eqEps) : eqEps(eqEps) {}
     };
 
+    enum class Kind { None, Forced, OrSafe };
+
     // 空集表示当前约束中没有找到伪 50/50；CellId 属于输入盘面。
     using Result = std::vector<winrate::CellId>;
 
@@ -34,7 +36,6 @@ struct Pseudo {
     };
     struct Chain {
         std::vector<winrate::CellId> whole5050;  // 全部组成格
-        std::vector<winrate::CellId> living5050; // 其中非死格
         // -1 表示链已封口且未满足不可避免条件，不再参与后续连接。
         winrate::CellId openTile;
         bool pseudo;
@@ -58,19 +59,18 @@ struct Pseudo {
     // 输入来自同一有效盘面，probability.candidates() > 0；dead 使用同盘面编号。
     static Result analyze(const winrate::View &input, winrate::Cells dead, const Config &config, Workspace &workspace);
     // 按当前全部约束刷新结果并保留容量；链的封闭性可能受远端连接影响，不提供局部 Delta。
-    static void update(Result &result, const winrate::View &input, winrate::Cells dead, const Config &config, Workspace &workspace);
+    static Kind update(Result &result, const winrate::View &input, winrate::Cells dead, const Config &config, Workspace &workspace);
 
   private:
     static void collectLinks(const winrate::View &input, winrate::Cells dead, long double eqEps, Workspace &workspace);
-    static bool extendChains(Result &result, const winrate::Board &board, winrate::Cells dead, Workspace &workspace);
-    static void connectChains(Result &result, const winrate::View &input, winrate::Cells dead, long double eqEps, Workspace &workspace);
+    static Kind extendChains(Result &result, const winrate::Board &board, Workspace &workspace);
+    static Kind connectChains(Result &result, const winrate::View &input, winrate::Cells dead, long double eqEps, Workspace &workspace);
     static bool pseudoContains(winrate::Cells cells, winrate::CellId cell);
     static bool adjacent(const winrate::Board &board, winrate::CellId lhs, winrate::CellId rhs);
     static bool isMine(const winrate::View &input, winrate::CellId cell, long double eqEps);
     static void assess(Link &link, const winrate::View &input, long double eqEps);
     static void findRootedLinks(winrate::Cells cells, const winrate::View &input, winrate::Cells dead, int witnessSize, long double eqEps, std::vector<Link> &links);
     static bool noTrouble(const winrate::Board &board, winrate::Cells trouble, winrate::Cells chain);
-    static void preferLiving(Result &result, winrate::Cells cells, winrate::Cells dead);
     static bool linkLess(const Link &lhs, const Link &rhs);
 };
 

@@ -21,7 +21,6 @@ inline const mss::Config engineConfig{
     },
     mss::LongTermRisk::Config{
         /* 影响阈值 */ 0.025L,
-        /* 热点触发安全率 */ 0.9L,
         /* 等价判断容差 */ 1e-9L,
     },
     mss::Pseudo::Config(/* 等价判断容差 */ 1e-9L),
@@ -96,8 +95,7 @@ void runGames(const Config &config, const mss::ShapeSolver::OrderAlgo &algo, mss
                 const mss::winrate::Input input = position.input(algo);
                 if (input.probability.candidates() >= engineConfig.bruteForce.candidateThreshold) {
                     const mss::LongTermRisk::Result risk = mss::LongTermRisk::analyze(input, {}, engineConfig.longTermRisk, workspace.longTermRisk);
-                    mss::JavaEval::Result evaluated = mss::JavaEval::analyze(input, risk, {}, engineConfig.javaEval, engineConfig.moveEval, engineConfig.longTermRisk, engineConfig.pseudo, workspace.javaEval, false);
-                    mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(input, std::move(evaluated), engineConfig, workspace.anytimeSearch, 0, {});
+                    mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::prepare(input, &risk, engineConfig.javaEval, engineConfig.pseudo, workspace.probability, workspace.pseudo, workspace.javaEval.selection), engineConfig, workspace.anytimeSearch, 0, {});
                     mss::AnytimeSearch::update(result, engineConfig, workspace.anytimeSearch, (std::max)(0LL, config.nodes - result.node), {});
                     game.play({result.recommended()});
                     continue;

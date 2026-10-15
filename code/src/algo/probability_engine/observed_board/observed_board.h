@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -62,8 +63,8 @@ struct ObservedBoard {
 
     // 参数必须描述合法盘面；只记录尺寸和总雷数并创建全 Hidden 盘面，不检查输入或推断数字、雷位。
     static Result analyze(int rows, int cols, int mines);
-    // 正向时 board 对应更新前状态，满足 Delta 转换契约；reverse 时对应更新后状态且必须后进先出。不消费 delta。
-    static void applyDelta(Result &board, const Delta &delta, bool reverse = false);
+    // 正向时 board 对应更新前状态，满足 Delta 转换契约；reverse 时对应更新后状态且必须后进先出。切片只在调用期间借用。
+    static void applyDelta(Result &board, std::span<const Delta::Change> changes, bool reverse = false);
 };
 
 } // namespace mss

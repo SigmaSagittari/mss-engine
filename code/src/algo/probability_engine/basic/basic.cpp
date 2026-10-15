@@ -198,10 +198,10 @@ void Basic::update(Result &result, Delta &delta, const ObservedBoard::Result &bo
     }
 }
 
-void Basic::applyDelta(Result &result, const Delta &delta, bool reverse) {
+void Basic::applyDelta(Result &result, std::span<const Delta::Change> changes, bool reverse) {
     // 同一格可能分多次记录；正向依序重放，逆向倒序撤回。
-    for (int i = 0; i < (int)delta.changes.size(); ++i) {
-        const Delta::Change &change = delta.changes[reverse ? delta.changes.size() - 1 - i : i];
+    for (int i = 0; i < (int)changes.size(); ++i) {
+        const Delta::Change &change = changes[reverse ? changes.size() - 1 - i : i];
         const ObservedBoard::CellId cell = change.cell;
         const Mark mark = reverse ? change.previous : change.next;
         const int row = cell / result.marks.cols();

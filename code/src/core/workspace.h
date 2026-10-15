@@ -26,7 +26,7 @@ struct Workspace {
     AnytimeSearch::Workspace anytimeSearch;
     MonteCarlo::Workspace monteCarlo;
 
-    Workspace() : bruteForce(shapeSolver), probability(shapeSolver, combination), longTermRisk(basic, structure, probability), moveEval(basic, structure, probability, longTermRisk), javaEval(moveEval, pseudo), anytimeSearch(moveEval, pseudo), monteCarlo(probability, longTermRisk, javaEval, *this) {}
+    Workspace() : bruteForce(shapeSolver), probability(shapeSolver, combination), longTermRisk(basic, structure, probability), moveEval(basic, structure, probability, longTermRisk), javaEval(moveEval), anytimeSearch(moveEval, pseudo), monteCarlo(probability, longTermRisk, javaEval, *this) {}
 };
 
 } // 命名空间 mss

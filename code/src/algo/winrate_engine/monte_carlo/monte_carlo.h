@@ -103,7 +103,7 @@ struct MonteCarlo {
     enum class Outcome { Won, Lost, Cancelled };
     static std::vector<winrate::CellId> collectSafe(const winrate::View &root);
     static int remainingSafe(const winrate::Board &board);
-    static JavaEval::Result evaluate(const winrate::Input &root, const mss::Config &cfg, Workspace &workspace, bool prune);
+    static JavaEval::Result evaluate(const winrate::Input &root, const mss::Config &cfg, Workspace &workspace);
     static void estimate(Candidate &candidate, const Config &cfg);
     static void expand(Result &result, const winrate::Input &root, const mss::Config &cfg, Workspace &workspace);
     static long double logChance(long double won, long double lost, long double target);

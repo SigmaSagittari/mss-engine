@@ -75,7 +75,7 @@ void GameControl::Position::reset(ObservedBoard::Result board) {
 }
 
 void GameControl::Position::update(ObservedBoard::Delta &updates) {
-    ObservedBoard::applyDelta(observedBoard_, updates);
+    ObservedBoard::applyDelta(observedBoard_, updates.changes);
     Basic::update(result_.basic, delta_.basic, observedBoard_, updates, workspace_.basic);
     for (const ObservedBoard::Delta::Change &change : updates.changes)
         structureLazyUpdate_.push_back(change.cell);
@@ -244,13 +244,12 @@ GameControl::Position::SuggestResult GameControl::Position::suggest(const ShapeS
     }
     if (suggestAlgo == SuggestAlgo::JavaEval || suggestAlgo == SuggestAlgo::JavaBrute) {
         const winrate::Input input(observedBoard_, result_.basic, result_.structure, currentProbability, pool_.shapes, pool_.distributions);
-        // Position 不另存根死格列表；JavaEval 在候选准备时按数字分布筛掉死格。
+        // 死格过滤由共用候选入口完成。
         const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, cfg.longTermRisk, workspace_.longTermRisk);
-        const JavaEval::Result evaluated = JavaEval::analyze(input, risk, {}, cfg.javaEval, cfg.moveEval, cfg.longTermRisk, cfg.pseudo, workspace_.javaEval);
-        // 自动评估首项就是推荐格；无可点击格的合法局面返回空列表。
+        const JavaEval::Result evaluated = JavaEval::analyze(input, risk, MoveEval::Selection::prepare(input, &risk, cfg.javaEval, cfg.pseudo, workspace_.probability, workspace_.pseudo, workspace_.javaEval.selection), cfg.moveEval, cfg.longTermRisk, workspace_.javaEval);
         if (evaluated.empty())
             return {};
-        return remember(evaluated.front().cellId);
+        return remember(std::max_element(evaluated.begin(), evaluated.end(), [](const JavaEval::Analysis &lhs, const JavaEval::Analysis &rhs) { return lhs.value < rhs.value; })->cellId);
     }
 
     if (suggestAlgo == SuggestAlgo::LowRisk) {

@@ -209,8 +209,8 @@ struct Structure {
     // 只重建受影响组件，delta 记录回到调用前 result 所需的信息。
     static void update(Result &result, Delta &delta, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool,
                        std::span<const ObservedBoard::CellId> changedCells, Workspace &workspace);
-    // 正向时 result 对应更新前状态；reverse 时对应更新后状态且必须后进先出。池不得清空，重放组件及格子映射，不改动 board/basic。
-    static void applyDelta(Result &result, const Pool &pool, const Delta &delta, bool reverse = false);
+    // 正向时 result 对应更新前状态；reverse 时对应更新后状态且必须后进先出。切片沿 Delta 的记录顺序且只在调用期间借用；池不得清空，重放组件及格子映射，不改动 board/basic。
+    static void applyDelta(Result &result, const Pool &pool, std::span<const Delta::Change> removed, std::span<const InstanceId> added, bool reverse = false);
 };
 
 } // 命名空间 mss

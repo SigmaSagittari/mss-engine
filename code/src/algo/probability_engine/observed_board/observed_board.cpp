@@ -15,9 +15,9 @@ void ObservedBoard::Delta::clear() { changes.clear(); }
 
 ObservedBoard::Result ObservedBoard::analyze(int rows, int cols, int mines) { return Result(rows, cols, mines); }
 
-void ObservedBoard::applyDelta(Result &board, const Delta &delta, bool reverse) {
-    for (int i = 0; i < (int)delta.changes.size(); ++i) {
-        const Delta::Change &change = delta.changes[reverse ? delta.changes.size() - 1 - i : i];
+void ObservedBoard::applyDelta(Result &board, std::span<const Delta::Change> changes, bool reverse) {
+    for (int i = 0; i < (int)changes.size(); ++i) {
+        const Delta::Change &change = changes[reverse ? changes.size() - 1 - i : i];
         const std::pair<int, int> position = board.pos(change.cell);
         if (!reverse) {
             assert_(change.next != CellState::Hidden, "ObservedBoard::applyDelta: 新状态不能是隐藏格");

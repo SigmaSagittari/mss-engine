@@ -9,7 +9,7 @@
 namespace test::benchmark {
 
 inline void anytimeSearch() {
-    constexpr long long nodeBudget = 1000000;
+    constexpr long long nodeBudget = 10000000;
     const mss::Config cfg(engineConfig.bruteForce, engineConfig.longTermRisk, engineConfig.pseudo, engineConfig.moveEval, engineConfig.javaEval, {engineConfig.anytimeSearch.width, true}, engineConfig.monteCarlo);
     const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     mss::Workspace workspace;
@@ -21,10 +21,9 @@ inline void anytimeSearch() {
     for (int row = 0; row <= 4; ++row)
         for (int col = row; col <= 4; ++col)
             if (input.board.board[row][col] == mss::ObservedBoard::CellState::Hidden) cells.push_back(input.board.id(row, col));
-    mss::JavaEval::Result evaluated = mss::JavaEval::analyze(input, risk, cells, cfg.moveEval, cfg.longTermRisk, workspace.javaEval, false);
-    mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(input, std::move(evaluated), cfg, workspace.anytimeSearch, 0, {});
+    mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::specified(input, cells, workspace.probability, workspace.javaEval.selection), cfg, workspace.anytimeSearch, 0, {});
     const std::chrono::steady_clock::time_point prepared = std::chrono::steady_clock::now();
-    // 与 UI 节点统计一致：100 万节点包括第零层，余下预算一次交给续算。
+    // 与 UI 节点统计一致：1000 万节点包括第零层，余下预算一次交给续算。
     mss::AnytimeSearch::update(result, cfg, workspace.anytimeSearch, nodeBudget - result.node, {});
     const std::chrono::steady_clock::time_point finished = std::chrono::steady_clock::now();
     const double preparationSeconds = std::chrono::duration<double>(prepared - start).count();

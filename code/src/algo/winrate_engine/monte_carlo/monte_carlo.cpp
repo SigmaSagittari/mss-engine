@@ -8,6 +8,7 @@
 
 #include "core/assert.h"
 #include "core/config.h"
+#include "core/workspace.h"
 #include "core/utility/rng.h"
 #include "game/game.h"
 
@@ -73,9 +74,11 @@ int MonteCarlo::remainingSafe(const winrate::Board &board) {
     return remaining;
 }
 
-JavaEval::Result MonteCarlo::evaluate(const winrate::Input &root, const mss::Config &cfg, Workspace &workspace, bool prune) {
+JavaEval::Result MonteCarlo::evaluate(const winrate::Input &root, const mss::Config &cfg, Workspace &workspace) {
     const LongTermRisk::Result risk = LongTermRisk::analyze(root, {}, cfg.longTermRisk, workspace.risk);
-    return JavaEval::analyze(root, risk, {}, cfg.javaEval, cfg.moveEval, cfg.longTermRisk, cfg.pseudo, workspace.javaEval, prune);
+    JavaEval::Result result = JavaEval::analyze(root, risk, MoveEval::Selection::prepare(root, &risk, cfg.javaEval, cfg.pseudo, workspace.probability, workspace.rollout.pseudo, workspace.javaEval.selection), cfg.moveEval, cfg.longTermRisk, workspace.javaEval);
+    std::stable_sort(result.begin(), result.end(), [](const JavaEval::Analysis &lhs, const JavaEval::Analysis &rhs) { return lhs.value > rhs.value; });
+    return result;
 }
 
 void MonteCarlo::estimate(Candidate &candidate, const Config &cfg) {
@@ -91,14 +94,14 @@ MonteCarlo::Result MonteCarlo::analyze(const winrate::Input &root, winrate::Sugg
         return Result(strategy, std::move(safeCells), true, {}, -1, true, cellCount);
     std::vector<Candidate> candidates;
     if (targets.empty()) {
-        const JavaEval::Result evaluated = evaluate(root, cfg, workspace, true);
+        const JavaEval::Result evaluated = evaluate(root, cfg, workspace);
         // 合法非终局且没有必安格时，Java 自动候选必须包含推荐项。
         assert_(!evaluated.empty(), "MonteCarlo::analyze: 非终局没有 Java 候选");
         candidates.push_back(Candidate(evaluated.front().cellId, evaluated.front().value, 1.0L, cfg.monteCarlo));
         return Result(strategy, {}, false, std::move(candidates), 0, false, cellCount);
     }
     const LongTermRisk::Result risk = LongTermRisk::analyze(root, {}, cfg.longTermRisk, workspace.risk);
-    const JavaEval::Result evaluated = JavaEval::analyze(root, risk, targets, cfg.moveEval, cfg.longTermRisk, workspace.javaEval, false);
+    const JavaEval::Result evaluated = JavaEval::analyze(root, risk, MoveEval::Selection::specified(root, targets, workspace.probability, workspace.javaEval.selection), cfg.moveEval, cfg.longTermRisk, workspace.javaEval);
     long double maximum = evaluated.front().value;
     int recommended = 0;
     for (int i = 0; i < (int)evaluated.size(); ++i)
@@ -116,7 +119,7 @@ MonteCarlo::Result MonteCarlo::analyze(const winrate::Input &root, winrate::Sugg
 }
 
 void MonteCarlo::expand(Result &result, const winrate::Input &root, const mss::Config &cfg, Workspace &workspace) {
-    const JavaEval::Result evaluated = evaluate(root, cfg, workspace, false);
+    const JavaEval::Result evaluated = evaluate(root, cfg, workspace);
     // 首个推荐已完成一局；补齐评分只调整先验，保留同一 Candidate 中的实际胜负和雷盘序号。
     Candidate &first = result.candidates.front();
     for (const JavaEval::Analysis &candidate : evaluated)

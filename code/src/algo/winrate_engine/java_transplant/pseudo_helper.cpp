@@ -94,15 +94,6 @@ bool Pseudo::noTrouble(const winrate::Board &board, winrate::Cells trouble, winr
     return true;
 }
 
-// Java preferLiving：优先返回非死格；全是死格才原样返回。
-void Pseudo::preferLiving(Result &result, winrate::Cells cells, winrate::Cells dead) {
-    result.clear();
-    for (winrate::CellId cell : cells)
-        if (!pseudoContains(dead, cell)) result.push_back(cell);
-    // 整条链都是死格时仍需猜这条不可避免的链。
-    if (result.empty()) result.assign(cells.begin(), cells.end());
-}
-
 // 排序键：Java Link.compareTo——非 pseudo 在前，其次 witness squares 数。
 bool Pseudo::linkLess(const Link &lhs, const Link &rhs) {
     if (lhs.pseudo != rhs.pseudo)
@@ -151,7 +142,7 @@ void Pseudo::collectLinks(const winrate::View &input, winrate::Cells dead, long 
 
 }
 
-bool Pseudo::extendChains(Result &result, const winrate::Board &board, winrate::Cells dead, Workspace &workspace) {
+Pseudo::Kind Pseudo::extendChains(Result &result, const winrate::Board &board, Workspace &workspace) {
     std::vector<Link> &links = workspace.links;
     // 链：从一个只封闭一端的 link 出发，沿开口端扩展，封口且步数为偶 + 无 trouble
     // 即成不可避免的 50/50。
@@ -165,10 +156,6 @@ bool Pseudo::extendChains(Result &result, const winrate::Board &board, winrate::
         chain.whole5050.push_back(start.first);
         chain.whole5050.push_back(start.second);
         chain.trouble.insert(chain.trouble.end(), start.trouble.begin(), start.trouble.end());
-        if (!start.deadFirst)
-            chain.living5050.push_back(start.first);
-        if (!start.deadSecond)
-            chain.living5050.push_back(start.second);
 
         int extensions = 0;
         bool noMatch = false;
@@ -184,13 +171,11 @@ bool Pseudo::extendChains(Result &result, const winrate::Board &board, winrate::
                     if (ext.pseudo) chain.pseudo = true;
                     chain.trouble.insert(chain.trouble.end(), ext.trouble.begin(), ext.trouble.end());
                     chain.whole5050.push_back(ext.second);
-                    if (!ext.deadSecond)
-                        chain.living5050.push_back(ext.second);
                     if (ext.closedSecond) {
                         if (extensions % 2 == 0 && noTrouble(board, chain.trouble, chain.whole5050)) {
-                            if (ext.pseudo) preferLiving(result, std::array{ext.first, ext.second}, dead);
-                            else preferLiving(result, chain.living5050, dead);
-                            return true;
+                            if (ext.pseudo) result = {ext.first, ext.second};
+                            else result = chain.whole5050;
+                            return chain.pseudo ? Kind::OrSafe : Kind::Forced;
                         }
                         chain.openTile = -1; // 封口但条件不符 → 本链作废
                     } else {
@@ -205,13 +190,11 @@ bool Pseudo::extendChains(Result &result, const winrate::Board &board, winrate::
                     if (ext.pseudo) chain.pseudo = true;
                     chain.trouble.insert(chain.trouble.end(), ext.trouble.begin(), ext.trouble.end());
                     chain.whole5050.push_back(ext.first);
-                    if (!ext.deadFirst)
-                        chain.living5050.push_back(ext.first);
                     if (ext.closedFirst) {
                         if (extensions % 2 == 0 && noTrouble(board, chain.trouble, chain.whole5050)) {
-                            if (ext.pseudo) preferLiving(result, std::array{ext.first, ext.second}, dead);
-                            else preferLiving(result, chain.living5050, dead);
-                            return true;
+                            if (ext.pseudo) result = {ext.first, ext.second};
+                            else result = chain.whole5050;
+                            return chain.pseudo ? Kind::OrSafe : Kind::Forced;
                         }
                         chain.openTile = -1;
                     } else {
@@ -225,10 +208,10 @@ bool Pseudo::extendChains(Result &result, const winrate::Board &board, winrate::
             chains.push_back(std::move(chain)); // 未封口的链可被 pseudo witness 连接
     }
 
-    return false;
+    return Kind::None;
 }
 
-void Pseudo::connectChains(Result &result, const winrate::View &input, winrate::Cells dead, long double eqEps, Workspace &workspace) {
+Pseudo::Kind Pseudo::connectChains(Result &result, const winrate::View &input, winrate::Cells dead, long double eqEps, Workspace &workspace) {
     const auto &[board, basic, structure, probability, shapes] = input;
     std::vector<Chain> &chains = workspace.chains;
     const std::vector<std::vector<winrate::CellId>> &pseudoWitnesses = workspace.witnesses;
@@ -289,13 +272,14 @@ void Pseudo::connectChains(Result &result, const winrate::View &input, winrate::
         }
         const int c = tally1 < tally2 ? -1 : (tally1 > tally2 ? 1 : 0);
         if (c == 0)
-            return preferLiving(result, std::array{chain1->openTile, chain2->openTile}, dead);
-        return preferLiving(result, std::array{c < 0 ? chain1->openTile : chain2->openTile}, dead);
+            result = {chain1->openTile, chain2->openTile};
+        else result = {c < 0 ? chain1->openTile : chain2->openTile};
+        return chain1->pseudo || chain2->pseudo ? Kind::OrSafe : Kind::Forced;
     }
-
+    return Kind::None;
 }
 
-void Pseudo::update(Result &result, const winrate::View &input, winrate::Cells dead, const Config &config, Workspace &workspace) {
+Pseudo::Kind Pseudo::update(Result &result, const winrate::View &input, winrate::Cells dead, const Config &config, Workspace &workspace) {
     const auto &[board, basic, structure, probability, shapes] = input;
     result.clear();
     collectLinks(input, dead, config.eqEps, workspace);
@@ -310,11 +294,13 @@ void Pseudo::update(Result &result, const winrate::View &input, winrate::Cells d
                 break; // 优先真 50/50，其次 pseudo
         }
     }
-    if (unavoidable != nullptr)
-        return preferLiving(result, std::array{unavoidable->first, unavoidable->second}, dead);
-
-    if (extendChains(result, board, dead, workspace)) return;
-    connectChains(result, input, dead, config.eqEps, workspace);
+    if (unavoidable != nullptr) {
+        result = {unavoidable->first, unavoidable->second};
+        return unavoidable->pseudo ? Kind::OrSafe : Kind::Forced;
+    }
+    const Kind kind = extendChains(result, board, workspace);
+    if (kind != Kind::None) return kind;
+    return connectChains(result, input, dead, config.eqEps, workspace);
 }
 
 Pseudo::Result Pseudo::analyze(const winrate::View &input, winrate::Cells dead, const Config &config, Workspace &workspace) {

@@ -25,10 +25,8 @@ LongTermRisk::CellList &LongTermRisk::CellList::operator=(const CellList &other)
 }
 
 void LongTermRisk::CellList::push_back(winrate::CellId cell) { cells[count++] = cell; }
-winrate::CellId LongTermRisk::CellList::operator[](int index) const { return cells[index]; }
 const winrate::CellId *LongTermRisk::CellList::begin() const { return cells.data(); }
 const winrate::CellId *LongTermRisk::CellList::end() const { return cells.data() + count; }
-int LongTermRisk::CellList::size() const { return count; }
 winrate::Cells LongTermRisk::CellList::span() const { return {cells.data(), end()}; }
 
 bool LongTermRisk::contains(winrate::Cells cells, winrate::CellId cell) {
@@ -76,10 +74,6 @@ long double LongTermRisk::boxTally(winrate::CellId cell, const winrate::View &in
 // Java getHorizontal/getVertical/getBoxInfluence 的公共计数：强制结构雷/安全后
 // 数全盘解数。mineCount = 1（2-tile）/ 2（2x2）；maxMissing 是"missing+n ≤ maxMissing"
 // 的阈值（Java 直接传 maxMissingMines）。
-
-bool LongTermRisk::RiskHotspot::isExempt(winrate::CellId candidate) const {
-    return candidate == cell || contains(exemptions, candidate);
-}
 
 std::vector<winrate::CellId> LongTermRisk::influencedTiles(const Result &risk, long double threshold, const winrate::View &input, winrate::Cells dead) {
     const auto &[board, basic, structure, probability, shapes] = input;
@@ -137,7 +131,7 @@ long double LongTermRisk::countWithForces(const winrate::Input &input, winrate::
         updates.changes.emplace_back(cell, board.board[row][col], winrate::CellState::ForcedSafe);
         workspace.changedCells.push_back(cell);
     }
-    ObservedBoard::applyDelta(board, updates);
+    ObservedBoard::applyDelta(board, updates.changes);
     Basic::update(basic, workspace.basicDelta, board, updates, workspace.basic);
     // 根局面有效，只重算本次标记变化所影响的数字约束；最后一个 H 被移走的矛盾数字会从 Structure 消失，不能漏掉。
     bool valid = true;
@@ -169,10 +163,10 @@ long double LongTermRisk::countWithForces(const winrate::Input &input, winrate::
         if (!workspace.forcedProbability) workspace.forcedProbability = Probability::analyze(board, basic, structure, shapes, distributions, workspace.probability);
         else Probability::analyze(board, basic, structure, shapes, distributions, *workspace.forcedProbability, workspace.probability);
         candidates = workspace.forcedProbability->candidates();
-        Structure::applyDelta(structure, shapes, workspace.structureDelta, true);
+        Structure::applyDelta(structure, shapes, workspace.structureDelta.removed, workspace.structureDelta.added, true);
     }
-    Basic::applyDelta(basic, workspace.basicDelta, true);
-    ObservedBoard::applyDelta(board, updates, true);
+    Basic::applyDelta(basic, workspace.basicDelta.changes, true);
+    ObservedBoard::applyDelta(board, updates.changes, true);
     return candidates;
 }
 
@@ -182,7 +176,7 @@ void LongTermRisk::update(Result &out, const winrate::Input &input, winrate::Cel
     out.influences.resize(board.board.rows(), board.board.cols(), 0.0L);
     out.enablers.assign(size, 0.0L);
     out.pseudos.clear();
-    out.hotspots.clear();
+    out.pseudoKind = Pseudo::Kind::None;
     const int minesLeft = board.totalMines - basic.mineSum;
 
     // 找到 pseudo 即提前终止（Java influence 在两次扫描间提前 return）。
@@ -201,18 +195,6 @@ void LongTermRisk::update(Result &out, const winrate::Input &input, winrate::Cel
             return;
         if (missing.count + extra > minesLeft)
             return;
-
-        // 热点：2-tile 单缺雷 enabler，且该盒雷迹恰为半数方案（50/50）。
-        // Java 要求 subject 位于某盒（getBox != null）——离网格没有盒概念。
-        if (missing.size() == 1 && mineCount == 1 && structure.cellLoc[tiles[0]].box != -1) {
-            const long double tally0 = boxTally(tiles[0], input);
-            if (std::abs(2.0L * tally0 - probability.candidates()) <= cfg.eqEps * probability.candidates()) {
-                const long double safety = 1.0L - probability.mineProbability(missing[0], board, basic, structure);
-                if (safety < cfg.hotspotEnablerSafety) {
-                    out.hotspots.emplace_back(missing[0], tiles);
-                }
-            }
-        }
 
         CellList mines = missing;
         mines.push_back(tiles[0]);
@@ -236,6 +218,8 @@ void LongTermRisk::update(Result &out, const winrate::Input &input, winrate::Cel
                 out.pseudos.push_back(tile);
         }
         if (!out.pseudos.empty()) {
+            // 两个互斥雷位覆盖全部布局时才称强制 50/50；其余保留 50/50 或安全的语义。
+            out.pseudoKind = out.pseudos.size() == tiles.size() && std::abs(2.0L * tally - probability.candidates()) <= cfg.eqEps * probability.candidates() ? Pseudo::Kind::Forced : Pseudo::Kind::OrSafe;
             stop = true;
             return;
         }

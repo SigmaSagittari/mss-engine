@@ -80,6 +80,7 @@ function showDetail(data, cell) {
     scoreLabel.textContent = "Java 评分";
     const scoreValue = document.createElement("strong");
     scoreValue.textContent = data.javaScore;
+    scoreValue.dataset.javaScore = data.javaScore;
     score.append(scoreLabel, scoreValue);
     observeResult.append(score);
     const heading = document.createElement("div");
@@ -101,6 +102,7 @@ function showDetail(data, cell) {
         const branch = document.createElement("strong");
         branch.className = "search-branch-score";
         branch.dataset.digit = number;
+        branch.dataset.javaScore = number === 9 ? 0 : data.javaBranches.find((branch) => branch.digit === number).value;
         item.append(label, value, branch);
         observeResult.append(item);
     }
@@ -307,6 +309,7 @@ function showSuggestion(result, elapsedMs) {
     endgameMoves.replaceChildren();
     endgameCandidateCells = new Set(result.candidates);
     endgameBestCells = new Set(result.recommended);
+    const reasons = { forced5050: "这是一个强制的 50-50", "5050OrSafe": "这是一个 50-50 或安全", score: "此格分数优胜", blindGuess: "所有候选格均无法提供信息，进入盲猜残局" };
     const moves = bruteForce ? result.moves.slice().sort((left, right) => right.wins - left.wins || left.cell - right.cell) : result.recommended.map((cell) => ({ cell }));
     if (moves.length === 0) {
         const item = document.createElement("li");
@@ -320,7 +323,7 @@ function showSuggestion(result, elapsedMs) {
         const item = document.createElement("li");
         const row = Math.floor(move.cell / state.cols) + 1;
         const col = move.cell % state.cols + 1;
-        item.textContent = `第 ${row} 行，第 ${col} 列：` + (result.engine === "Safe" ? "确定安全" : bruteForce ? `最终获胜 ${formatCount(move.wins)} / ${formatCount(result.configurationCount)}（${(move.wins / result.configurationCount * 100).toFixed(3)}%）` : `${result.engine} 推荐`);
+        item.textContent = `第 ${row} 行，第 ${col} 列：` + (result.engine === "Safe" ? "确定安全" : bruteForce ? `最终获胜 ${formatCount(move.wins)} / ${formatCount(result.configurationCount)}（${(move.wins / result.configurationCount * 100).toFixed(3)}%）` : result.engine === "JavaEval" ? reasons[result.reason] : `${result.engine} 推荐`);
         endgameMoves.append(item);
     }
     endgameResultAvailable = true;

@@ -30,8 +30,7 @@ inline void anytimeEndgame() {
         }
     }
     const mss::LongTermRisk::Result risk = mss::LongTermRisk::analyze(input, {}, engineConfig.longTermRisk, workspace.longTermRisk);
-    mss::JavaEval::Result evaluated = mss::JavaEval::analyze(input, risk, {}, engineConfig.javaEval, engineConfig.moveEval, engineConfig.longTermRisk, engineConfig.pseudo, workspace.javaEval, false);
-    const mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(input, std::move(evaluated), engineConfig, workspace.anytimeSearch, 1000000, {});
+    const mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::prepare(input, &risk, engineConfig.javaEval, engineConfig.pseudo, workspace.probability, workspace.pseudo, workspace.javaEval.selection), engineConfig, workspace.anytimeSearch, 1000000, {});
     mss::assert_(result.finished && result.candidates.size() == 3, "test::anytimeEndgame: 搜索未在预算内完整结束");
     mss::assert_(result.recommended() == 55, "test::anytimeEndgame: 完整搜索应推荐右侧 (2,26)");
     for (const mss::AnytimeSearch::Candidate &candidate : result.candidates) {
@@ -57,7 +56,7 @@ inline void anytimeEquivalent() {
     for (int branch = 0; branch < 2; ++branch) {
         mss::ObservedBoard::Delta delta;
         delta.changes.emplace_back(branch == 0 ? 422 : 452, mss::ObservedBoard::CellState::Hidden, branch == 0 ? mss::ObservedBoard::CellState::Num6 : mss::ObservedBoard::CellState::Num3);
-        mss::ObservedBoard::applyDelta(root.board, delta);
+        mss::ObservedBoard::applyDelta(root.board, delta.changes);
         mss::Basic::Delta basicDelta; mss::Basic::update(root.basic, basicDelta, root.board, delta, workspace.basic);
         mss::Structure::Delta structureDelta; const mss::winrate::CellId changed = delta.changes.front().cell; mss::Structure::update(root.structure, structureDelta, root.board, root.basic, root.shapes, std::span{&changed, 1}, workspace.structure);
         const mss::Probability::Result probability = mss::Probability::analyze(root.board, root.basic, root.structure, root.shapes, root.distributions, workspace.probability);
@@ -69,40 +68,46 @@ inline void anytimeEquivalent() {
             else if (input.basic.marks[cell / 30][cell % 30] == mss::Basic::Mark::T) offEdge.push_back(cell);
         }
         mss::MoveEval::Selection::Workspace selection;
-        const mss::winrate::Cells selected = mss::MoveEval::Selection::select(input, &risk, {}, offEdge, witnesses, offEdge.empty() ? -1 : offEdge.front(), engineConfig.javaEval, selection);
+        const mss::winrate::Cells selected = mss::MoveEval::Selection::window(input, &risk, {}, offEdge, witnesses, offEdge.empty() ? -1 : offEdge.front(), engineConfig.javaEval, selection);
         mss::assert_(input.probability.mineProbability(391, input.board, input.basic, input.structure) == 1.0L, "test::anytimeEquivalent: 两个分支的 (14,2) 都必须为雷");
         mss::assert_((input.basic.marks[13][1] == mss::Basic::Mark::F) == (branch == 0), "test::anytimeEquivalent: 固定盘面应覆盖 Basic 标雷与仅概率确认雷两种路径");
         const std::array<mss::winrate::CellId, 5> expected{25, 26, 27, 28, 29};
         mss::assert_(selected.size() == expected.size() && std::equal(selected.begin(), selected.end(), expected.begin()), "test::anytimeEquivalent: 把必雷当通路会使七格区域跨过八格阈值");
-        mss::Structure::applyDelta(root.structure, root.shapes, structureDelta, true);
-        mss::Basic::applyDelta(root.basic, basicDelta, true);
-        mss::ObservedBoard::applyDelta(root.board, delta, true);
+        mss::Structure::applyDelta(root.structure, root.shapes, structureDelta.removed, structureDelta.added, true);
+        mss::Basic::applyDelta(root.basic, basicDelta.changes, true);
+        mss::ObservedBoard::applyDelta(root.board, delta.changes, true);
     }
     const mss::LongTermRisk::Result risk = mss::LongTermRisk::analyze(root, {}, engineConfig.longTermRisk, workspace.longTermRisk);
+    std::vector<long double> automaticValues;
     for (bool full : {false, true}) {
         const mss::Config cfg(engineConfig.bruteForce, engineConfig.longTermRisk, engineConfig.pseudo, engineConfig.moveEval, engineConfig.javaEval, {{6, 3, 1}, full}, engineConfig.monteCarlo);
         const std::array<mss::winrate::CellId, 2> expected{422, 452};
-        mss::JavaEval::Result evaluated = full ? mss::JavaEval::analyze(root, risk, expected, cfg.moveEval, cfg.longTermRisk, workspace.javaEval, false) : mss::JavaEval::analyze(root, risk, {}, cfg.javaEval, cfg.moveEval, cfg.longTermRisk, cfg.pseudo, workspace.javaEval, false);
-        mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(root, std::move(evaluated), cfg, workspace.anytimeSearch, full ? 0 : 3400, {});
-        mss::assert_(result.candidates.size() == 2, "test::anytimeEquivalent: 应分别保留上下两个互斥招法");
+        mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(root, risk, full ? mss::MoveEval::Selection::specified(root, expected, workspace.probability, workspace.javaEval.selection) : mss::MoveEval::Selection::prepare(root, &risk, cfg.javaEval, cfg.pseudo, workspace.probability, workspace.pseudo, workspace.javaEval.selection), cfg, workspace.anytimeSearch, full ? 0 : 4000, {});
+        mss::assert_(result.candidates.size() == (full ? 2 : 1), "test::anytimeEquivalent: 自动搜索应归并对换格，完整根分析应保留两格");
         int compared = 0;
         do {
-            const mss::AnytimeSearch::Candidate &upper = result.candidates[0], &lower = result.candidates[1];
-            mss::assert_(upper.cellId == expected[0] && lower.cellId == expected[1], "test::anytimeEquivalent: 根候选坐标变化");
-            for (int depth = compared; depth < (int)upper.value.size() && depth < (int)lower.value.size(); ++depth) {
-                mss::assert_(std::abs(upper.value[depth] - lower.value[depth]) < 1e-12L, "test::anytimeEquivalent: 两个等价首招的同层评分不同");
-                ++compared;
-            }
+            const mss::AnytimeSearch::Candidate &upper = result.candidates[0];
+            mss::assert_(upper.cellId == expected[0], "test::anytimeEquivalent: 根候选坐标变化");
+            if (full) {
+                const mss::AnytimeSearch::Candidate &lower = result.candidates[1];
+                mss::assert_(lower.cellId == expected[1], "test::anytimeEquivalent: 完整分析丢失第二个根招法");
+                for (int depth = compared; depth < (int)upper.value.size() && depth < (int)lower.value.size(); ++depth) {
+                    mss::assert_(std::abs(upper.value[depth] - lower.value[depth]) < 1e-12L, "test::anytimeEquivalent: 两个对换首招的同层评分不同");
+                    mss::assert_(std::abs(upper.value[depth] - automaticValues[depth]) < 1e-12L, "test::anytimeEquivalent: 对换剪枝改变同层评分");
+                    ++compared;
+                }
+            } else compared = upper.value.size();
             if (result.finished) break;
-            mss::assert_(result.node < 3400, "test::anytimeEquivalent: 固定盘面搜索未在预算内结束");
+            mss::assert_(result.node < 4000, "test::anytimeEquivalent: 固定盘面搜索未在预算内结束");
             mss::AnytimeSearch::update(result, cfg, workspace.anytimeSearch, 17, {});
         } while (true);
         mss::assert_(result.completedDepth >= 14 && compared == result.completedDepth + 1, "test::anytimeEquivalent: 未覆盖完整十四层搜索");
+        if (!full) automaticValues = result.candidates.front().value;
         mss::UI::Session session(cfg);
         std::string requestCells = cells, response;
         if (full) requestCells[422] = requestCells[452] = 'G';
         mss::assert_(session.startSearch("rows=16&cols=30&mines=99&cells=" + requestCells + "&algo=auto&rootWidth=6&middleWidth=3&deepWidth=1&run=false", response), "test::anytimeEquivalent: UI 拒绝固定盘面");
-        session.controlSearch("action=step&nodes=3400");
+        session.controlSearch("action=step&nodes=4000");
         const std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
         std::string snapshot;
         do {
@@ -112,7 +117,8 @@ inline void anytimeEquivalent() {
         } while (std::chrono::steady_clock::now() < deadline);
         mss::assert_(snapshot.find("\"completedDepth\":14") != std::string::npos && snapshot.find("\"finished\":true") != std::string::npos, "test::anytimeEquivalent: UI 搜索没有完整结束");
         const std::size_t upperValues = snapshot.find("\"value\":["), lowerValues = snapshot.find("\"value\":[", upperValues + 1);
-        mss::assert_(snapshot.substr(upperValues, snapshot.find(']', upperValues) - upperValues) == snapshot.substr(lowerValues, snapshot.find(']', lowerValues) - lowerValues), "test::anytimeEquivalent: UI 发布的逐层评分不同");
+        if (full) mss::assert_(snapshot.substr(upperValues, snapshot.find(']', upperValues) - upperValues) == snapshot.substr(lowerValues, snapshot.find(']', lowerValues) - lowerValues), "test::anytimeEquivalent: UI 发布的逐层评分不同");
+        else mss::assert_(lowerValues == std::string::npos, "test::anytimeEquivalent: UI 自动搜索仍发布两个对换招法");
         std::cout << "test/anytime_equivalent: full=" << full << " configurations=880 layers=" << compared << " nodes=" << result.node << " score=" << result.candidates[0].value.back() << '\n';
     }
 }
@@ -133,11 +139,11 @@ inline void anytimeFiftyFifty() {
     std::sort(pseudo.begin(), pseudo.end());
     mss::assert_(pseudo.size() == expected.size() && std::equal(pseudo.begin(), pseudo.end(), expected.begin()), "test::anytimeFiftyFifty: 重复数字约束破坏了不可避免的四格链");
     const mss::LongTermRisk::Result risk = mss::LongTermRisk::analyze(input, {}, engineConfig.longTermRisk, workspace.longTermRisk);
-    mss::JavaEval::Result evaluated = mss::JavaEval::analyze(input, risk, {}, engineConfig.javaEval, engineConfig.moveEval, engineConfig.longTermRisk, engineConfig.pseudo, workspace.javaEval, false);
+    mss::JavaEval::Result evaluated = mss::JavaEval::analyze(input, risk, mss::MoveEval::Selection::prepare(input, &risk, engineConfig.javaEval, engineConfig.pseudo, workspace.probability, workspace.pseudo, workspace.javaEval.selection), engineConfig.moveEval, engineConfig.longTermRisk, workspace.javaEval);
     mss::assert_(!evaluated.empty(), "test::anytimeFiftyFifty: JavaEval 漏掉 50-50 候选");
     for (const mss::MoveEval::Analysis &move : evaluated)
         mss::assert_(std::find(expected.begin(), expected.end(), move.cellId) != expected.end(), "test::anytimeFiftyFifty: JavaEval 把链外格子当成候选");
-    const mss::AnytimeSearch::Result searched = mss::AnytimeSearch::analyze(input, std::move(evaluated), engineConfig, workspace.anytimeSearch, 0, {});
+    const mss::AnytimeSearch::Result searched = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::prepare(input, &risk, engineConfig.javaEval, engineConfig.pseudo, workspace.probability, workspace.pseudo, workspace.javaEval.selection), engineConfig, workspace.anytimeSearch, 0, {});
     mss::assert_(searched.candidates.size() == 2, "test::anytimeFiftyFifty: Search 未保留两种互斥雷位的代表格");
     for (const mss::AnytimeSearch::Candidate &move : searched.candidates)
         mss::assert_(std::find(expected.begin(), expected.end(), move.cellId) != expected.end(), "test::anytimeFiftyFifty: Search 的根候选离开 50-50 链");
@@ -157,13 +163,13 @@ inline void anytimeBeginner() {
     std::vector<mss::winrate::CellId> cells;
     for (int row = 1; row <= 4; ++row)
         for (int col = 0; col <= row; ++col) cells.push_back(input.board.id(row, col));
-    const mss::JavaEval::Result baseline = mss::JavaEval::analyze(input, risk, cells, cfg.moveEval, cfg.longTermRisk, workspace.javaEval, false);
-    mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(input, baseline, cfg, workspace.anytimeSearch, 0, {});
+    const mss::JavaEval::Result baseline = mss::JavaEval::analyze(input, risk, mss::MoveEval::Selection::specified(input, cells, workspace.probability, workspace.javaEval.selection), cfg.moveEval, cfg.longTermRisk, workspace.javaEval);
+    mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::specified(input, cells, workspace.probability, workspace.javaEval.selection), cfg, workspace.anytimeSearch, 0, {});
     while (result.completedDepth < 6 && result.node < 300000 && !result.finished) mss::AnytimeSearch::update(result, cfg, workspace.anytimeSearch, 1000, {});
     mss::assert_(result.completedDepth >= 6 && result.candidates.size() == 14, "test::anytimeBeginner: 第六层未完成或 G 根候选丢失");
     // 固定根层 JavaEval，改变长期风险参数；树内候选、展开顺序和各层评分都不应变化。
-    const mss::Config otherConfig(cfg.bruteForce, {0.5L, 0.5L, 1e-6L}, cfg.pseudo, {cfg.moveEval.progressContribution, 0.0L}, cfg.javaEval, cfg.anytimeSearch, cfg.monteCarlo);
-    mss::AnytimeSearch::Result other = mss::AnytimeSearch::analyze(input, baseline, otherConfig, workspace.anytimeSearch, 0, {});
+    const mss::Config otherConfig(cfg.bruteForce, {0.5L, 1e-6L}, cfg.pseudo, {cfg.moveEval.progressContribution, 0.0L}, cfg.javaEval, cfg.anytimeSearch, cfg.monteCarlo);
+    mss::AnytimeSearch::Result other = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::specified(input, cells, workspace.probability, workspace.javaEval.selection), cfg, workspace.anytimeSearch, 0, {});
     while (other.completedDepth < 6 && other.node < 300000 && !other.finished) mss::AnytimeSearch::update(other, otherConfig, workspace.anytimeSearch, 1000, {});
     mss::assert_(other.node == result.node && other.completedDepth == result.completedDepth && other.finished == result.finished && other.candidates.size() == result.candidates.size(), "test::anytimeBeginner: 树内展开仍依赖长期风险参数");
     for (int i = 0; i < (int)result.candidates.size(); ++i) {
@@ -177,6 +183,74 @@ inline void anytimeBeginner() {
         std::cout << std::setprecision(12) << "test/anytime_beginner: roots=14 depth=" << depth << " recommended=(1,4) score=" << best.value[depth] << " nodes=" << result.node << '\n';
     }
 }
+
+inline void anytimeSwapPruning() {
+    const std::string cells = "1?????????????201?101?10000000????????????5?2122101221000011????????????4211?22222?100002??????????????20113??3?3222113??????????????30002?45?31??12?4?????????????4100112??223312????????????????1111012322?11343????312?3????311?10001?3221??1??3?2123?23?310111011224?43321??2111?2111110111001?22????100??3211121101111?211112?4?42211????1002?212?2223?1012221101?1???31002?21?4?11?2212?10000222??3201121124?421111?32100001?2???202?3102???100012?21112123????202??102?421000012?11?2?12?";
+    const mss::Config automatic(engineConfig.bruteForce, engineConfig.longTermRisk, engineConfig.pseudo, engineConfig.moveEval, engineConfig.javaEval, {{1000, 3, 1}, false}, engineConfig.monteCarlo);
+    const mss::Config complete(automatic.bruteForce, automatic.longTermRisk, automatic.pseudo, automatic.moveEval, automatic.javaEval, {automatic.anytimeSearch.width, true}, automatic.monteCarlo);
+    mss::Workspace workspace;
+    mss::ObservedBoard::Result board(16, 30, 99);
+    for (int cell = 0; cell < 480; ++cell) if (cells[cell] != '?') board.board[cell / 30][cell % 30] = (mss::ObservedBoard::CellState)(cells[cell] - '0');
+    mss::GameControl::Position position(std::move(board), workspace);
+    const mss::winrate::Input input = position.input(mss::ShapeSolver::OrderAlgo::Auto);
+    const mss::LongTermRisk::Result risk = mss::LongTermRisk::analyze(input, {}, automatic.longTermRisk, workspace.longTermRisk);
+    const std::array<mss::winrate::CellId, 2> targets{451, 450};
+    const mss::JavaEval::Result baseline = mss::JavaEval::analyze(input, risk, mss::MoveEval::Selection::specified(input, targets, workspace.probability, workspace.javaEval.selection), automatic.moveEval, automatic.longTermRisk, workspace.javaEval);
+    mss::assert_(baseline.size() == 2 && baseline[1].multiplier > baseline[0].multiplier && std::abs(baseline[0].value / baseline[0].multiplier - baseline[1].value / baseline[1].multiplier) < 1e-15L, "test::anytimeSwapPruning: 复现盘面的两格基础分或 influence 关系改变");
+    for (const std::array<mss::winrate::CellId, 2> &order : {targets, std::array<mss::winrate::CellId, 2>{450, 451}}) {
+        mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::specified(input, order, workspace.probability, workspace.javaEval.selection), automatic, workspace.anytimeSearch, 0, {});
+        mss::assert_(result.candidates.size() == 1 && result.candidates.front().cellId == 450 && result.candidates.front().multiplier == baseline[1].multiplier && result.candidates.front().value.front() == baseline[1].value, "test::anytimeSwapPruning: 对换代表没有保留较高 influence 或依赖候选顺序");
+        const long long before = result.node;
+        mss::AnytimeSearch::update(result, automatic, workspace.anytimeSearch, 1024, {});
+        mss::assert_(result.node - before <= 1024 && result.candidates.size() == 1 && result.candidates.front().cellId == 450, "test::anytimeSwapPruning: 对换剪枝后续算超预算或根代表改变");
+    }
+    const mss::AnytimeSearch::Result full = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::specified(input, targets, workspace.probability, workspace.javaEval.selection), complete, workspace.anytimeSearch, 0, {});
+    mss::assert_(full.candidates.size() == 2 && full.candidates[0].value.front() == baseline[0].value && full.candidates[1].value.front() == baseline[1].value, "test::anytimeSwapPruning: 完整根分析剪掉指定对换格或改写 JavaEval 分数");
+    // 1-2-1 约束的等价变形：Basic 无法推导 (2,2)，Probability 才确认它为雷。
+    const std::array<const char *, 4> probabilityRows{"M321", "M???", "??MM", "??MM"};
+    mss::Workspace probabilityWorkspace;
+    mss::ObservedBoard::Result probabilityBoard(4, 4, 9);
+    for (int row = 0; row < 4; ++row)
+        for (int col = 0; col < 4; ++col) {
+            const char value = probabilityRows[row][col];
+            if (value == 'M') probabilityBoard.board[row][col] = mss::ObservedBoard::CellState::ForcedMine;
+            else if (value != '?') probabilityBoard.board[row][col] = (mss::ObservedBoard::CellState)(value - '0');
+        }
+    mss::GameControl::Position probabilityPosition(std::move(probabilityBoard), probabilityWorkspace);
+    mss::assert_(!probabilityPosition.error().failed, "test::anytimeSwapPruning: 概率必雷盘面无效");
+    const mss::winrate::Input probabilityInput = probabilityPosition.input(mss::ShapeSolver::OrderAlgo::Auto);
+    mss::assert_(probabilityInput.basic.marks[1][1] != mss::Basic::Mark::F && probabilityInput.probability.mineProbability(5, probabilityInput.board, probabilityInput.basic, probabilityInput.structure) == 1.0L && probabilityInput.basic.marks[1][0] == mss::Basic::Mark::F, "test::anytimeSwapPruning: 未同时覆盖概率必雷和 Basic 必雷");
+    const mss::LongTermRisk::Result probabilityRisk = mss::LongTermRisk::analyze(probabilityInput, {}, automatic.longTermRisk, probabilityWorkspace.longTermRisk);
+    const std::array<mss::winrate::CellId, 3> probabilityTargets{12, 8, 13};
+    const mss::AnytimeSearch::Result probabilityResult = mss::AnytimeSearch::analyze(probabilityInput, probabilityRisk, mss::MoveEval::Selection::specified(probabilityInput, probabilityTargets, probabilityWorkspace.probability, probabilityWorkspace.javaEval.selection), automatic, probabilityWorkspace.anytimeSearch, 0, {});
+    mss::assert_(probabilityResult.candidates.size() == 1, "test::anytimeSwapPruning: 必雷没有排除或三个对换格没有归并");
+    // 两格虽然同雷率、隐藏邻格相同，却分别受 A+C=1 与全局 B+D=1 约束，不能交换雷位。
+    const std::array<const char *, 2> differentRows{"2??M", "M??M"};
+    mss::Workspace differentWorkspace;
+    mss::ObservedBoard::Result differentBoard(2, 4, 5);
+    for (int row = 0; row < 2; ++row)
+        for (int col = 0; col < 4; ++col) {
+            const char value = differentRows[row][col];
+            if (value == 'M') differentBoard.board[row][col] = mss::ObservedBoard::CellState::ForcedMine;
+            else if (value != '?') differentBoard.board[row][col] = (mss::ObservedBoard::CellState)(value - '0');
+        }
+    mss::GameControl::Position differentPosition(std::move(differentBoard), differentWorkspace);
+    const mss::winrate::Input differentInput = differentPosition.input(mss::ShapeSolver::OrderAlgo::Auto);
+    const mss::LongTermRisk::Result differentRisk = mss::LongTermRisk::analyze(differentInput, {}, automatic.longTermRisk, differentWorkspace.longTermRisk);
+    const std::array<mss::winrate::CellId, 2> differentTargets{5, 6};
+    mss::assert_(differentInput.probability.mineProbability(5, differentInput.board, differentInput.basic, differentInput.structure) == 0.5L && differentInput.probability.mineProbability(6, differentInput.board, differentInput.basic, differentInput.structure) == 0.5L, "test::anytimeSwapPruning: 不同约束反例不是同雷率");
+    const mss::AnytimeSearch::Result different = mss::AnytimeSearch::analyze(differentInput, differentRisk, mss::MoveEval::Selection::specified(differentInput, differentTargets, differentWorkspace.probability, differentWorkspace.javaEval.selection), automatic, differentWorkspace.anytimeSearch, 0, {});
+    mss::assert_(different.candidates.size() == 2, "test::anytimeSwapPruning: 错把不同数字约束的格子判成可对换");
+    mss::Workspace informationWorkspace;
+    mss::GameControl::Position informationPosition(mss::ObservedBoard::Result(3, 3, 2), informationWorkspace);
+    const mss::winrate::Input informationInput = informationPosition.input(mss::ShapeSolver::OrderAlgo::Auto);
+    const mss::LongTermRisk::Result informationRisk = mss::LongTermRisk::analyze(informationInput, {}, automatic.longTermRisk, informationWorkspace.longTermRisk);
+    const std::array<mss::winrate::CellId, 2> informationTargets{0, 1};
+    const mss::AnytimeSearch::Result information = mss::AnytimeSearch::analyze(informationInput, informationRisk, mss::MoveEval::Selection::specified(informationInput, informationTargets, informationWorkspace.probability, informationWorkspace.javaEval.selection), automatic, informationWorkspace.anytimeSearch, 0, {});
+    mss::assert_(information.candidates.size() == 2, "test::anytimeSwapPruning: 隐藏邻格不同的相邻 T 被误剪");
+    std::cout << std::setprecision(15) << "test/anytime_swap_pruning: roots=2->1 kept=(16,1) multiplier=" << baseline[1].multiplier << " score=" << baseline[1].value << " PE_and_Basic_mines=true group=3->1 constraints_and_information_negatives=2 full_roots=2\n";
+}
+
 
 inline void anytimePruning() {
     const mss::Config fullConfig(engineConfig.bruteForce, engineConfig.longTermRisk, engineConfig.pseudo, engineConfig.moveEval, engineConfig.javaEval, {{1, 3, 1}, true}, engineConfig.monteCarlo);
@@ -192,18 +266,18 @@ inline void anytimePruning() {
     const mss::winrate::Input input = position.input(mss::ShapeSolver::OrderAlgo::Auto);
     const mss::LongTermRisk::Result risk = mss::LongTermRisk::analyze(input, {}, engineConfig.longTermRisk, workspace.longTermRisk);
     const std::array<mss::winrate::CellId, 2> cells{27, 117};
-    const mss::JavaEval::Result baseline = mss::JavaEval::analyze(input, risk, cells, engineConfig.moveEval, engineConfig.longTermRisk, workspace.javaEval, false);
-    mss::assert_(baseline[0].equivalence && baseline[0].equivalence == baseline[1].equivalence && baseline[0].branches.size() == 3 && baseline[1].branches.size() == 5, "test::anytimePruning: 两个活等价格的状态识别或数字分支改变");
+    const mss::JavaEval::Result baseline = mss::JavaEval::analyze(input, risk, mss::MoveEval::Selection::specified(input, cells, workspace.probability, workspace.javaEval.selection), engineConfig.moveEval, engineConfig.longTermRisk, workspace.javaEval);
+    mss::assert_(!baseline[0].equivalence && !baseline[1].equivalence && baseline[0].branches.size() == 3 && baseline[1].branches.size() == 5, "test::anytimePruning: 两个活等价格的状态识别或数字分支改变");
     mss::assert_(std::abs(baseline[0].value - 0.780792365410507672L) < 1e-12L && std::abs(baseline[1].value - 0.782020032431476109L) < 1e-12L, "test::anytimePruning: 等价元数据改写了原 JavaEval 评分");
-    const mss::JavaEval::Result automatic = mss::JavaEval::analyze(input, risk, {}, engineConfig.javaEval, engineConfig.moveEval, engineConfig.longTermRisk, engineConfig.pseudo, workspace.javaEval, false);
+    const mss::JavaEval::Result automatic = mss::JavaEval::analyze(input, risk, mss::MoveEval::Selection::prepare(input, &risk, engineConfig.javaEval, engineConfig.pseudo, workspace.probability, workspace.pseudo, workspace.javaEval.selection), engineConfig.moveEval, engineConfig.longTermRisk, workspace.javaEval);
     for (mss::winrate::CellId cell : cells)
         mss::assert_(std::any_of(automatic.begin(), automatic.end(), [&](const mss::MoveEval::Analysis &move) { return move.cellId == cell && move.value >= 0.0L; }), "test::anytimePruning: JavaEval 错误启用了等价类剪枝");
-    mss::AnytimeSearch::Result selected = mss::AnytimeSearch::analyze(input, baseline, autoConfig, workspace.anytimeSearch, 0, {});
+    mss::AnytimeSearch::Result selected = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::specified(input, cells, workspace.probability, workspace.javaEval.selection), autoConfig, workspace.anytimeSearch, 0, {});
     mss::assert_(selected.candidates.size() == 1 && selected.candidates.front().cellId == 117 && selected.node == baseline[0].node + baseline[1].node, "test::anytimePruning: Search 根去重失效或重复计算了强制安全");
-    mss::AnytimeSearch::Result full = mss::AnytimeSearch::analyze(input, baseline, fullConfig, workspace.anytimeSearch, 0, {});
+    mss::AnytimeSearch::Result full = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::specified(input, cells, workspace.probability, workspace.javaEval.selection), fullConfig, workspace.anytimeSearch, 0, {});
     mss::assert_(full.candidates.size() == 2 && full.candidates[0].value.front() == baseline[0].value && full.candidates[1].value.front() == baseline[1].value, "test::anytimePruning: 指定等价格被剪掉或复制评分");
     // A+B=1、B+C=1；A(0) 是 dead，C(4) 是活格，二者同生共死。
-    // 6、13 与它们安全率相同，但不属于同一等价类。
+    // 6、13 不属于 A/C 的同生共死类，但它们相邻且可以互换。
     const std::array<const char *, 2> mixedRows{"?4?4???", "MMMMMM?"};
     mss::ObservedBoard::Result mixedBoard(2, 7, 8);
     for (int row = 0; row < 2; ++row)
@@ -218,13 +292,13 @@ inline void anytimePruning() {
     mss::assert_(!mixedPosition.error().failed && mixedInput.probability.candidates() == 4.0L, "test::anytimePruning: 混合等价类盘面不满足四种布局");
     const mss::LongTermRisk::Result mixedRisk = mss::LongTermRisk::analyze(mixedInput, {}, engineConfig.longTermRisk, mixedWorkspace.longTermRisk);
     const std::array<mss::winrate::CellId, 4> mixedCells{0, 4, 6, 13};
-    const mss::JavaEval::Result mixedBaseline = mss::JavaEval::analyze(mixedInput, mixedRisk, mixedCells, engineConfig.moveEval, engineConfig.longTermRisk, mixedWorkspace.javaEval, false);
-    mss::assert_(mixedBaseline[0].branches.size() == 1 && mixedBaseline[1].branches.size() > 1 && mixedBaseline[0].equivalence == mixedBaseline[1].equivalence && mixedBaseline[1].equivalence != mixedBaseline[2].equivalence && mixedBaseline[2].equivalence != mixedBaseline[3].equivalence, "test::anytimePruning: 混合类或同安全率的非等价格未正确区分");
-    mss::AnytimeSearch::Result mixedSelected = mss::AnytimeSearch::analyze(mixedInput, mixedBaseline, autoConfig, mixedWorkspace.anytimeSearch, 0, {});
-    mss::assert_(mixedSelected.candidates.size() == 3 && std::none_of(mixedSelected.candidates.begin(), mixedSelected.candidates.end(), [](const mss::AnytimeSearch::Candidate &move) { return move.cellId == 0; }) && std::any_of(mixedSelected.candidates.begin(), mixedSelected.candidates.end(), [](const mss::AnytimeSearch::Candidate &move) { return move.cellId == 4; }), "test::anytimePruning: dead 抢占类代表或误删不同等价类");
-    const mss::JavaEval::Result mixedAutomatic = mss::JavaEval::analyze(mixedInput, mixedRisk, {}, engineConfig.javaEval, engineConfig.moveEval, engineConfig.longTermRisk, engineConfig.pseudo, mixedWorkspace.javaEval, false);
+    const mss::JavaEval::Result mixedBaseline = mss::JavaEval::analyze(mixedInput, mixedRisk, mss::MoveEval::Selection::specified(mixedInput, mixedCells, mixedWorkspace.probability, mixedWorkspace.javaEval.selection), engineConfig.moveEval, engineConfig.longTermRisk, mixedWorkspace.javaEval);
+    mss::assert_(mixedBaseline[0].branches.size() == 1 && mixedBaseline[1].branches.size() > 1 && !mixedBaseline[0].equivalence && !mixedBaseline[1].equivalence && !mixedBaseline[2].equivalence && !mixedBaseline[3].equivalence, "test::anytimePruning: 混合类或同安全率的非等价格未正确区分");
+    mss::AnytimeSearch::Result mixedSelected = mss::AnytimeSearch::analyze(mixedInput, mixedRisk, mss::MoveEval::Selection::specified(mixedInput, mixedCells, mixedWorkspace.probability, mixedWorkspace.javaEval.selection), autoConfig, mixedWorkspace.anytimeSearch, 0, {});
+    mss::assert_(mixedSelected.candidates.size() == 2 && std::none_of(mixedSelected.candidates.begin(), mixedSelected.candidates.end(), [](const mss::AnytimeSearch::Candidate &move) { return move.cellId == 0; }) && std::any_of(mixedSelected.candidates.begin(), mixedSelected.candidates.end(), [](const mss::AnytimeSearch::Candidate &move) { return move.cellId == 4; }), "test::anytimePruning: dead 抢占类代表或误删不同等价类");
+    const mss::JavaEval::Result mixedAutomatic = mss::JavaEval::analyze(mixedInput, mixedRisk, mss::MoveEval::Selection::prepare(mixedInput, &mixedRisk, engineConfig.javaEval, engineConfig.pseudo, mixedWorkspace.probability, mixedWorkspace.pseudo, mixedWorkspace.javaEval.selection), engineConfig.moveEval, engineConfig.longTermRisk, mixedWorkspace.javaEval);
     for (const mss::MoveEval::Analysis &move : mixedAutomatic)
-        mss::assert_(move.value < 0.0L || move.branches.size() > 1, "test::anytimePruning: 有活格时 JavaEval 推荐 dead 格");
+        mss::assert_(move.value >= 0.0L && move.branches.size() > 1, "test::anytimePruning: 有活格时 JavaEval 推荐 dead 格");
     // A+B=1、B+C=1，总共两雷；A/C 安全会让远端 T 必雷，T 安全则让 B 必安。
     mss::Workspace globalWorkspace;
     mss::ObservedBoard::Result globalBoard(1, 6, 2);
@@ -234,8 +308,8 @@ inline void anytimePruning() {
     mss::assert_(globalInput.probability.candidates() == 2.0L && globalInput.basic.unknownSum == 1 && globalInput.probability.tCellProbability() == 0.5L, "test::anytimePruning: 全局确定性盘面不是两种布局");
     const mss::LongTermRisk::Result globalRisk = mss::LongTermRisk::analyze(globalInput, {}, engineConfig.longTermRisk, globalWorkspace.longTermRisk);
     const std::array<mss::winrate::CellId, 3> globalCells{0, 4, 5};
-    const mss::JavaEval::Result globalBaseline = mss::JavaEval::analyze(globalInput, globalRisk, globalCells, engineConfig.moveEval, engineConfig.longTermRisk, globalWorkspace.javaEval, false);
-    mss::assert_(globalBaseline[0].equivalence == globalBaseline[1].equivalence && globalBaseline[0].equivalence != globalBaseline[2].equivalence, "test::anytimePruning: 候选必安集合混淆了不同等价类");
+    const mss::AnytimeSearch::Result globalSelected = mss::AnytimeSearch::analyze(globalInput, globalRisk, mss::MoveEval::Selection::specified(globalInput, globalCells, globalWorkspace.probability, globalWorkspace.javaEval.selection), autoConfig, globalWorkspace.anytimeSearch, 0, {});
+    mss::assert_(globalSelected.candidates.size() == 2 && std::any_of(globalSelected.candidates.begin(), globalSelected.candidates.end(), [](const mss::AnytimeSearch::Candidate &move) { return move.cellId == 5; }), "test::anytimePruning: Search 混淆全局雷数确定的不同等价类");
     mss::assert_(globalInput.basic.unknownSum == 1 && globalPosition.probability(mss::ShapeSolver::OrderAlgo::Auto).candidates() == 2.0L && mss::Basic::checkValid(globalInput.board, globalInput.basic), "test::anytimePruning: 全局确定性分支没有完整回退");
     mss::Workspace deadWorkspace;
     mss::ObservedBoard::Result deadBoard(1, 3, 1);
@@ -243,10 +317,10 @@ inline void anytimePruning() {
     mss::GameControl::Position deadPosition(std::move(deadBoard), deadWorkspace);
     const mss::winrate::Input deadInput = deadPosition.input(mss::ShapeSolver::OrderAlgo::Auto);
     const mss::LongTermRisk::Result deadRisk = mss::LongTermRisk::analyze(deadInput, {}, engineConfig.longTermRisk, deadWorkspace.longTermRisk);
-    const mss::JavaEval::Result deadAutomatic = mss::JavaEval::analyze(deadInput, deadRisk, {}, engineConfig.javaEval, engineConfig.moveEval, engineConfig.longTermRisk, engineConfig.pseudo, deadWorkspace.javaEval, false);
-    mss::assert_(std::count_if(deadAutomatic.begin(), deadAutomatic.end(), [](const mss::MoveEval::Analysis &move) { return move.value >= 0.0L; }) == 1, "test::anytimePruning: 全 dead 时 JavaEval 未只保留一个必猜格");
-    mss::AnytimeSearch::Result deadSearch = mss::AnytimeSearch::analyze(deadInput, deadAutomatic, autoConfig, deadWorkspace.anytimeSearch, 100, {});
-    mss::assert_(deadSearch.candidates.size() == 1 && deadSearch.finished, "test::anytimePruning: 全 dead 的 Search 不能完成必猜终局");
+    const mss::JavaEval::Result deadAutomatic = mss::JavaEval::analyze(deadInput, deadRisk, mss::MoveEval::Selection::prepare(deadInput, &deadRisk, engineConfig.javaEval, engineConfig.pseudo, deadWorkspace.probability, deadWorkspace.pseudo, deadWorkspace.javaEval.selection), engineConfig.moveEval, engineConfig.longTermRisk, deadWorkspace.javaEval);
+    mss::assert_(deadAutomatic.size() == 2 && deadAutomatic[0].value >= 0.0L && deadAutomatic[1].value >= 0.0L, "test::anytimePruning: 强制 50/50 的两个 dead 候选不应被普通盲猜回退替换");
+    mss::AnytimeSearch::Result deadSearch = mss::AnytimeSearch::analyze(deadInput, deadRisk, mss::MoveEval::Selection::prepare(deadInput, &deadRisk, engineConfig.javaEval, engineConfig.pseudo, deadWorkspace.probability, deadWorkspace.pseudo, deadWorkspace.javaEval.selection), autoConfig, deadWorkspace.anytimeSearch, 100, {});
+    mss::assert_(deadSearch.candidates.size() == 2 && deadSearch.finished, "test::anytimePruning: 全 dead 的 Search 不能完成必猜终局");
     mss::UI::Session session(fullConfig);
     std::string response;
     mss::assert_(session.startSearch("rows=2&cols=7&mines=8&cells=G4?4G??MMMMMM?&algo=auto&rootWidth=1&middleWidth=3&deepWidth=1&run=false", response), "test::anytimePruning: Session 拒绝混合等价类的 G 根招法");
@@ -258,7 +332,7 @@ inline void anytimePruning() {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     } while (std::chrono::steady_clock::now() < deadline);
     mss::assert_(snapshot.find("\"cell\":0") != std::string::npos && snapshot.find("\"cell\":4") != std::string::npos, "test::anytimePruning: UI G 的 dead 或等价根招法被剪掉");
-    std::cout << "test/anytime_pruning: equivalent_roots=2->1, mixed_classes=3, dead_fallback=1, G_roots=2, zero_layer_nodes=" << selected.node << '\n';
+    std::cout << "test/anytime_pruning: equivalent_roots=2->1, mixed_classes=2, forced_dead_roots=2, G_roots=2, zero_layer_nodes=" << selected.node << '\n';
 }
 
 inline void anytimeReplay() {
@@ -280,7 +354,7 @@ inline void anytimeReplay() {
     for (int i = 0; i < 2; ++i) {
         const auto [row, col] = board.pos(cells[i]);
         boards[i].changes.emplace_back(cells[i], board.board[row][col], (mss::ObservedBoard::CellState)digits[i]);
-        mss::ObservedBoard::applyDelta(board, boards[i]);
+        mss::ObservedBoard::applyDelta(board, boards[i].changes);
         mss::Basic::update(basic, basics[i], board, boards[i], workspace.basic);
         mss::Structure::update(structure, structures[i], board, basic, shapes, std::span{&cells[i], 1}, workspace.structure);
         boardStates.push_back(board); basicStates.push_back(basic); structureStates.push_back(structure);
@@ -295,22 +369,103 @@ inline void anytimeReplay() {
     };
     for (int repeat = 0; repeat < 3; ++repeat) {
         for (int i = 1; i >= 0; --i) {
-            mss::Structure::applyDelta(structure, shapes, structures[i], true);
-            mss::Basic::applyDelta(basic, basics[i], true);
-            mss::ObservedBoard::applyDelta(board, boards[i], true);
+            mss::Structure::applyDelta(structure, shapes, structures[i].removed, structures[i].added, true);
+            mss::Basic::applyDelta(basic, basics[i].changes, true);
+            mss::ObservedBoard::applyDelta(board, boards[i].changes, true);
             check(i);
         }
         for (int i = 0; i < 2; ++i) {
-            mss::ObservedBoard::applyDelta(board, boards[i]);
-            mss::Basic::applyDelta(basic, basics[i]);
-            mss::Structure::applyDelta(structure, shapes, structures[i]);
+            mss::ObservedBoard::applyDelta(board, boards[i].changes);
+            mss::Basic::applyDelta(basic, basics[i].changes);
+            mss::Structure::applyDelta(structure, shapes, structures[i].removed, structures[i].added);
             check(i + 1);
         }
     }
     std::cout << "test/anytime_replay: steps=2 repeats=3 forced_safe=true\n";
 }
 
+inline void anytimeWeights() {
+    const mss::Config cfg(engineConfig.bruteForce, engineConfig.longTermRisk, engineConfig.pseudo, engineConfig.moveEval, engineConfig.javaEval, {{6, 3, 1}, true}, engineConfig.monteCarlo);
+    const std::string cells = "011101???101?22???????????????01?22344310113???3????????????0123??3?100002?32?????????????001?4?322100022223????????????00112122?21112?22?????????????1100001?3?11?22??2?????????????11221223234321???????????????112??11?12???223??????????????123?422223?422?????????????????3?33?12?311023?????????????????3??323?31112?????????????????????3?32??1??2?????????????????????????322???????????????????????????????????????????????????????????????????????????????????????????????????????????";
+    mss::Workspace workspace;
+    mss::ObservedBoard::Result board(16, 30, 99);
+    mss::assert_(cells.size() == 480, "test::anytimeWeights: 复现盘面长度错误");
+    for (int cell = 0; cell < 480; ++cell) if (cells[cell] != '?') board.board[cell / 30][cell % 30] = (mss::ObservedBoard::CellState)(cells[cell] - '0');
+    mss::GameControl::Position position(std::move(board), workspace);
+    const mss::winrate::Input input = position.input(mss::ShapeSolver::OrderAlgo::Auto);
+    const mss::LongTermRisk::Result risk = mss::LongTermRisk::analyze(input, {}, cfg.longTermRisk, workspace.longTermRisk);
+    const mss::winrate::CellId root = 15;
+    const mss::JavaEval::Result evaluated = mss::JavaEval::analyze(input, risk, mss::MoveEval::Selection::specified(input, std::span{&root, 1}, workspace.probability, workspace.javaEval.selection), cfg.moveEval, cfg.longTermRisk, workspace.javaEval);
+    long double weighted = 0.0L, raw = 0.0L;
+    for (const mss::MoveEval::Branch &branch : evaluated.front().branches) {
+        weighted += branch.probability * evaluated.front().multiplier * branch.value;
+        raw += branch.probability * branch.value;
+    }
+    mss::assert_(std::abs(weighted - evaluated.front().value) < 1e-12L && std::abs(weighted - raw) > 0.01L, "test::anytimeWeights: 根权重未还原 JavaEval 或未覆盖显著风险修正");
+    mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::specified(input, std::span{&root, 1}, workspace.probability, workspace.javaEval.selection), cfg, workspace.anytimeSearch, 0, {});
+    long double expected = 0.0L;
+    for (int depth = 1; depth <= 2; ++depth) {
+        while ((int)result.candidates.front().value.size() <= depth && result.node < 10000) mss::AnytimeSearch::update(result, cfg, workspace.anytimeSearch, 1, {});
+        mss::assert_((int)result.candidates.front().value.size() == depth + 1, "test::anytimeWeights: 续搜层未在预算内发布");
+        mss::assert_(result.candidates.front().multiplier == evaluated.front().multiplier, "test::anytimeWeights: 续搜覆写根乘数");
+        expected = 0.0L;
+        for (const mss::AnytimeSearch::Candidate::Branch &branch : result.candidates.front().branches) {
+            mss::assert_(branch.depth == depth, "test::anytimeWeights: 混用了不同深度的子评分");
+            const mss::MoveEval::Branch &original = *std::find_if(evaluated.front().branches.begin(), evaluated.front().branches.end(), [&](const mss::MoveEval::Branch &candidate) { return candidate.digit == branch.digit; });
+            expected += original.probability * result.candidates.front().multiplier * branch.value;
+        }
+        mss::assert_(std::abs(result.candidates.front().value.back() - expected) < 1e-12L, "test::anytimeWeights: 续搜丢失根风险乘数");
+    }
+    std::cout << "test/anytime_weights: board=16x30/99 cell=" << root << " initial_correction=" << weighted - raw << " nodes=" << result.node << " score=" << expected << '\n';
+    // 六种雷位的完整搜索均应为 1/2，不能保留初始风险和进度奖励。
+    mss::Workspace completeWorkspace;
+    mss::GameControl::Position completePosition(mss::ObservedBoard::Result(2, 3, 1), completeWorkspace);
+    const mss::winrate::Input completeInput = completePosition.input(mss::ShapeSolver::OrderAlgo::Auto);
+    const mss::LongTermRisk::Result completeRisk = mss::LongTermRisk::analyze(completeInput, {}, cfg.longTermRisk, completeWorkspace.longTermRisk);
+    const std::array<mss::winrate::CellId, 6> roots{0, 1, 2, 3, 4, 5};
+    const mss::AnytimeSearch::Result complete = mss::AnytimeSearch::analyze(completeInput, completeRisk, mss::MoveEval::Selection::specified(completeInput, roots, completeWorkspace.probability, completeWorkspace.javaEval.selection), cfg, completeWorkspace.anytimeSearch, 10000, {});
+    mss::assert_(complete.finished, "test::anytimeWeights: 小盘完整搜索未结束");
+    for (const mss::AnytimeSearch::Candidate &candidate : complete.candidates) {
+        mss::assert_(std::abs(candidate.value.back() - 0.5L) < 1e-12L, "test::anytimeWeights: 已算完的结局仍被启发式放大");
+        mss::assert_(candidate.multiplier == 1.0L, "test::anytimeWeights: 已算完招法的修正乘数未归一");
+    }
+    std::cout << "test/anytime_weights_complete: board=2x3/1 roots=6 nodes=" << complete.node << " score=0.5\n";
+}
+
+inline void candidateSelection() {
+    const std::string cells = "1??2223?11?12?21???3??????????123?2??422123?213434??????????112124?4?212?3323?12??????????2?1113?312?22?2??2124??????3???321?321133223432102???32212?22?124?201??12??10002?5310012212211??2013334?5200023?21012?10?201221001?2???21001?5?202?310?21110111112233?10012??202?310221?112?1111001110012433133?21?22122?222?111100002?3?3?2?22?2?101?321?211?221102?32?221111111012?1111012?4?4221112210122000012210011112????10001?211??00112?10001?11234?3112222?1122001?2110001111?11?101??1111000";
+    mss::Workspace workspace;
+    mss::ObservedBoard::Result board(16, 30, 99);
+    for (int cell = 0; cell < 480; ++cell) if (cells[cell] != '?') board.board[cell / 30][cell % 30] = (mss::ObservedBoard::CellState)(cells[cell] - '0');
+    mss::GameControl::Position position(std::move(board), workspace);
+    const mss::winrate::Input input = position.input(mss::ShapeSolver::OrderAlgo::Auto);
+    const mss::LongTermRisk::Result risk = mss::LongTermRisk::analyze(input, {}, engineConfig.longTermRisk, workspace.longTermRisk);
+    const mss::MoveEval::Selection::Result selected = mss::MoveEval::Selection::prepare(input, &risk, engineConfig.javaEval, engineConfig.pseudo, workspace.probability, workspace.pseudo, workspace.javaEval.selection);
+    mss::assert_(selected.reason == mss::MoveEval::Selection::Reason::ForcedFiftyFifty && selected.cells.size() == 2 && selected.cells[0] == 437 && selected.cells[1] == 467, "test::candidateSelection: 强制 50/50 被普通 dead 回退替换");
+    const mss::JavaEval::Result evaluated = mss::JavaEval::analyze(input, risk, selected, engineConfig.moveEval, engineConfig.longTermRisk, workspace.javaEval);
+    mss::assert_(evaluated.size() == 2 && evaluated[0].cellId == 437 && evaluated[1].cellId == 467 && evaluated[0].value > 0.0L && evaluated[1].value > 0.0L && !evaluated[0].equivalence && !evaluated[1].equivalence, "test::candidateSelection: JavaEval 改写了候选或执行了搜索剪枝");
+    mss::UI::Session session(engineConfig);
+    const std::string response = session.handle("/api/analyze", "rows=16&cols=30&mines=99&cells=" + cells + "&algo=auto&suggest=true&strategy=java&limit=1000&maxThreads=1");
+    mss::assert_(response.find("\"reason\":\"forced5050\"") != std::string::npos && response.find("\"candidates\":[437,467]") != std::string::npos && response.find("\"recommended\":[437]") != std::string::npos, "test::candidateSelection: UI 理由或候选与引擎不一致");
+    mss::Workspace blindWorkspace;
+    mss::ObservedBoard::Result blindBoard(3, 3, 6);
+    for (int cell : {1, 3, 5, 6, 7}) blindBoard.board[cell / 3][cell % 3] = mss::ObservedBoard::CellState::ForcedMine;
+    blindBoard.board[1][1] = mss::ObservedBoard::CellState::Num6;
+    mss::GameControl::Position blindPosition(std::move(blindBoard), blindWorkspace);
+    const mss::winrate::Input blindInput = blindPosition.input(mss::ShapeSolver::OrderAlgo::Auto);
+    const mss::LongTermRisk::Result blindRisk = mss::LongTermRisk::analyze(blindInput, {}, engineConfig.longTermRisk, blindWorkspace.longTermRisk);
+    const mss::MoveEval::Selection::Result blind = mss::MoveEval::Selection::prepare(blindInput, &blindRisk, engineConfig.javaEval, engineConfig.pseudo, blindWorkspace.probability, blindWorkspace.pseudo, blindWorkspace.javaEval.selection);
+    mss::assert_(blind.reason == mss::MoveEval::Selection::Reason::BlindGuess && blind.cells.size() == 1 && blindInput.probability.mineProbability(blind.cells.front(), blindInput.board, blindInput.basic, blindInput.structure) != 1.0L, "test::candidateSelection: 普通候选全 dead 时没有直接进入单格盲猜");
+    const std::string weakResponse = session.handle("/api/analyze", "rows=2&cols=2&mines=1&cells=1???&algo=auto&suggest=true&strategy=java&limit=1000&maxThreads=1");
+    mss::assert_(weakResponse.find("\"reason\":\"5050OrSafe\"") != std::string::npos, "test::candidateSelection: 弱 50/50 原因丢失");
+    const std::string blindResponse = session.handle("/api/analyze", "rows=3&cols=3&mines=6&cells=?M?M6MMM?&algo=auto&suggest=true&strategy=java&limit=1000&maxThreads=1");
+    mss::assert_(blindResponse.find("\"reason\":\"blindGuess\"") != std::string::npos && blindResponse.find("\"candidates\":[0]") != std::string::npos, "test::candidateSelection: 盲猜原因或单格集合丢失");
+    std::cout << "test/candidate_selection: forced=(15,18),(16,18) reason=forced5050 scored=2\n";
+}
+
 inline void anytimeSearch() {
+    candidateSelection();
+    anytimeWeights();
     anytimeReplay();
     anytimeEndgame();
     anytimeEquivalent();
@@ -327,8 +482,8 @@ inline void anytimeSearch() {
     const mss::winrate::Input input = position.input(mss::ShapeSolver::OrderAlgo::Auto);
     std::vector<mss::winrate::CellId> cells{0, 1, 2, 3, 5, 6, 7, 8};
     const mss::LongTermRisk::Result risk = mss::LongTermRisk::analyze(input, {}, cfg.longTermRisk, workspace.longTermRisk);
-    const mss::JavaEval::Result baseline = mss::JavaEval::analyze(input, risk, cells, cfg.moveEval, cfg.longTermRisk, workspace.javaEval, false);
-    mss::AnytimeSearch::Result split = mss::AnytimeSearch::analyze(input, baseline, cfg, workspace.anytimeSearch, 0, {});
+    const mss::JavaEval::Result baseline = mss::JavaEval::analyze(input, risk, mss::MoveEval::Selection::specified(input, cells, workspace.probability, workspace.javaEval.selection), cfg.moveEval, cfg.longTermRisk, workspace.javaEval);
+    mss::AnytimeSearch::Result split = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::specified(input, cells, workspace.probability, workspace.javaEval.selection), cfg, workspace.anytimeSearch, 0, {});
     mss::assert_(split.candidates.size() == cells.size() && split.completedDepth == 0 && split.node > 0, "test::anytimeSearch: 零预算丢失必算的第零层或完整根候选");
     for (int i = 0; i < (int)cells.size(); ++i)
         mss::assert_(split.candidates[i].value.size() == 1 && split.candidates[i].value[0] == baseline[i].value, "test::anytimeSearch: JavaEval 交接重复计算或改变了第零层");
@@ -359,12 +514,12 @@ inline void anytimeSearch() {
         }
         mss::assert_(split.recommended() == recommended, "test::anytimeSearch: 推荐不符合优先最深再取最高评分");
         // 在续算之间复用原工作区，不能破坏 Result 内的游标和分支资料。
-        if (updates == 7) mss::JavaEval::analyze(input, risk, std::span{cells.data(), 1}, cfg.moveEval, cfg.longTermRisk, workspace.javaEval, false);
+        if (updates == 7) mss::JavaEval::analyze(input, risk, mss::MoveEval::Selection::specified(input, std::span{cells.data(), 1}, workspace.probability, workspace.javaEval.selection), cfg.moveEval, cfg.longTermRisk, workspace.javaEval);
         ++updates;
     }
     mss::assert_(updates == split.node - initialNodes, "test::anytimeSearch: 最后一个概率节点算完后还需额外空步才发布结果");
     mss::assert_(split.finished && partial, "test::anytimeSearch: 未自然结束或没有发布部分层的完整候选");
-    mss::AnytimeSearch::Result batch = mss::AnytimeSearch::analyze(input, baseline, cfg, workspace.anytimeSearch, 100000, {});
+    mss::AnytimeSearch::Result batch = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::specified(input, cells, workspace.probability, workspace.javaEval.selection), cfg, workspace.anytimeSearch, 100000, {});
     mss::assert_(batch.finished && batch.node == split.node && batch.completedDepth == split.completedDepth && batch.recommended() == split.recommended(), "test::anytimeSearch: 单节点续算与整批搜索结果不同");
     for (int i = 0; i < (int)cells.size(); ++i) {
         mss::assert_(batch.candidates[i].value == split.candidates[i].value, "test::anytimeSearch: 预算切分改变了逐层评分");
@@ -373,14 +528,14 @@ inline void anytimeSearch() {
     }
     mss::assert_(mss::Basic::checkValid(input.board, input.basic) && input.board.board[1][1] == mss::ObservedBoard::CellState::Num2 && position.probability(mss::ShapeSolver::OrderAlgo::Auto).candidates() == 28.0L, "test::anytimeSearch: 搜索修改了调用方的根输入");
     const mss::Config automatic(mss::BruteForce::Config{false, mss::BruteForce::Config::Solver::Bitwise, 1000, 1}, cfg.longTermRisk, cfg.pseudo, cfg.moveEval, cfg.javaEval, {{2, 2, 1}, false}, cfg.monteCarlo);
-    mss::AnytimeSearch::Result selected = mss::AnytimeSearch::analyze(input, baseline, automatic, workspace.anytimeSearch, 0, {});
+    mss::AnytimeSearch::Result selected = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::specified(input, cells, workspace.probability, workspace.javaEval.selection), automatic, workspace.anytimeSearch, 0, {});
     mss::assert_(selected.candidates.size() == 2, "test::anytimeSearch: 自动根宽度未生效");
     mss::Workspace terminalWorkspace;
     mss::GameControl::Position terminalPosition(mss::ObservedBoard::Result(1, 1, 0), terminalWorkspace);
     const mss::winrate::Input terminalInput = terminalPosition.input(mss::ShapeSolver::OrderAlgo::Auto);
     const mss::LongTermRisk::Result terminalRisk = mss::LongTermRisk::analyze(terminalInput, {}, cfg.longTermRisk, terminalWorkspace.longTermRisk);
     const mss::winrate::CellId lastSafe = 0;
-    const mss::JavaEval::Result terminal = mss::JavaEval::analyze(terminalInput, terminalRisk, std::span{&lastSafe, 1}, cfg.moveEval, cfg.longTermRisk, terminalWorkspace.javaEval, false);
+    const mss::JavaEval::Result terminal = mss::JavaEval::analyze(terminalInput, terminalRisk, mss::MoveEval::Selection::specified(terminalInput, std::span{&lastSafe, 1}, terminalWorkspace.probability, terminalWorkspace.javaEval.selection), cfg.moveEval, cfg.longTermRisk, terminalWorkspace.javaEval);
     mss::assert_(terminal.front().value == 1.0L && terminal.front().branches.size() == 1 && terminal.front().branches.front().probability == 1.0L, "test::anytimeSearch: 揭开最后安全格的终局价值不是 1");
     // 两组约束为 A+D=1、D+B+C=1；A 安全必推出 B/C 安全，B 比 A 更安全。
     const std::array<const char *, 3> dominanceRows{"?34M??", "?MMM??", "?3?M??"};
@@ -397,18 +552,18 @@ inline void anytimeSearch() {
     const mss::winrate::Input dominanceInput = dominancePosition.input(mss::ShapeSolver::OrderAlgo::Auto);
     const mss::LongTermRisk::Result dominanceRisk = mss::LongTermRisk::analyze(dominanceInput, {}, cfg.longTermRisk, dominanceWorkspace.longTermRisk);
     const std::array<mss::winrate::CellId, 2> dominanceCells{0, 12};
-    const mss::JavaEval::Result pruned = mss::JavaEval::analyze(dominanceInput, dominanceRisk, dominanceCells, cfg.moveEval, cfg.longTermRisk, dominanceWorkspace.javaEval, true);
-    const mss::JavaEval::Result full = mss::JavaEval::analyze(dominanceInput, dominanceRisk, dominanceCells, cfg.moveEval, cfg.longTermRisk, dominanceWorkspace.javaEval, false);
-    mss::assert_(pruned[0].value == -1.0L && pruned[1].value >= 0.0L && full[0].value >= 0.0L && full[1].value >= 0.0L, "test::anytimeSearch: 支配准备剪枝或完整指定格语义错误");
-    mss::AnytimeSearch::Result fullDominance = mss::AnytimeSearch::analyze(dominanceInput, full, cfg, dominanceWorkspace.anytimeSearch, 0, {});
+    const mss::JavaEval::Result full = mss::JavaEval::analyze(dominanceInput, dominanceRisk, mss::MoveEval::Selection::specified(dominanceInput, dominanceCells, dominanceWorkspace.probability, dominanceWorkspace.javaEval.selection), cfg.moveEval, cfg.longTermRisk, dominanceWorkspace.javaEval);
+    mss::assert_(full.size() == 2 && full[0].value >= 0.0L && full[1].value >= 0.0L, "test::anytimeSearch: JavaEval 不应执行对换格剪枝");
+    const mss::AnytimeSearch::Result prunedDominance = mss::AnytimeSearch::analyze(dominanceInput, dominanceRisk, mss::MoveEval::Selection::specified(dominanceInput, dominanceCells, dominanceWorkspace.probability, dominanceWorkspace.javaEval.selection), automatic, dominanceWorkspace.anytimeSearch, 0, {});
+    mss::assert_(prunedDominance.candidates.size() == 1 && prunedDominance.candidates.front().cellId == 12, "test::anytimeSearch: 自动 Search 未执行已证明的对换格剪枝");
+    mss::AnytimeSearch::Result fullDominance = mss::AnytimeSearch::analyze(dominanceInput, dominanceRisk, mss::MoveEval::Selection::specified(dominanceInput, dominanceCells, dominanceWorkspace.probability, dominanceWorkspace.javaEval.selection), cfg, dominanceWorkspace.anytimeSearch, 0, {});
     mss::assert_(fullDominance.candidates.size() == 2, "test::anytimeSearch: 完整根分析杀掉了指定的支配招法");
     mss::Workspace cancelWorkspace;
     mss::GameControl::Position cancelPosition(mss::ObservedBoard::Result(5, 5, 5), cancelWorkspace);
     const mss::winrate::Input cancelInput = cancelPosition.input(mss::ShapeSolver::OrderAlgo::Auto);
     const mss::LongTermRisk::Result cancelRisk = mss::LongTermRisk::analyze(cancelInput, {}, cfg.longTermRisk, cancelWorkspace.longTermRisk);
     const mss::winrate::CellId corner = 0;
-    mss::JavaEval::Result cancelBaseline = mss::JavaEval::analyze(cancelInput, cancelRisk, std::span{&corner, 1}, cfg.moveEval, cfg.longTermRisk, cancelWorkspace.javaEval, false);
-    mss::AnytimeSearch::Result cancelled = mss::AnytimeSearch::analyze(cancelInput, std::move(cancelBaseline), cfg, cancelWorkspace.anytimeSearch, 0, {});
+    mss::AnytimeSearch::Result cancelled = mss::AnytimeSearch::analyze(cancelInput, cancelRisk, mss::MoveEval::Selection::specified(cancelInput, std::span{&corner, 1}, cancelWorkspace.probability, cancelWorkspace.javaEval.selection), cfg, cancelWorkspace.anytimeSearch, 0, {});
     std::stop_source cancel;
     std::jthread requestStop([&]() { std::this_thread::sleep_for(std::chrono::milliseconds(1)); cancel.request_stop(); });
     mss::AnytimeSearch::update(cancelled, cfg, cancelWorkspace.anytimeSearch, 10000000, cancel.get_token());
@@ -443,6 +598,7 @@ inline void anytimeSearch() {
     const std::string completeUpdate = waitUpdate("\"finished\":true");
     mss::assert_(completeUpdate.find("\"moves\":[]") != std::string::npos, "test::anytimeSearch: 已完成盘面仍返回候选");
     anytimePruning();
+    anytimeSwapPruning();
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     std::cout << "test/anytime_search: board=3x3/2, layouts=28, roots=" << split.candidates.size() << ", nodes=" << split.node << ", depth=" << split.completedDepth << ", updates=" << updates << ", partial=" << partial << ", seconds=" << seconds << '\n';
 }

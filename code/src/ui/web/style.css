@@ -156,6 +156,7 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) clamp(360px, 29vw, 4
 .observe-item { display: flex; justify-content: space-between; gap: 4px; color: #66738a; }
 .observe-result.search-observe { grid-template-columns: minmax(0, 1fr); }
 .observe-result.search-observe .observe-item { display: grid; grid-template-columns: 60px minmax(0, 1fr) minmax(0, 1fr); text-align: right; }
+.observe-result.search-observe .java-score { grid-template-columns: auto minmax(0, 1fr); }
 .observe-result.search-observe .observe-item > :first-child { text-align: left; }
 .observe-result .observe-item[hidden] { display: none; }
 .endgame-result { margin-top: 20px; padding-top: 14px; border-top: 1px solid #e8ecf1; }

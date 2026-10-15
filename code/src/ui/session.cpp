@@ -293,15 +293,14 @@ void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Co
         result << ']';
     } else {
         const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, config.longTermRisk, analysis.workspace.longTermRisk);
-        const JavaEval::Result evaluated = JavaEval::analyze(input, risk, {}, config.javaEval, config.moveEval, config.longTermRisk, config.pseudo, analysis.workspace.javaEval);
+        const MoveEval::Selection::Result selected = MoveEval::Selection::prepare(input, &risk, config.javaEval, config.pseudo, analysis.workspace.probability, analysis.workspace.pseudo, analysis.workspace.javaEval.selection);
+        const JavaEval::Result evaluated = JavaEval::analyze(input, risk, selected, config.moveEval, config.longTermRisk, analysis.workspace.javaEval);
         std::vector<ObservedBoard::CellId> candidates;
         std::vector<ObservedBoard::CellId> recommended;
-        // dead 和评分剪枝项仍作橙色显示候选；Search 会排除 dead，推荐仍使用自动评估的首项。
-        for (const JavaEval::Analysis &move : evaluated)
-            candidates.push_back(move.cellId);
-        if (!evaluated.empty())
-            recommended.push_back(evaluated.front().cellId);
-        result << ",\"engine\":\"JavaEval\",\"recommended\":";
+        for (const JavaEval::Analysis &move : evaluated) candidates.push_back(move.cellId);
+        if (!evaluated.empty()) recommended.push_back(std::max_element(evaluated.begin(), evaluated.end(), [](const JavaEval::Analysis &lhs, const JavaEval::Analysis &rhs) { return lhs.value < rhs.value; })->cellId);
+        const std::string reason = selected.reason == MoveEval::Selection::Reason::ForcedFiftyFifty ? "forced5050" : selected.reason == MoveEval::Selection::Reason::FiftyFiftyOrSafe ? "5050OrSafe" : selected.reason == MoveEval::Selection::Reason::BlindGuess ? "blindGuess" : "score";
+        result << ",\"engine\":\"JavaEval\",\"reason\":" << jsonString(reason) << ",\"recommended\":";
         writeCells(result, recommended);
         result << ",\"candidates\":";
         writeCells(result, candidates);
@@ -356,15 +355,21 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
                 result << '"' << observed.probability[i] << '"';
             }
             result << ']';
-            if (state == ObservedBoard::CellState::ForcedSafe || observed.probability[9] == 1.0L) {
-                // Java 自动推荐的已知安全格权重为 1，确定雷的权重为 0。
-                result << ",\"javaScore\":" << jsonString(fixedProbability(state == ObservedBoard::CellState::ForcedSafe ? 1.0L : 0.0L));
+            if (observed.probability[9] == 1.0L) {
+                // 爆炸结局的评分为 0，没有安全分支。
+                result << ",\"javaScore\":" << jsonString(fixedProbability(0.0L));
             } else {
                 const winrate::Input input = position.input(analysis_->algo);
                 const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, config_.longTermRisk, analysis_->workspace.longTermRisk);
                 // 详情只完整评估所选格，不使用候选筛选、剪枝或支配快路径。
-                const JavaEval::Result evaluated = JavaEval::analyze(input, risk, std::span{&cell, 1}, config_.moveEval, config_.longTermRisk, analysis_->workspace.javaEval, false);
-                result << ",\"javaScore\":" << jsonString(fixedProbability(evaluated.front().value));
+                const JavaEval::Result evaluated = JavaEval::analyze(input, risk, MoveEval::Selection::specified(input, std::span{&cell, 1}, analysis_->workspace.probability, analysis_->workspace.javaEval.selection), config_.moveEval, config_.longTermRisk, analysis_->workspace.javaEval);
+                result << ",\"javaScore\":" << jsonString(fixedProbability(state == ObservedBoard::CellState::ForcedSafe ? 1.0L : evaluated.front().value)) << ",\"javaBranches\":[";
+                for (int i = 0; i < (int)evaluated.front().branches.size(); ++i) {
+                    const MoveEval::Branch &branch = evaluated.front().branches[i];
+                    if (i != 0) result << ',';
+                    result << "{\"digit\":" << branch.digit << ",\"value\":" << branch.value << '}';
+                }
+                result << ']';
             }
         }
     }
@@ -546,13 +551,13 @@ bool Session::startSearch(const std::string &body, std::string &response) {
         AnytimeSearch::Result result;
         if (!safe.empty()) {
             // 专用 anytime 入口也接受有安全格的盘面，并完整返回全部安全格。
-            for (ObservedBoard::CellId cell : safe) result.candidates.emplace_back(cell, 1.0L);
+            for (ObservedBoard::CellId cell : safe) result.candidates.emplace_back(cell, 1.0L, 1.0L);
             result.finished = true;
         } else {
             const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, config.longTermRisk, analysis->workspace.longTermRisk);
-            JavaEval::Result evaluated = targets.empty() ? JavaEval::analyze(input, risk, {}, config.javaEval, config.moveEval, config.longTermRisk, config.pseudo, analysis->workspace.javaEval, false) : JavaEval::analyze(input, risk, targets, config.moveEval, config.longTermRisk, analysis->workspace.javaEval, false);
             // 先算完第零层；用户停止或预算为零都不会留下空推荐。
-            result = AnytimeSearch::analyze(input, std::move(evaluated), config, analysis->workspace.anytimeSearch, 0, stop);
+            const MoveEval::Selection::Result selected = targets.empty() ? MoveEval::Selection::prepare(input, &risk, config.javaEval, config.pseudo, analysis->workspace.probability, analysis->workspace.pseudo, analysis->workspace.anytimeSearch.selection) : MoveEval::Selection::specified(input, targets, analysis->workspace.probability, analysis->workspace.anytimeSearch.selection);
+            result = AnytimeSearch::analyze(input, risk, selected, config, analysis->workspace.anytimeSearch, 0, stop);
         }
         auto publish = [&]() {
             std::ostringstream json;
@@ -560,7 +565,7 @@ bool Session::startSearch(const std::string &body, std::string &response) {
             for (int i = 0; i < (int)result.candidates.size(); ++i) {
                 const AnytimeSearch::Candidate &candidate = result.candidates[i];
                 if (i != 0) json << ',';
-                json << "{\"cell\":" << candidate.cellId << ",\"depth\":" << candidate.value.size() - 1 << ",\"value\":[";
+                json << "{\"cell\":" << candidate.cellId << ",\"multiplier\":" << candidate.multiplier << ",\"depth\":" << candidate.value.size() - 1 << ",\"value\":[";
                 for (int depth = 0; depth < (int)candidate.value.size(); ++depth) {
                     if (depth != 0) json << ',';
                     json << candidate.value[depth];

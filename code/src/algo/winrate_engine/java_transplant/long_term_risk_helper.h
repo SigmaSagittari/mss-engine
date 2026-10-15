@@ -7,28 +7,21 @@
 #include <vector>
 
 #include "algo/winrate_engine/types.h"
+#include "pseudo_helper.h"
 
 namespace mss {
 
 struct LongTermRisk {
     struct Config {
         long double influenceThreshold;
-        long double hotspotEnablerSafety;
         long double eqEps;
-        Config(long double influenceThreshold, long double hotspotEnablerSafety, long double eqEps) : influenceThreshold(influenceThreshold), hotspotEnablerSafety(hotspotEnablerSafety), eqEps(eqEps) {}
+        Config(long double influenceThreshold, long double eqEps) : influenceThreshold(influenceThreshold), eqEps(eqEps) {}
     };
 
   private:
     friend struct JavaEval;
     friend struct MoveEval;
     friend struct AnytimeSearch;
-
-    struct RiskHotspot {
-        winrate::CellId cell;
-        std::vector<winrate::CellId> exemptions;
-        RiskHotspot(winrate::CellId cell, winrate::Cells exemptions) : cell(cell), exemptions(exemptions.begin(), exemptions.end()) {}
-        bool isExempt(winrate::CellId candidate) const;
-    };
 
   public:
     struct Result {
@@ -40,8 +33,8 @@ struct LongTermRisk {
         friend struct MoveEval;
         std::vector<long double> enablers;
         std::vector<winrate::CellId> pseudos;
-        std::vector<RiskHotspot> hotspots;
-        Result() = default;
+        Pseudo::Kind pseudoKind;
+        Result() : pseudoKind(Pseudo::Kind::None) {}
     };
 
     struct Workspace {
@@ -66,7 +59,7 @@ struct LongTermRisk {
 
     // 返回原全盘扫描的 tiles + enablers，单位为布局数，非单格查询的最大值与钳制结果。
     // 输入来自同一有效盘面且候选数 > 0；临时修改三个结果并在返回前逆序恢复。
-    // Result 独立持有影响网格、enabler、pseudo 和热点；评分不依赖扫描工作区的历史。
+    // Result 独立持有影响网格、enabler 和 pseudo；评分不依赖扫描工作区的历史。
     // 池保留临时分支的缓存；同一工作区及其引用的下层工作区不可并发或重入。
     static Result analyze(const winrate::Input &input, winrate::Cells dead, const Config &cfg, Workspace &workspace);
     // 全盘覆写 Result；全局雷数耦合使本层没有可局部撤回的 Delta。
@@ -88,10 +81,8 @@ struct LongTermRisk {
         CellList(const CellList &other);
         CellList &operator=(const CellList &other);
         void push_back(winrate::CellId cell);
-        winrate::CellId operator[](int index) const;
         const winrate::CellId *begin() const;
         const winrate::CellId *end() const;
-        int size() const;
         winrate::Cells span() const;
     };
     enum class TallyKind : unsigned char { Horizontal, Vertical, Box };

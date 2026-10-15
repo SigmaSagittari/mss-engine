@@ -54,7 +54,7 @@ bool MoveEval::Selection::meetsSpaceThreshold(int startX, int startY, const winr
     return count >= threshold;
 }
 
-winrate::Cells MoveEval::Selection::select(const winrate::View &input, const LongTermRisk::Result *risk, winrate::Cells dead, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, Workspace &workspace) {
+winrate::Cells MoveEval::Selection::window(const winrate::View &input, const LongTermRisk::Result *risk, winrate::Cells dead, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, Workspace &workspace) {
     const auto &[board, basic, structure, probability, shapes] = input;
     // ── 3. 前沿盒（Java pe.getBestCandidates 的数据源）──
     std::vector<FrontierBox> &boxes = workspace.boxes;
@@ -174,26 +174,79 @@ winrate::Cells MoveEval::Selection::select(const winrate::View &input, const Lon
 }
 
 
-// 未指定候选时计入全部热点；指定候选时忽略其豁免热点。
-// 热点惩罚为 (1 + P(安全)) × 0.5 的连乘。
-long double MoveEval::hotspotSafety(const LongTermRisk::Result &risk, winrate::CellId candidate, const winrate::View &input) {
-    const auto &[board, basic, structure, probability, shapes] = input;
-    long double result = 1.0L;
-    for (const LongTermRisk::RiskHotspot &hotspot : risk.hotspots) {
-        if (candidate != -1 && hotspot.isExempt(candidate))
-            continue;
-        const long double safety = 1.0L - probability.mineProbability(hotspot.cell, board, basic, structure);
-        result *= (1.0L + safety) * 0.5L;
-    }
-    return result;
+MoveEval::Selection::Result MoveEval::Selection::specified(const winrate::Input &input, winrate::Cells cells, Probability::Workspace &probability, Workspace &workspace) {
+    workspace.candidates.assign(cells.begin(), cells.end());
+    workspace.observations.clear();
+    for (winrate::CellId cell : workspace.candidates) workspace.observations.push_back(Observe::observe(input.board, input.basic, input.structure, input.shapes, input.probability, input.distributions, cell, probability));
+    return Result(workspace.candidates, workspace.observations, Reason::Score);
 }
 
-// Java isTileExempt：候选格是否被某个热点豁免（点了它等于破 50/50，不惩罚）。
-bool MoveEval::hotspotExempt(const LongTermRisk::Result &risk, winrate::CellId cell) {
-    for (const LongTermRisk::RiskHotspot &hotspot : risk.hotspots)
-        if (hotspot.isExempt(cell))
-            return true;
-    return false;
+MoveEval::Selection::Result MoveEval::Selection::prepare(const winrate::Input &input, const LongTermRisk::Result *risk, const Config &cfg, const Pseudo::Config &pseudoConfig, Probability::Workspace &probability, Pseudo::Workspace &pseudo, Workspace &workspace) {
+    const auto &[board, basic, structure, probabilities, shapes, distributions] = input;
+    workspace.offEdge.clear();
+    workspace.witnesses.clear();
+    winrate::CellId firstOffEdge = -1;
+    for (int row = 0; row < board.board.rows(); ++row)
+        for (int col = 0; col < board.board.cols(); ++col) {
+            const winrate::CellId cell = board.id(row, col);
+            if (board.board[row][col] <= winrate::CellState::Num8) workspace.witnesses.push_back(cell);
+            else if (board.board[row][col] != winrate::CellState::ForcedMine) {
+                if (probabilities.mineProbability(cell, board, basic, structure) == 0.0L) {
+                    const Result safe = specified(input, std::span{&cell, 1}, probability, workspace);
+                    return Result(safe.cells, safe.observations, Reason::Safe);
+                }
+                if (basic.marks[row][col] == Basic::Mark::T) {
+                    if (firstOffEdge == -1) firstOffEdge = cell;
+                    if (basic.unknownSum < 30 || offEdgeCandidate(board, cell)) workspace.offEdge.push_back(cell);
+                }
+            }
+        }
+    return select(input, risk, workspace.offEdge, workspace.witnesses, firstOffEdge, cfg, pseudoConfig, probability, pseudo, workspace);
+}
+
+MoveEval::Selection::Result MoveEval::Selection::select(const winrate::Input &input, const LongTermRisk::Result *risk, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, const Pseudo::Config &pseudoConfig, Probability::Workspace &probability, Pseudo::Workspace &pseudo, Workspace &workspace) {
+    const auto &[board, basic, structure, probabilities, shapes, distributions] = input;
+    const Pseudo::Kind kind = risk && !risk->pseudos.empty() ? risk->pseudoKind : Pseudo::update(workspace.pseudos, input, {}, pseudoConfig, pseudo);
+    if (risk && !risk->pseudos.empty()) workspace.pseudos = risk->pseudos;
+    // 概率相同按格子编号排序，避免组件紧凑搬移改变等价局面的截断结果。
+    auto order = [&](std::vector<winrate::CellId> &cells) {
+        std::stable_sort(cells.begin(), cells.end(), [&](winrate::CellId lhs, winrate::CellId rhs) {
+            const long double left = probabilities.mineProbability(lhs, board, basic, structure), right = probabilities.mineProbability(rhs, board, basic, structure);
+            return left != right ? left < right : lhs < rhs;
+        });
+    };
+    if (!workspace.pseudos.empty()) {
+        order(workspace.pseudos);
+        const Result special = specified(input, workspace.pseudos, probability, workspace);
+        return Result(special.cells, special.observations, kind == Pseudo::Kind::Forced ? Reason::ForcedFiftyFifty : Reason::FiftyFiftyOrSafe);
+    }
+    const winrate::Cells candidates = window(input, risk, {}, offEdge, witnesses, firstOffEdge, cfg, workspace);
+    workspace.candidates.assign(candidates.begin(), candidates.end());
+    order(workspace.candidates);
+    workspace.observations.clear();
+    int count = 0;
+    for (winrate::CellId cell : workspace.candidates) {
+        const Observe::Result observation = Observe::observe(board, basic, structure, shapes, probabilities, distributions, cell, probability);
+        if (!isDead(observation)) { workspace.candidates[count++] = cell; workspace.observations.push_back(observation); }
+    }
+    workspace.candidates.resize(count);
+    if (!workspace.candidates.empty()) return Result(workspace.candidates, workspace.observations, Reason::Score);
+    // 普通候选全 dead 时只选一个非必雷格，不再扩大候选寻找活格。
+    for (int row = 0; row < board.board.rows(); ++row)
+        for (int col = 0; col < board.board.cols(); ++col)
+            if (board.board[row][col] == winrate::CellState::Hidden && probabilities.mineProbability(board.id(row, col), board, basic, structure) != 1.0L) {
+                const winrate::CellId cell = board.id(row, col);
+                const Result blind = specified(input, std::span{&cell, 1}, probability, workspace);
+                return Result(blind.cells, blind.observations, Reason::BlindGuess);
+            }
+    return Result(workspace.candidates, workspace.observations, Reason::BlindGuess);
+}
+
+MoveEval::Branch::Branch(int digit, int clears, long double value, long double probability, std::span<const ObservedBoard::Delta::Change> boardChanges, std::span<const Basic::Delta::Change> basicChanges, std::span<const Structure::Delta::Change> removed, std::span<const Structure::InstanceId> added, Pool &pool) : digit(digit), clears(clears), value(value), probability(probability), boardChanges(pool.boardChanges.push_back()), basicChanges(pool.basicChanges.push_back()), removed(pool.removed.push_back()), added(pool.added.push_back()) {
+    for (const ObservedBoard::Delta::Change &change : boardChanges) this->boardChanges.push_back(pool.boardChanges, change);
+    for (const Basic::Delta::Change &change : basicChanges) this->basicChanges.push_back(pool.basicChanges, change);
+    for (const Structure::Delta::Change &change : removed) this->removed.push_back(pool.removed, change);
+    for (Structure::InstanceId instance : added) this->added.push_back(pool.added, instance);
 }
 
 bool MoveEval::isDead(const Observe::Result &observation) {
@@ -210,31 +263,30 @@ bool MoveEval::offEdgeCandidate(const winrate::Board &board, winrate::CellId cel
     return adjacent > 1 && adjacent < 4;
 }
 
-MoveEval::Cursor::Cursor(winrate::CellId cell, Observe::Result observation, long double influence, long double baseHotspot, bool safeSearch, long double candidates) : analysis(cell, 0.0L), observation(observation), influence(influence), baseHotspot(baseHotspot), safeSearch(safeSearch), digit(0), progress(0.0L), remainingSafety(1.0L - observation.probability[9]), candidates(candidates) {
+MoveEval::Cursor::Cursor(winrate::CellId cell, Observe::Result observation, long double influence, bool safeSearch, long double candidates) : analysis(cell, 0.0L), observation(observation), influence(influence), safeSearch(safeSearch), digit(0), progress(0.0L), remainingSafety(1.0L - observation.probability[9]), candidates(candidates) {
     if (safeSearch || remainingSafety == 0.0L) linkedClears = 0;
 }
 
 MoveEval::Cursor MoveEval::begin(const winrate::Input &input, const LongTermRisk::Result &risk, winrate::CellId cell, const Observe::Result &observation, const Config &cfg, const LongTermRisk::Config &riskConfig, Workspace &workspace) {
-    if (observation.probability[9] == 1.0L) return Cursor(cell, observation, 1.0L, 1.0L, false, input.probability.candidates());
+    if (observation.probability[9] == 1.0L) return Cursor(cell, observation, 1.0L, false, input.probability.candidates());
     const long double tally = LongTermRisk::influence(cell, input, risk, riskConfig, workspace.risk);
     const long double safetyTally = input.probability.candidates() - observation.probability[9] * input.probability.candidates();
-    const long double influence = hotspotExempt(risk, cell) ? 1.0L : (safetyTally + cfg.influenceScale * tally) / safetyTally;
-    return Cursor(cell, observation, influence, hotspotSafety(risk, -1, input), false, input.probability.candidates());
+    const long double influence = (safetyTally + cfg.influenceScale * tally) / safetyTally;
+    return Cursor(cell, observation, influence, false, input.probability.candidates());
 }
 
-void MoveEval::prepareAlternatives(Cursor &cursor, winrate::Cells cells, std::span<const std::pair<long double, winrate::CellId>> peers, bool prune) {
+void MoveEval::prepareAlternatives(Cursor &cursor, std::span<const std::pair<long double, winrate::CellId>> peers) {
     cursor.peers = peers;
-    if (prune)
-        for (const std::pair<long double, winrate::CellId> &peer : peers)
-            if (peer.first < cursor.observation.probability[9] && std::find(cells.begin(), cells.end(), peer.second) != cells.end()) cursor.alternatives.push_back(peer.second);
+    for (const std::pair<long double, winrate::CellId> &peer : peers)
+        if (peer.first < cursor.observation.probability[9]) cursor.alternatives.push_back(peer.second);
 }
 
 long double MoveEval::optimistic(const Cursor &cursor, const Config &cfg) {
     const long double bonus = 1.0L + (cursor.progress + cursor.remainingSafety) * cfg.progressContribution;
-    return (cursor.analysis.value + cursor.remainingSafety * cursor.influence / cursor.baseHotspot) * bonus;
+    return (cursor.analysis.value + cursor.remainingSafety) * cursor.influence * bonus;
 }
 
-bool MoveEval::advance(Cursor &cursor, winrate::Board &board, winrate::Basic &basic, winrate::Structure &structure, winrate::Shapes &shapes, winrate::Distributions &distributions, int remainingSafe, int forcedSafes, const LongTermRisk::Result *risk, const Config &cfg, Workspace &workspace) {
+bool MoveEval::advance(Cursor &cursor, winrate::Board &board, winrate::Basic &basic, winrate::Structure &structure, winrate::Shapes &shapes, winrate::Distributions &distributions, int remainingSafe, int forcedSafes, const Config &cfg, Workspace &workspace) {
     const winrate::CellId cell = cursor.analysis.cellId;
     const auto [row, col] = board.pos(cell);
     while (cursor.digit <= 8 && cursor.observation.probability[cursor.digit] == 0.0L) ++cursor.digit;
@@ -243,7 +295,7 @@ bool MoveEval::advance(Cursor &cursor, winrate::Board &board, winrate::Basic &ba
     ObservedBoard::Delta &delta = workspace.boardDelta;
     delta.clear();
     delta.changes.emplace_back(cell, board.board[row][col], cursor.linkedClears ? (winrate::CellState)cursor.digit : winrate::CellState::ForcedSafe);
-    ObservedBoard::applyDelta(board, delta);
+    ObservedBoard::applyDelta(board, delta.changes);
     Basic::update(basic, workspace.basicDelta, board, delta, workspace.basic);
     Structure::update(structure, workspace.structureDelta, board, basic, shapes, std::span{&cell, 1}, workspace.structure);
     if (!workspace.nextProbability) workspace.nextProbability = Probability::analyze(board, basic, structure, shapes, distributions, workspace.probability);
@@ -256,28 +308,30 @@ bool MoveEval::advance(Cursor &cursor, winrate::Board &board, winrate::Basic &ba
     if (forced) {
         cursor.linkedClears = summary.clears - offEdgeClears - forcedSafes - (delta.changes.front().previous == winrate::CellState::ForcedSafe ? 0 : 1);
         // 本招必在自己的必安子集中；两个子集相同就证明双方互相必安。
-        U128Hasher hash;
-        for (const std::pair<long double, winrate::CellId> &peer : cursor.peers)
-            if (next.mineProbability(peer.second, board, basic, structure) == 0.0L) hash.mix(peer.second);
-        cursor.analysis.equivalence = hash.finalize();
+        if (!cursor.peers.empty()) {
+            U128Hasher hash;
+            for (const std::pair<long double, winrate::CellId> &peer : cursor.peers)
+                if (next.mineProbability(peer.second, board, basic, structure) == 0.0L) hash.mix(peer.second);
+            cursor.analysis.equivalence = hash.finalize();
+        }
     } else {
         std::erase_if(cursor.alternatives, [&](winrate::CellId alternative) { return next.mineProbability(alternative, board, basic, structure) != 0.0L; });
         const long double probabilityDigit = cursor.observation.probability[cursor.digit];
-        const long double weight = probabilityDigit * (risk ? cursor.influence * hotspotSafety(*risk, cell, nextInput) / cursor.baseHotspot : 1.0L);
-        cursor.analysis.value += weight * summary.blendedSafety;
+        cursor.analysis.value += probabilityDigit * summary.blendedSafety;
         // T 零雷格用于安全步截断；Java 原进度奖励只计已知安全格和前沿安全格。
         if (summary.clears - offEdgeClears > *cursor.linkedClears) cursor.progress += probabilityDigit;
         cursor.remainingSafety -= probabilityDigit;
-        cursor.analysis.branches.emplace_back(cursor.digit, summary.clears, summary.blendedSafety, next.candidates() / cursor.candidates, delta, workspace.basicDelta, workspace.structureDelta);
+        cursor.analysis.branches.emplace_back(cursor.digit, summary.clears, summary.blendedSafety, next.candidates() / cursor.candidates, delta.changes, workspace.basicDelta.changes, workspace.structureDelta.removed, workspace.structureDelta.added, cursor.analysis.deltas);
         ++cursor.digit;
     }
-    Structure::applyDelta(structure, shapes, workspace.structureDelta, true);
-    Basic::applyDelta(basic, workspace.basicDelta, true);
-    ObservedBoard::applyDelta(board, delta, true);
+    Structure::applyDelta(structure, shapes, workspace.structureDelta.removed, workspace.structureDelta.added, true);
+    Basic::applyDelta(basic, workspace.basicDelta.changes, true);
+    ObservedBoard::applyDelta(board, delta.changes, true);
     while (cursor.digit <= 8 && cursor.observation.probability[cursor.digit] == 0.0L) ++cursor.digit;
     if (cursor.digit != 9) return false;
     const long double bonus = 1.0L + (cursor.safeSearch ? 0.0L : cursor.progress * cfg.progressContribution);
-    cursor.analysis.value *= bonus;
+    cursor.analysis.multiplier = cursor.influence * bonus;
+    cursor.analysis.value *= cursor.analysis.multiplier;
     return true;
 }
 

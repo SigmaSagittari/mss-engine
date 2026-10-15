@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "algo/probability_engine/observed_board/observed_board.h"
@@ -54,8 +55,8 @@ struct Basic {
     // delta 会先清空，再按标记变更顺序记录前后值；撤回必须在匹配状态上按 LIFO 进行。
     static void update(Result &result, Delta &delta, const ObservedBoard::Result &board, const ObservedBoard::Delta &updates,
                        Workspace &workspace);
-    // 正向时 result 对应更新前状态；reverse 时对应更新后状态且必须后进先出。同步重放标记和邻域计数，不重新推导。
-    static void applyDelta(Result &result, const Delta &delta, bool reverse = false);
+    // 正向时 result 对应更新前状态；reverse 时对应更新后状态且必须后进先出。切片只在调用期间借用，同步重放标记和邻域计数，不重新推导。
+    static void applyDelta(Result &result, std::span<const Delta::Change> changes, bool reverse = false);
     // 供界面层调用；board/result 尺寸必须相同。发现任一标记、缓存、局部约束或全局雷数不一致时返回 false，不修改输入。
     static bool checkValid(const ObservedBoard::Result &board, const Result &result);
 
