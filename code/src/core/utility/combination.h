@@ -1,7 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <vector>
 
@@ -19,23 +18,22 @@ struct Combination {
         std::vector<long double> values;
     };
 
-  private:
-    static constexpr int small_max = 9;
-    using SmallTable = std::array<std::array<long double, small_max + 1>, small_max + 1>;
-    inline static constexpr SmallTable small_table = []() constexpr {
-        SmallTable values{};
-        for (int n = 0; n <= small_max; ++n) {
-            values[n][0] = 1.0L;
-            values[n][n] = 1.0L;
-            for (int k = 1; k < n; ++k)
-                values[n][k] = values[n - 1][k - 1] + values[n - 1][k];
-        }
-        return values;
-    }();
-
-  public:
-    // 前置条件：0 <= k <= n <= 9；结果直接读取编译期生成的 Pascal 三角表。
-    static constexpr long double chooseSmall(int n, int k) { return small_table[n][k]; }
+    // 前置条件：0 <= k <= n <= 9；常量表只属于此查询。
+    static long double chooseSmall(int n, int k) {
+        static constexpr long double values[10][10] = {
+            {1},
+            {1, 1},
+            {1, 2, 1},
+            {1, 3, 3, 1},
+            {1, 4, 6, 4, 1},
+            {1, 5, 10, 10, 5, 1},
+            {1, 6, 15, 20, 15, 6, 1},
+            {1, 7, 21, 35, 35, 21, 7, 1},
+            {1, 8, 28, 56, 70, 56, 28, 8, 1},
+            {1, 9, 36, 84, 126, 126, 84, 36, 9, 1}
+        };
+        return values[n][k];
+    }
 
     // 前置条件：0 <= k <= n；同一 Workspace 串行复用逐行展开的 Pascal 三角缓存。
     static long double chooseLarge(int n, int k, Workspace &workspace) {
