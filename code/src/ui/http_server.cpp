@@ -227,13 +227,13 @@ void HttpServer::run() {
                     content.replace(content.find(marker), marker.size(), session_.token());
                     const Config &config = config_;
                     const std::string thresholdMarker = "__MSS_BRUTE_FORCE_THRESHOLD__";
-                    content.replace(content.find(thresholdMarker), thresholdMarker.size(), std::to_string(config.bruteForce.candidateThreshold));
+                    content.replace(content.find(thresholdMarker), thresholdMarker.size(), std::to_string(config.game.bruteForce.candidateThreshold));
                     const std::string threadsMarker = "__MSS_THREAD_LIMIT__";
-                    content.replace(content.find(threadsMarker), threadsMarker.size(), std::to_string(config.bruteForce.threadLimit));
+                    content.replace(content.find(threadsMarker), threadsMarker.size(), std::to_string(config.game.bruteForce.threadLimit));
                     const std::string checkAllMarker = "__MSS_BRUTE_FORCE_CHECK_ALL__";
-                    content.replace(content.find(checkAllMarker), checkAllMarker.size(), config.bruteForce.checkAllMoves ? "checked" : "");
+                    content.replace(content.find(checkAllMarker), checkAllMarker.size(), config.game.bruteForce.checkAllMoves ? "checked" : "");
                     const std::string multiThreadMarker = "__MSS_BRUTE_FORCE_MULTITHREAD__";
-                    content.replace(content.find(multiThreadMarker), multiThreadMarker.size(), config.bruteForce.solver == BruteForce::Config::Solver::BitwiseRootParallel ? "checked" : "");
+                    content.replace(content.find(multiThreadMarker), multiThreadMarker.size(), config.game.bruteForce.solver == BruteForce::Config::Solver::BitwiseRootParallel ? "checked" : "");
                     const std::array<const char *, 3> widthMarkers{"__MSS_SEARCH_ROOT_WIDTH__", "__MSS_SEARCH_MIDDLE_WIDTH__", "__MSS_SEARCH_DEEP_WIDTH__"};
                     for (int i = 0; i < 3; ++i) content.replace(content.find(widthMarkers[i]), std::string(widthMarkers[i]).size(), std::to_string(config.anytimeSearch.width[i]));
                     const std::string versionMarker = "__MSS_VERSION__";

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <functional>
 #include <utility>
 #include <vector>
 
@@ -37,7 +36,7 @@ class PolyProductTree {
     // 输入系数 vector 至少活到调用完成，调用期间不得修改，且不能引用本对象上轮结果；单因子时总乘积继续借用输入。
     // 非空输入要求有效回调；每个因子回调一次，排除乘积只在回调期间有效。返回的总乘积视图下次调用后失效。
     // 同一对象不得并发或重入调用。
-    Poly forEachOutside(const std::vector<Poly> &factors, const std::function<void(int, const Poly &)> &callback) {
+    template <typename Callback> Poly forEachOutside(const std::vector<Poly> &factors, const Callback &callback) {
         factorCount_ = factors.size();
         if (factorCount_ == 0) {
             leafBase_ = 0;
@@ -91,7 +90,7 @@ class PolyProductTree {
         return Poly(productTree_[index].start, productTree_[index].coefficients);
     }
 
-    void visitOutside(int index, int depth, const std::vector<Poly> &factors, const std::function<void(int, const Poly &)> &callback) {
+    template <typename Callback> void visitOutside(int index, int depth, const std::vector<Poly> &factors, const Callback &callback) {
         if (index >= leafBase_) {
             const int factorIndex = index - leafBase_;
             if (factorIndex < factorCount_) {

@@ -29,7 +29,7 @@ inline void probabilityCase() {
         for (int col = 0; col < kCols; ++col)
             mines[row][col] = kRowsData[row][col] == 'M';
 
-    mss::Workspace workspace;
+    mss::GameControl::Workspace workspace;
     mss::Basic::Result basic = mss::Basic::analyze(board, workspace.basic);
     mss::Structure::Pool shapes;
     mss::Structure::Result structure = mss::Structure::analyze(board, basic, shapes, workspace.structure);

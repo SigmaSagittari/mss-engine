@@ -17,7 +17,7 @@ inline void performance(const Config &config, bool multiThread = false) {
     const mss::U128 seed{0x123456789abcdef0ULL, 0xfedcba9876543210ULL};
     const Algo algorithm = config.algorithm;
     const char *name = algorithm == Algo::LowRisk ? "LowRisk" : algorithm == Algo::JavaEval ? "JavaEval" : algorithm == Algo::JavaBrute ? "JavaBrute" : "JavaSearch";
-    const int threadCount = multiThread ? (std::min)(engineConfig.bruteForce.threadLimit, config.games) : 1;
+    const int threadCount = multiThread ? (std::min)(engineConfig.game.bruteForce.threadLimit, config.games) : 1;
     // 每个线程结束前写自己的统计槽；全部 join 后才汇总，不共享 Game、Workspace、招法池或热路径计数。
     std::vector<std::pair<int, int>> results(threadCount);
     std::vector<std::jthread> threads;
@@ -49,7 +49,7 @@ inline void performance(const Config &config, bool multiThread = false) {
         games += result.first;
         wins += result.second;
     }
-    std::cout << std::fixed << std::setprecision(3) << name << " mode=" << (multiThread ? "multi" : "single") << " version=" << mss::version << " threads=" << threadCount << " thread_limit=" << engineConfig.bruteForce.threadLimit << ' ' << config.cols << 'x' << config.rows << " mines=" << config.mines << " seed=" << seed.lo << ',' << seed.hi << " time_limit=" << config.time << " games_limit=" << config.games << " node_budget=" << config.nodes << " completed=" << (games == config.games) << " candidate_threshold=" << engineConfig.bruteForce.candidateThreshold << " games=" << games << " wins=" << wins << " losses=" << games - wins << " elapsed=" << elapsed << " games/s=" << games / elapsed << " winrate=" << 100.0L * wins / games << "%\n" << std::flush;
+    std::cout << std::fixed << std::setprecision(3) << name << " mode=" << (multiThread ? "multi" : "single") << " version=" << mss::version << " threads=" << threadCount << " thread_limit=" << engineConfig.game.bruteForce.threadLimit << ' ' << config.cols << 'x' << config.rows << " mines=" << config.mines << " seed=" << seed.lo << ',' << seed.hi << " time_limit=" << config.time << " games_limit=" << config.games << " node_budget=" << config.nodes << " completed=" << (games == config.games) << " candidate_threshold=" << engineConfig.game.bruteForce.candidateThreshold << " games=" << games << " wins=" << wins << " losses=" << games - wins << " elapsed=" << elapsed << " games/s=" << games / elapsed << " winrate=" << 100.0L * wins / games << "%\n" << std::flush;
 }
 
 }

@@ -12,36 +12,9 @@
 namespace test {
 
 // 本组用例按模块明确选择引擎参数。
-inline const mss::Config engineConfig{
-    mss::BruteForce::Config{
-        /* 分析所有候选格 */ false,
-        /* 求解器 */ mss::BruteForce::Config::Solver::Bitwise,
-        /* 暴力切换方案数阈值 */ 1000,
-        /* 线程上限 */ 5,
-    },
-    mss::LongTermRisk::Config{
-        /* 影响阈值 */ 0.025L,
-        /* 等价判断容差 */ 1e-9L,
-    },
-    mss::Pseudo::Config(/* 等价判断容差 */ 1e-9L),
-    mss::MoveEval::Config{
-        /* 进度奖励系数 */ 0.001L,
-        /* 影响缩放系数 */ 0.9L,
-    },
-    mss::JavaEval::Config{
-        /* 第一候选安全率阈值 */ 0.10L,
-        /* 第二候选安全率阈值 */ 0.20L,
-        /* 连通区域大小阈值 */ 8,
-    },
-    mss::AnytimeSearch::Config{
-        /* 根层、中层、深层候选宽度 */ {6, 3, 1},
-        /* 完整分析指定根招法 */ false,
-    },
-    mss::MonteCarlo::Config{
-        /* 采样温度 */ 0.05L,
-        /* 先验权重 */ 1.0L,
-    },
-};
+inline const mss::JavaEval::Config javaEvalConfig{{mss::Pseudo::Config(1e-9L), 0.10L, 0.20L, 8}, {{0.025L, 1e-9L}, 0.001L, 0.9L}};
+inline const mss::GameControl::Config gameConfig{{false, mss::BruteForce::Config::Solver::Bitwise, 1000, 5}, javaEvalConfig};
+inline const mss::Config engineConfig{gameConfig, {javaEvalConfig, {6, 3, 1}, false}, {gameConfig, 0.05L, 1.0L}};
 
 enum class Algo { LowRisk, JavaEval, JavaBrute, JavaSearch };
 
@@ -75,7 +48,7 @@ void runGames(const Config &config, const mss::ShapeSolver::OrderAlgo &algo, mss
     const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     mss::Workspace workspace;
     mss::Random random(seed.lo, seed.hi);
-    Game game(config.rows, config.cols, config.mines, {random.next(), random.next()}, workspace, suggestions);
+    Game game(config.rows, config.cols, config.mines, {random.next(), random.next()}, workspace.game, suggestions);
     for (int games = 0; games < config.games && std::chrono::duration<long double>(std::chrono::steady_clock::now() - start).count() < config.time; ++games) {
         if (games != 0)
             game.reset({random.next(), random.next()});
@@ -93,16 +66,15 @@ void runGames(const Config &config, const mss::ShapeSolver::OrderAlgo &algo, mss
                     continue;
                 }
                 const mss::winrate::Input input = position.input(algo);
-                if (input.probability.candidates() >= engineConfig.bruteForce.candidateThreshold) {
-                    const mss::LongTermRisk::Result risk = mss::LongTermRisk::analyze(input, {}, engineConfig.longTermRisk, workspace.longTermRisk);
-                    mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(input, risk, mss::MoveEval::Selection::prepare(input, &risk, engineConfig.javaEval, engineConfig.pseudo, workspace.probability, workspace.pseudo, workspace.javaEval.selection), engineConfig, workspace.anytimeSearch, 0, {});
-                    mss::AnytimeSearch::update(result, engineConfig, workspace.anytimeSearch, (std::max)(0LL, config.nodes - result.node), {});
+                if (input.probability.candidates() >= engineConfig.game.bruteForce.candidateThreshold) {
+                    mss::AnytimeSearch::Result result = mss::AnytimeSearch::analyze(input, engineConfig.anytimeSearch, workspace.anytimeSearch, 0, {});
+                    mss::AnytimeSearch::update(result, engineConfig.anytimeSearch, workspace.anytimeSearch, (std::max)(0LL, config.nodes - result.node), {});
                     game.play({result.recommended()});
                     continue;
                 }
             }
             const Game::SuggestAlgo strategy = config.algorithm == Algo::LowRisk ? Game::SuggestAlgo::LowRisk : config.algorithm == Algo::JavaEval ? Game::SuggestAlgo::JavaEval : Game::SuggestAlgo::JavaBrute;
-            game.play(game.suggest(algo, strategy, engineConfig).suggest);
+            game.play(game.suggest(algo, strategy, engineConfig.game).suggest);
         }
     }
 }

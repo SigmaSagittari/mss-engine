@@ -7,13 +7,6 @@
 
 namespace mss {
 
-void LongTermRisk::resetCache(Workspace &workspace, int size) {
-    for (int i = 0; i < 3; ++i) {
-        workspace.values[i].resize(size);
-        workspace.ready[i].assign(size, 0);
-    }
-}
-
 LongTermRisk::CellList::CellList(const CellList &other) : count(other.count) {
     for (int i = 0; i < count; ++i) cells[i] = other.cells[i];
 }
@@ -38,8 +31,7 @@ bool LongTermRisk::hidden(const winrate::Board &board, const winrate::Basic &bas
     return x >= 0 && x < board.board.rows() && y >= 0 && y < board.board.cols() && board.board[x][y] == winrate::CellState::Hidden && basic.marks[x][y] != Basic::Mark::F;
 }
 
-// Java getMissingMines：任一源格已揭示则整个结构作废（hasRevealedSource 已先行
-// 拦截）；余下非确定雷的源格为 missing。
+// 源格已揭示或强制安全时，整组源格皆雷的假设作废；余下非确定雷源格为 missing。
 LongTermRisk::CellList LongTermRisk::missingMines(const winrate::View &input, std::span<const std::pair<int, int>> source, long double eqEps) {
     const auto &[board, basic, structure, probability, shapes] = input;
     CellList missing;
@@ -56,10 +48,10 @@ LongTermRisk::CellList LongTermRisk::missingMines(const winrate::View &input, st
     return missing;
 }
 
-bool LongTermRisk::hasRevealedSource(const winrate::Board &board, std::span<const std::pair<int, int>> source) {
+bool LongTermRisk::hasSafeSource(const winrate::Board &board, std::span<const std::pair<int, int>> source) {
     for (const std::pair<int, int> &position : source) {
         const auto [x, y] = position;
-        if (x >= 0 && x < board.board.rows() && y >= 0 && y < board.board.cols() && board.board[x][y] <= winrate::CellState::Num8)
+        if (x >= 0 && x < board.board.rows() && y >= 0 && y < board.board.cols() && (board.board[x][y] <= winrate::CellState::Num8 || board.board[x][y] == winrate::CellState::ForcedSafe))
             return true;
     }
     return false;
@@ -75,27 +67,9 @@ long double LongTermRisk::boxTally(winrate::CellId cell, const winrate::View &in
 // 数全盘解数。mineCount = 1（2-tile）/ 2（2x2）；maxMissing 是"missing+n ≤ maxMissing"
 // 的阈值（Java 直接传 maxMissingMines）。
 
-std::vector<winrate::CellId> LongTermRisk::influencedTiles(const Result &risk, long double threshold, const winrate::View &input, winrate::Cells dead) {
-    const auto &[board, basic, structure, probability, shapes] = input;
-    std::vector<winrate::CellId> result;
-    const long double cutoffTally = threshold * probability.candidates();
-    for (int x = 0; x < board.board.rows(); ++x)
-        for (int y = 0; y < board.board.cols(); ++y) {
-            const winrate::CellId cell = board.id(x, y);
-            const long double influence = risk.influences[x][y];
-            if (influence == 0.0L || contains(dead, cell))
-                continue;
-            const long double mineTally = probability.mineProbability(cell, board, basic, structure) * probability.candidates();
-            const long double safetyTally = probability.candidates() - mineTally + influence;
-            if (safetyTally > cutoffTally)
-                result.push_back(cell);
-        }
-    return result;
-}
-
-long double LongTermRisk::candidateTally(const winrate::Input &input, winrate::Cells tiles, std::span<const std::pair<int, int>> source, int mineCount, int maxMissing, int minesLeft, long double eqEps, TallyKind kind, int index, Workspace &workspace) {
+long double LongTermRisk::candidateTally(const winrate::Input &input, winrate::Cells tiles, std::span<const std::pair<int, int>> source, int mineCount, int maxMissing, int minesLeft, long double eqEps, TallyKind kind, int index, const Result &full, Workspace &workspace) {
     const auto &[board, basic, structure, probability, shapes, distributions] = input;
-    if (hasRevealedSource(board, source))
+    if (hasSafeSource(board, source))
         return 0.0L;
     const CellList missing = missingMines(input, source, eqEps);
     const int extra = mineCount == 1 ? 1 : 2;
@@ -113,7 +87,12 @@ long double LongTermRisk::candidateTally(const winrate::Input &input, winrate::C
         safes.push_back(tiles[1]);
         safes.push_back(tiles[2]);
     }
-    return cachedTally(workspace, kind, index, [&] { return countWithForces(input, mines.span(), safes.span(), workspace); });
+    const int slot = (int)kind;
+    if (full.ready[slot][index]) return full.values[slot][index];
+    const long double value = countWithForces(input, mines.span(), safes.span(), workspace);
+    full.values[slot][index] = value;
+    full.ready[slot][index] = 1;
+    return value;
 }
 
 long double LongTermRisk::countWithForces(const winrate::Input &input, winrate::Cells mines, winrate::Cells safes, Workspace &workspace) {
@@ -175,6 +154,7 @@ void LongTermRisk::update(Result &out, const winrate::Input &input, winrate::Cel
     const int size = board.board.rows() * board.board.cols();
     out.influences.resize(board.board.rows(), board.board.cols(), 0.0L);
     out.enablers.assign(size, 0.0L);
+    for (int i = 0; i < 3; ++i) { out.values[i].resize(size); out.ready[i].assign(size, 0); }
     out.pseudos.clear();
     out.pseudoKind = Pseudo::Kind::None;
     const int minesLeft = board.totalMines - basic.mineSum;
@@ -187,7 +167,7 @@ void LongTermRisk::update(Result &out, const winrate::Input &input, winrate::Cel
     auto consider = [&](winrate::Cells tiles, std::span<const std::pair<int, int>> source, int mineCount, int maxMissing) {
         if (stop)
             return;
-        if (hasRevealedSource(board, source))
+        if (hasSafeSource(board, source))
             return;
         const CellList missing = missingMines(input, source, cfg.eqEps);
         const int extra = mineCount == 1 ? 1 : 2;
@@ -287,7 +267,7 @@ long double LongTermRisk::influence(winrate::CellId cell, const winrate::Input &
             return 0.0L;
         const std::array tiles{board.id(row, col), board.id(row, col + 1)};
         const std::array source{std::pair{row - 1, col - 1}, std::pair{row, col - 1}, std::pair{row + 1, col - 1}, std::pair{row - 1, col + 2}, std::pair{row, col + 2}, std::pair{row + 1, col + 2}};
-        return candidateTally(input, tiles, source, 1, 4, minesLeft, cfg.eqEps, TallyKind::Horizontal, board.id(row, col), workspace);
+        return candidateTally(input, tiles, source, 1, 4, minesLeft, cfg.eqEps, TallyKind::Horizontal, board.id(row, col), full, workspace);
     };
     // 竖：含本格的两对（Java getVertical(tile) 与 getVertical(x, y-1)）；
     // 源格 = 对上下两行 (row-1, row+2)、三列 (col-1..col+1)。
@@ -298,7 +278,7 @@ long double LongTermRisk::influence(winrate::CellId cell, const winrate::Input &
             return 0.0L;
         const std::array tiles{board.id(row, col), board.id(row + 1, col)};
         const std::array source{std::pair{row - 1, col - 1}, std::pair{row - 1, col}, std::pair{row - 1, col + 1}, std::pair{row + 2, col - 1}, std::pair{row + 2, col}, std::pair{row + 2, col + 1}};
-        return candidateTally(input, tiles, source, 1, 4, minesLeft, cfg.eqEps, TallyKind::Vertical, board.id(row, col), workspace);
+        return candidateTally(input, tiles, source, 1, 4, minesLeft, cfg.eqEps, TallyKind::Vertical, board.id(row, col), full, workspace);
     };
     // 2x2：含本格的 4 个角。
     auto box = [&](int row, int col) {
@@ -308,7 +288,7 @@ long double LongTermRisk::influence(winrate::CellId cell, const winrate::Input &
             return 0.0L;
         const std::array tiles{board.id(row, col), board.id(row, col + 1), board.id(row + 1, col), board.id(row + 1, col + 1)};
         const std::array source{std::pair{row - 1, col - 1}, std::pair{row - 1, col + 2}, std::pair{row + 2, col - 1}, std::pair{row + 2, col + 2}};
-        return candidateTally(input, tiles, source, 2, 5, minesLeft, cfg.eqEps, TallyKind::Box, board.id(row, col), workspace);
+        return candidateTally(input, tiles, source, 2, 5, minesLeft, cfg.eqEps, TallyKind::Box, board.id(row, col), full, workspace);
     };
 
     long double influence = 0.0L;

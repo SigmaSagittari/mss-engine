@@ -2,21 +2,18 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <limits>
 #include <utility>
 
 #include "core/assert.h"
-#include "core/config.h"
-#include "core/workspace.h"
 #include "core/utility/rng.h"
 #include "game/game.h"
 
 namespace mss {
 
-MonteCarlo::Candidate::Candidate(winrate::CellId cellId, long double weight, long double prior, const Config &cfg) : cellId(cellId), samples(0), wins(0), weight(weight), prior(prior), mean((1.0L + cfg.priorWeight * prior) / (2.0L + cfg.priorWeight)), variance(mean * (1.0L - mean) / (3.0L + cfg.priorWeight)) {}
+MonteCarlo::Candidate::Candidate(winrate::CellId cellId, long double prior, const Config &cfg) : cellId(cellId), samples(0), wins(0), prior(prior), mean((1.0L + cfg.priorWeight * prior) / (2.0L + cfg.priorWeight)), variance(mean * (1.0L - mean) / (3.0L + cfg.priorWeight)) {}
 
-MonteCarlo::Result::Result(winrate::SuggestAlgo strategy, std::vector<winrate::CellId> safeCells, bool winrate, std::vector<Candidate> candidates, int initialRecommended, bool fullScores, int cellCount) : winrate(winrate), candidates(std::move(candidates)), strategy(strategy), safeCells(std::move(safeCells)), random(0xC0FFEE12345ULL, 0xD1B54A32D192ED03ULL), winrateSamples(0), winrateWins(0), initialRecommended(initialRecommended), fullScores(fullScores), nextMovesOf(winrate ? 0 : cellCount * 9, -1) {}
+MonteCarlo::Result::Result(winrate::SuggestAlgo strategy, std::vector<winrate::CellId> safeCells, bool winrate, std::vector<Candidate> candidates, int initialRecommended, int cellCount) : winrate(winrate), candidates(std::move(candidates)), strategy(strategy), safeCells(std::move(safeCells)), random(0xC0FFEE12345ULL, 0xD1B54A32D192ED03ULL), winrateSamples(0), winrateWins(0), initialRecommended(initialRecommended), nextMovesOf(winrate ? 0 : cellCount * 9, -1) {}
 
 long long MonteCarlo::Result::samples() const {
     if (winrate)
@@ -48,10 +45,6 @@ winrate::CellId MonteCarlo::Result::recommended() const {
     return winrate ? -1 : candidates[best()].cellId;
 }
 
-MonteCarlo::Workspace::Workspace(Probability::Workspace &probability, LongTermRisk::Workspace &risk, JavaEval::Workspace &javaEval, mss::Workspace &rollout) : probability(probability), risk(risk), javaEval(javaEval), rollout(rollout) {
-    firstMove.reserve(1);
-}
-
 std::vector<winrate::CellId> MonteCarlo::collectSafe(const winrate::View &root) {
     std::vector<winrate::CellId> result;
     for (int row = 0; row < root.board.board.rows(); ++row)
@@ -74,79 +67,33 @@ int MonteCarlo::remainingSafe(const winrate::Board &board) {
     return remaining;
 }
 
-JavaEval::Result MonteCarlo::evaluate(const winrate::Input &root, const mss::Config &cfg, Workspace &workspace) {
-    const LongTermRisk::Result risk = LongTermRisk::analyze(root, {}, cfg.longTermRisk, workspace.risk);
-    JavaEval::Result result = JavaEval::analyze(root, risk, MoveEval::Selection::prepare(root, &risk, cfg.javaEval, cfg.pseudo, workspace.probability, workspace.rollout.pseudo, workspace.javaEval.selection), cfg.moveEval, cfg.longTermRisk, workspace.javaEval);
-    std::stable_sort(result.begin(), result.end(), [](const JavaEval::Analysis &lhs, const JavaEval::Analysis &rhs) { return lhs.value > rhs.value; });
-    return result;
-}
-
 void MonteCarlo::estimate(Candidate &candidate, const Config &cfg) {
     const long double count = candidate.samples + 2.0L + cfg.priorWeight;
     candidate.mean = (candidate.wins + 1.0L + cfg.priorWeight * candidate.prior) / count;
     candidate.variance = candidate.mean * (1.0L - candidate.mean) / (count + 1.0L);
 }
 
-MonteCarlo::Result MonteCarlo::analyze(const winrate::Input &root, winrate::SuggestAlgo strategy, const mss::Config &cfg, Workspace &workspace, winrate::Cells targets) {
+MonteCarlo::Result MonteCarlo::analyze(const winrate::Input &root, winrate::SuggestAlgo strategy, const Config &cfg, Workspace &workspace, winrate::Cells targets) {
     const int cellCount = root.board.board.rows() * root.board.board.cols();
     std::vector<winrate::CellId> safeCells = collectSafe(root);
-    if (!safeCells.empty() || remainingSafe(root.board) == 0)
-        return Result(strategy, std::move(safeCells), true, {}, -1, true, cellCount);
-    std::vector<Candidate> candidates;
-    if (targets.empty()) {
-        const JavaEval::Result evaluated = evaluate(root, cfg, workspace);
-        // 合法非终局且没有必安格时，Java 自动候选必须包含推荐项。
-        assert_(!evaluated.empty(), "MonteCarlo::analyze: 非终局没有 Java 候选");
-        candidates.push_back(Candidate(evaluated.front().cellId, evaluated.front().value, 1.0L, cfg.monteCarlo));
-        return Result(strategy, {}, false, std::move(candidates), 0, false, cellCount);
-    }
-    const LongTermRisk::Result risk = LongTermRisk::analyze(root, {}, cfg.longTermRisk, workspace.risk);
-    const JavaEval::Result evaluated = JavaEval::analyze(root, risk, MoveEval::Selection::specified(root, targets, workspace.probability, workspace.javaEval.selection), cfg.moveEval, cfg.longTermRisk, workspace.javaEval);
-    long double maximum = evaluated.front().value;
-    int recommended = 0;
-    for (int i = 0; i < (int)evaluated.size(); ++i)
-        if (evaluated[i].value > maximum) {
-            maximum = evaluated[i].value;
-            recommended = i;
-        }
+    if (!safeCells.empty() || remainingSafe(root.board) == 0) return Result(strategy, std::move(safeCells), true, {}, -1, cellCount);
+    JavaEval::Result evaluated = JavaEval::analyze(root, cfg.game.javaEval, workspace.game.javaEval, targets);
+    // 合法非终局且没有必安格时，Java 自动候选必须包含推荐项。
+    assert_(!evaluated.empty(), "MonteCarlo::analyze: 非终局没有 Java 候选");
+    if (targets.empty()) std::stable_sort(evaluated.begin(), evaluated.end(), [](const JavaEval::Analysis &lhs, const JavaEval::Analysis &rhs) { return lhs.value > rhs.value; });
+    const int recommended = std::max_element(evaluated.begin(), evaluated.end(), [](const JavaEval::Analysis &lhs, const JavaEval::Analysis &rhs) { return lhs.value < rhs.value; }) - evaluated.begin();
+    const long double maximum = evaluated[recommended].value;
     long double total = 0.0L;
-    for (const JavaEval::Analysis &candidate : evaluated)
-        total += std::exp((candidate.value - maximum) / cfg.monteCarlo.temperature);
+    for (const JavaEval::Analysis &candidate : evaluated) total += std::exp((candidate.value - maximum) / cfg.temperature);
+    std::vector<Candidate> candidates;
     candidates.reserve(evaluated.size());
-    for (const JavaEval::Analysis &candidate : evaluated)
-        candidates.push_back(Candidate(candidate.cellId, candidate.value, std::exp((candidate.value - maximum) / cfg.monteCarlo.temperature) / total, cfg.monteCarlo));
-    return Result(strategy, {}, false, std::move(candidates), recommended, true, cellCount);
-}
-
-void MonteCarlo::expand(Result &result, const winrate::Input &root, const mss::Config &cfg, Workspace &workspace) {
-    const JavaEval::Result evaluated = evaluate(root, cfg, workspace);
-    // 首个推荐已完成一局；补齐评分只调整先验，保留同一 Candidate 中的实际胜负和雷盘序号。
-    Candidate &first = result.candidates.front();
-    for (const JavaEval::Analysis &candidate : evaluated)
-        if (candidate.cellId == first.cellId)
-            first.weight = candidate.value;
-    long double maximum = first.weight;
-    for (const JavaEval::Analysis &candidate : evaluated)
-        maximum = (std::max)(maximum, candidate.value);
-    long double total = std::exp((first.weight - maximum) / cfg.monteCarlo.temperature);
-    for (const JavaEval::Analysis &candidate : evaluated)
-        if (candidate.cellId != first.cellId)
-            total += std::exp((candidate.value - maximum) / cfg.monteCarlo.temperature);
-    first.prior = std::exp((first.weight - maximum) / cfg.monteCarlo.temperature) / total;
-    estimate(first, cfg.monteCarlo);
-    const winrate::CellId firstCell = first.cellId;
-    for (const JavaEval::Analysis &candidate : evaluated) {
-        int index;
-        if (candidate.cellId == firstCell) {
-            index = 0;
-        } else {
-            index = result.candidates.size();
-            result.candidates.push_back(Candidate(candidate.cellId, candidate.value, std::exp((candidate.value - maximum) / cfg.monteCarlo.temperature) / total, cfg.monteCarlo));
-        }
-        if (candidate.cellId == evaluated.front().cellId)
-            result.initialRecommended = index;
+    for (const JavaEval::Analysis &candidate : evaluated) candidates.push_back(Candidate(candidate.cellId, std::exp((candidate.value - maximum) / cfg.temperature) / total, cfg));
+    Result result(strategy, {}, false, std::move(candidates), recommended, cellCount);
+    if (targets.empty()) {
+        result.pending.swap(result.candidates);
+        result.candidates.push_back(Candidate(result.pending.front().cellId, 1.0L, cfg));
     }
-    result.fullScores = true;
+    return result;
 }
 
 // 沿用归档的 Beta 尾概率连分式；后验只用于竞争调度，不将共享雷盘下的各候选当成独立事件相乘。
@@ -156,7 +103,8 @@ long double MonteCarlo::logChance(long double won, long double lost, long double
     const bool direct = 1.0L - target < (lost + 1.0L) / (won + lost + 2.0L);
     const long double a = direct ? lost : won, b = direct ? won : lost, x = direct ? 1.0L - target : target;
     long double c = 1.0L, d = 1.0L / (1.0L - (a + b) * x / (a + 1.0L)), fraction = d;
-    for (int m = 1; m <= 4096; ++m) {
+    for (int m = 1;; ++m) {
+        if (m > 4096) assert_(false, "MonteCarlo::logChance: 连分式未收敛");
         const long double even = m * (b - m) * x / ((a + 2.0L * m - 1.0L) * (a + 2.0L * m));
         d = 1.0L / (1.0L + even * d);
         c = 1.0L + even / c;
@@ -171,12 +119,10 @@ long double MonteCarlo::logChance(long double won, long double lost, long double
             return direct ? tail : std::log1p(-std::exp(tail));
         }
     }
-    assert_(false, "MonteCarlo::logChance: 连分式未收敛");
-    std::exit(1);
 }
 
 int MonteCarlo::select(Result &result, const Config &cfg) {
-    if (!result.fullScores || result.candidates.size() == 1)
+    if (result.candidates.size() == 1)
         return result.initialRecommended;
     const int reference = result.best();
     // best 优先返回已有样本的候选；仍为零说明所有首招尚未采样，首次保持 Java 原推荐。
@@ -215,8 +161,8 @@ int MonteCarlo::select(Result &result, const Config &cfg) {
     return selected;
 }
 
-MonteCarlo::Outcome MonteCarlo::simulate(Result &result, const winrate::View &root, long long sequence, winrate::CellId first, const mss::Config &cfg, Workspace &workspace, std::stop_token stop) {
-    RawGrid<char> mines = Probability::sampleMineBoard(root.board, root.basic, root.structure, root.shapes, result.assignments, workspace.probability, {splitmix64(0x123456789ABCDEFULL + sequence), splitmix64(0xF123456789ABCDE0ULL + sequence)});
+MonteCarlo::Outcome MonteCarlo::simulate(Result &result, const winrate::View &root, long long sequence, winrate::CellId first, const Config &cfg, Workspace &workspace, std::stop_token stop) {
+    RawGrid<char> mines = Probability::sampleMineBoard(root.board, root.basic, root.structure, root.shapes, result.assignments, workspace.game.probability, {splitmix64(0x123456789ABCDEFULL + sequence), splitmix64(0xF123456789ABCDE0ULL + sequence)});
     winrate::Board observed = root.board;
     // FS 属于整局采样；只在模拟副本中恢复成 Hidden 后立即揭开，抽样仍使用根约束，FM 保留。
     for (winrate::CellId cell : result.safeCells) {
@@ -224,8 +170,8 @@ MonteCarlo::Outcome MonteCarlo::simulate(Result &result, const winrate::View &ro
         if (observed.board[row][col] == winrate::CellState::ForcedSafe)
             observed.board[row][col] = winrate::CellState::Hidden;
     }
-    // 雷盘和根评分均已计算完成，Game 只持有自己的 Position 和池；主工作区此时可串行复用。
-    GameControl::Game game(GameControl::MineBoard(std::move(mines)), std::move(observed), workspace.rollout, result.suggestions);
+    // 模拟使用独立的 Game 工作区，招法与抽样缓存由当前结果持有。
+    GameControl::Game game(GameControl::MineBoard(std::move(mines)), std::move(observed), workspace.game, result.suggestions);
     if (stop.stop_requested())
         return Outcome::Cancelled;
     if (game.state() == GameControl::Game::State::Running) {
@@ -245,7 +191,7 @@ MonteCarlo::Outcome MonteCarlo::simulate(Result &result, const winrate::View &ro
         int &cached = result.nextMovesOf[first * 9 + number];
         if (cached == -1) {
             cached = result.nextMoves.size();
-            result.nextMoves.push_back(game.suggest(ShapeSolver::OrderAlgo::Auto, result.strategy, cfg).suggest);
+            result.nextMoves.push_back(game.suggest(ShapeSolver::OrderAlgo::Auto, result.strategy, cfg.game).suggest);
         }
         // 建议只依赖公开观测，与本次雷盘无关；交给 Game 执行，后续所有建议仍由 Game 计算。
         game.play(result.nextMoves[cached]);
@@ -253,12 +199,12 @@ MonteCarlo::Outcome MonteCarlo::simulate(Result &result, const winrate::View &ro
     while (game.state() == GameControl::Game::State::Running) {
         if (stop.stop_requested())
             return Outcome::Cancelled;
-        game.play(game.suggest(ShapeSolver::OrderAlgo::Auto, result.strategy, cfg).suggest);
+        game.play(game.suggest(ShapeSolver::OrderAlgo::Auto, result.strategy, cfg.game).suggest);
     }
     return game.state() == GameControl::Game::State::Won ? Outcome::Won : Outcome::Lost;
 }
 
-bool MonteCarlo::update(Result &result, const winrate::Input &root, const mss::Config &cfg, Workspace &workspace, std::stop_token stop) {
+bool MonteCarlo::update(Result &result, const winrate::Input &root, const Config &cfg, Workspace &workspace, std::stop_token stop) {
     if (stop.stop_requested())
         return false;
     if (result.winrate) {
@@ -269,16 +215,22 @@ bool MonteCarlo::update(Result &result, const winrate::Input &root, const mss::C
         result.winrateWins += outcome == Outcome::Won;
         return true;
     }
-    if (!result.fullScores && result.candidates.front().samples != 0)
-        expand(result, root, cfg, workspace);
-    Candidate &candidate = result.candidates[select(result, cfg.monteCarlo)];
+    if (!result.pending.empty() && result.candidates.front().samples != 0) {
+        // 已算好的根评分只发布一次；首招样本与雷盘序号原样保留。
+        result.pending.front().samples = result.candidates.front().samples;
+        result.pending.front().wins = result.candidates.front().wins;
+        estimate(result.pending.front(), cfg);
+        result.candidates.swap(result.pending);
+        result.pending.clear();
+    }
+    Candidate &candidate = result.candidates[select(result, cfg)];
     // 所有首招的第 k 个样本使用同一雷盘种子；取消不改变该候选的完整样本序号。
     const Outcome outcome = simulate(result, root, candidate.samples, candidate.cellId, cfg, workspace, stop);
     if (outcome == Outcome::Cancelled)
         return false;
     ++candidate.samples;
     candidate.wins += outcome == Outcome::Won;
-    estimate(candidate, cfg.monteCarlo);
+    estimate(candidate, cfg);
     return true;
 }
 

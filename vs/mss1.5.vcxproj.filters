@@ -33,9 +33,6 @@
     <ClCompile Include="..\code\src\algo\winrate_engine\anytime_search\anytime_search.cpp">
       <Filter>code\src\algo\winrate_engine\anytime_search</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\winrate_engine\internal\java_lite.cpp">
-      <Filter>code\src\algo\winrate_engine\internal</Filter>
-    </ClCompile>
     <ClCompile Include="..\code\src\algo\winrate_engine\internal\move_evaluate.cpp">
       <Filter>code\src\algo\winrate_engine\internal</Filter>
     </ClCompile>
@@ -229,9 +226,6 @@
   <ItemGroup>
     <ClInclude Include="..\code\src\algo\winrate_engine\anytime_search\anytime_search.h">
       <Filter>code\src\algo\winrate_engine\anytime_search</Filter>
-    </ClInclude>
-    <ClInclude Include="..\code\src\algo\winrate_engine\internal\java_lite.h">
-      <Filter>code\src\algo\winrate_engine\internal</Filter>
     </ClInclude>
     <ClInclude Include="..\code\src\algo\winrate_engine\internal\move_evaluate.h">
       <Filter>code\src\algo\winrate_engine\internal</Filter>

@@ -253,7 +253,7 @@ void Session::writeProbabilities(std::ostream &result, const GameControl::Positi
     result << ']';
 }
 
-void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config, winrate::SuggestAlgo strategy) {
+void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const GameControl::Config &config, winrate::SuggestAlgo strategy) {
     GameControl::Position &position = analysis.position;
     std::vector<ObservedBoard::CellId> suggested = position.safeMoves(analysis.algo);
     const ObservedBoard::CellId lowRisk = suggested.empty() ? position.lowRiskMove(analysis.algo) : -1;
@@ -269,7 +269,7 @@ void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Co
     }
     const winrate::Input input = position.input(analysis.algo);
     if (strategy == winrate::SuggestAlgo::JavaBrute && input.probability.candidates() < config.bruteForce.candidateThreshold) {
-        const BruteForce::Result evaluated = BruteForce::solve(input.board, input.basic, input.structure, input.shapes, config.bruteForce, analysis.workspace.bruteForce);
+        const BruteForce::Result evaluated = BruteForce::solve(input.board, input.basic, input.structure, input.shapes, config.bruteForce, analysis.workspace.game.bruteForce);
         std::vector<ObservedBoard::CellId> candidates;
         std::vector<ObservedBoard::CellId> recommended;
         const BruteForce::Result::Move *best = nullptr;
@@ -292,14 +292,13 @@ void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Co
         }
         result << ']';
     } else {
-        const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, config.longTermRisk, analysis.workspace.longTermRisk);
-        const MoveEval::Selection::Result selected = MoveEval::Selection::prepare(input, &risk, config.javaEval, config.pseudo, analysis.workspace.probability, analysis.workspace.pseudo, analysis.workspace.javaEval.selection);
-        const JavaEval::Result evaluated = JavaEval::analyze(input, risk, selected, config.moveEval, config.longTermRisk, analysis.workspace.javaEval);
+        MoveEval::Selection::Reason selectionReason;
+        const JavaEval::Result evaluated = JavaEval::analyze(input, config.javaEval, analysis.workspace.game.javaEval, {}, &selectionReason);
         std::vector<ObservedBoard::CellId> candidates;
         std::vector<ObservedBoard::CellId> recommended;
         for (const JavaEval::Analysis &move : evaluated) candidates.push_back(move.cellId);
         if (!evaluated.empty()) recommended.push_back(std::max_element(evaluated.begin(), evaluated.end(), [](const JavaEval::Analysis &lhs, const JavaEval::Analysis &rhs) { return lhs.value < rhs.value; })->cellId);
-        const std::string reason = selected.reason == MoveEval::Selection::Reason::ForcedFiftyFifty ? "forced5050" : selected.reason == MoveEval::Selection::Reason::FiftyFiftyOrSafe ? "5050OrSafe" : selected.reason == MoveEval::Selection::Reason::BlindGuess ? "blindGuess" : "score";
+        const std::string reason = selectionReason == MoveEval::Selection::Reason::ForcedFiftyFifty ? "forced5050" : selectionReason == MoveEval::Selection::Reason::FiftyFiftyOrSafe ? "5050OrSafe" : selectionReason == MoveEval::Selection::Reason::BlindGuess ? "blindGuess" : "score";
         result << ",\"engine\":\"JavaEval\",\"reason\":" << jsonString(reason) << ",\"recommended\":";
         writeCells(result, recommended);
         result << ",\"candidates\":";
@@ -328,11 +327,11 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
     if (value(fields, "includeProbabilities") == "true")
         writeProbabilities(result, position, analysis_->algo);
     if (value(fields, "suggest") == "true") {
-        BruteForce::Config bruteForce = config_.bruteForce;
+        BruteForce::Config bruteForce = config_.game.bruteForce;
         winrate::SuggestAlgo strategy;
         if (!parseConfig(fields, bruteForce, strategy, response))
             return response;
-        const Config config(bruteForce, config_.longTermRisk, config_.pseudo, config_.moveEval, config_.javaEval, config_.anytimeSearch, config_.monteCarlo);
+        GameControl::Config config = config_.game; config.bruteForce = bruteForce;
         writeSuggestion(result, *analysis_, config, strategy);
     }
     const std::string cellText = value(fields, "cell");
@@ -360,9 +359,8 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
                 result << ",\"javaScore\":" << jsonString(fixedProbability(0.0L));
             } else {
                 const winrate::Input input = position.input(analysis_->algo);
-                const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, config_.longTermRisk, analysis_->workspace.longTermRisk);
                 // 详情只完整评估所选格，不使用候选筛选、剪枝或支配快路径。
-                const JavaEval::Result evaluated = JavaEval::analyze(input, risk, MoveEval::Selection::specified(input, std::span{&cell, 1}, analysis_->workspace.probability, analysis_->workspace.javaEval.selection), config_.moveEval, config_.longTermRisk, analysis_->workspace.javaEval);
+                const JavaEval::Result evaluated = JavaEval::analyze(input, config_.game.javaEval, analysis_->workspace.game.javaEval, std::span{&cell, 1});
                 result << ",\"javaScore\":" << jsonString(fixedProbability(state == ObservedBoard::CellState::ForcedSafe ? 1.0L : evaluated.front().value)) << ",\"javaBranches\":[";
                 for (int i = 0; i < (int)evaluated.front().branches.size(); ++i) {
                     const MoveEval::Branch &branch = evaluated.front().branches[i];
@@ -406,7 +404,7 @@ std::string Session::playUntilNoSafe(const std::vector<FormField> &fields) {
             if (state == ObservedBoard::CellState::ForcedMine || state == ObservedBoard::CellState::ForcedSafe || (state < ObservedBoard::CellState::Hidden && (int)state != mineBoard.number(row, col)))
                 return error("游玩观测与真实雷盘不符");
         }
-    Workspace workspace;
+    GameControl::Workspace workspace;
     // 只揭开确定安全格，不调用 suggest，招法池保持空。
     GameControl::SuggestPool suggestions;
     GameControl::Game game(std::move(mineBoard), std::move(board), workspace, suggestions);
@@ -450,11 +448,11 @@ bool Session::startMcts(const std::string &body, std::string &response) {
     if (mctsWorker_.joinable())
         mctsWorker_.join();
     const std::vector<FormField> fields = parseForm(body);
-    BruteForce::Config bruteForce = config_.bruteForce;
+    BruteForce::Config bruteForce = config_.game.bruteForce;
     winrate::SuggestAlgo strategy;
     if (!parseConfig(fields, bruteForce, strategy, response))
         return false;
-    const Config config(bruteForce, config_.longTermRisk, config_.pseudo, config_.moveEval, config_.javaEval, config_.anytimeSearch, config_.monteCarlo);
+    MonteCarlo::Config config = config_.monteCarlo; config.game.bruteForce = bruteForce;
     std::unique_ptr<Analysis> analysis;
     if (!createAnalysis(fields, analysis, response))
         return false;
@@ -539,7 +537,7 @@ bool Session::startSearch(const std::string &body, std::string &response) {
     if (safe.empty())
         for (ObservedBoard::CellId cell : targets)
             if (analysis->position.mineProbability(cell, analysis->algo) == 1.0L) { response = error("Search 目标格已确定为雷"); return false; }
-    const Config config(config_.bruteForce, config_.longTermRisk, config_.pseudo, config_.moveEval, config_.javaEval, {width, !targets.empty()}, config_.monteCarlo);
+    AnytimeSearch::Config config = config_.anytimeSearch; config.width = width; config.fullAnalysis = !targets.empty();
     {
         const std::lock_guard<std::mutex> lock(searchMutex_);
         searchBudget_ = 0;
@@ -554,10 +552,8 @@ bool Session::startSearch(const std::string &body, std::string &response) {
             for (ObservedBoard::CellId cell : safe) result.candidates.emplace_back(cell, 1.0L, 1.0L);
             result.finished = true;
         } else {
-            const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, config.longTermRisk, analysis->workspace.longTermRisk);
             // 先算完第零层；用户停止或预算为零都不会留下空推荐。
-            const MoveEval::Selection::Result selected = targets.empty() ? MoveEval::Selection::prepare(input, &risk, config.javaEval, config.pseudo, analysis->workspace.probability, analysis->workspace.pseudo, analysis->workspace.anytimeSearch.selection) : MoveEval::Selection::specified(input, targets, analysis->workspace.probability, analysis->workspace.anytimeSearch.selection);
-            result = AnytimeSearch::analyze(input, risk, selected, config, analysis->workspace.anytimeSearch, 0, stop);
+            result = AnytimeSearch::analyze(input, config, analysis->workspace.anytimeSearch, 0, stop, targets);
         }
         auto publish = [&]() {
             std::ostringstream json;

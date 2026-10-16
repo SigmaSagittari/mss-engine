@@ -21,11 +21,11 @@ inline void monteCarlo(const Config &config = {9, 9, 10, 10.0L, 1000000, Algo::J
     mss::Workspace workspace;
     mss::ObservedBoard::Result board = beginnerCorners();
     const std::chrono::steady_clock::time_point rootStart = std::chrono::steady_clock::now();
-    mss::Basic::Result basic = mss::Basic::analyze(board, workspace.basic);
+    mss::Basic::Result basic = mss::Basic::analyze(board, workspace.game.basic);
     mss::Structure::Pool shapes;
-    mss::Structure::Result structure = mss::Structure::analyze(board, basic, shapes, workspace.structure);
+    mss::Structure::Result structure = mss::Structure::analyze(board, basic, shapes, workspace.game.structure);
     mss::ShapeSolver::DistributionPool distributions;
-    const mss::Probability::Result probability = mss::Probability::analyze(board, basic, structure, shapes, distributions, workspace.probability);
+    const mss::Probability::Result probability = mss::Probability::analyze(board, basic, structure, shapes, distributions, workspace.game.probability);
     const long double rootMilliseconds = std::chrono::duration<long double, std::milli>(std::chrono::steady_clock::now() - rootStart).count();
     // 四个角各在三个邻格中放一个雷，其余六个雷在 65 个自由格中放置：3^4 * C(65,6)。
     std::vector<mss::ObservedBoard::CellId> targets;
@@ -36,7 +36,7 @@ inline void monteCarlo(const Config &config = {9, 9, 10, 10.0L, 1000000, Algo::J
                 targets.push_back(board.id(row, col));
     const mss::winrate::Input root(board, basic, structure, probability, shapes, distributions);
     const std::chrono::steady_clock::time_point prepareStart = std::chrono::steady_clock::now();
-    mss::MonteCarlo::Result result = mss::MonteCarlo::analyze(root, algorithm, engineConfig, workspace.monteCarlo, targets);
+    mss::MonteCarlo::Result result = mss::MonteCarlo::analyze(root, algorithm, engineConfig.monteCarlo, workspace.monteCarlo, targets);
     const long double prepareMilliseconds = std::chrono::duration<long double, std::milli>(std::chrono::steady_clock::now() - prepareStart).count();
     const char *strategy = config.algorithm == Algo::LowRisk ? "LowRisk" : config.algorithm == Algo::JavaEval ? "JavaEval" : "JavaBrute";
     std::cout << "test/monte-carlo: " << board.board.cols() << 'x' << board.board.rows() << " mines=" << board.totalMines << " corners=1 targets=" << targets.size() << " strategy=" << strategy << " time_limit=" << config.time << " samples_limit=" << config.games << " layouts=" << probability.candidates() << "\n";
@@ -54,7 +54,7 @@ inline void monteCarlo(const Config &config = {9, 9, 10, 10.0L, 1000000, Algo::J
     long long samples = 0, previousWins = 0;
     const std::chrono::steady_clock::time_point sampleStart = std::chrono::steady_clock::now();
     while (samples < config.games && std::chrono::duration<long double>(std::chrono::steady_clock::now() - sampleStart).count() < config.time) {
-        mss::assert_(mss::MonteCarlo::update(result, root, engineConfig, workspace.monteCarlo), "test::monteCarlo: 未取消的采样没有完成");
+        mss::assert_(mss::MonteCarlo::update(result, root, engineConfig.monteCarlo, workspace.monteCarlo), "test::monteCarlo: 未取消的采样没有完成");
         ++samples;
         if (samples <= traceLimit) {
             const long long wins = result.wins();

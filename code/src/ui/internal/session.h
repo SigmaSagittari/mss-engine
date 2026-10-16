@@ -8,6 +8,7 @@
 #include <thread>
 #include <vector>
 
+#include "core/config.h"
 #include "core/workspace.h"
 #include "game/game.h"
 
@@ -37,7 +38,7 @@ struct Session {
         ShapeSolver::OrderAlgo algo;
         Workspace workspace;
         GameControl::Position position;
-        Analysis(int id, ShapeSolver::OrderAlgo algo, ObservedBoard::Result board) : id(id), algo(algo), position(std::move(board), workspace, algo) {}
+        Analysis(int id, ShapeSolver::OrderAlgo algo, ObservedBoard::Result board) : id(id), algo(algo), position(std::move(board), workspace.game, algo) {}
     };
 
     static std::vector<FormField> parseForm(const std::string &body);
@@ -58,7 +59,7 @@ struct Session {
     bool createAnalysis(const std::vector<FormField> &fields, std::unique_ptr<Analysis> &analysis, std::string &response);
     std::string analyze(const std::vector<FormField> &fields);
     std::string playUntilNoSafe(const std::vector<FormField> &fields);
-    void writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config, winrate::SuggestAlgo strategy);
+    void writeSuggestion(std::ostream &result, Analysis &analysis, const GameControl::Config &config, winrate::SuggestAlgo strategy);
 
     // 普通计算由 HTTP 请求串行访问；仅保留最近一次计算，前端负责串行引用其 id。
     std::unique_ptr<Analysis> analysis_;

@@ -17,7 +17,7 @@ inline void bruteforce() {
     auto runBruteForceFixedEndgame = [&](const mss::BruteForce::Config &config, bool independent) {
         mss::ObservedBoard::Result board = endgame134550(independent);
 
-        mss::Workspace analysisWorkspace;
+        mss::GameControl::Workspace analysisWorkspace;
         const mss::Basic::Result basic = mss::Basic::analyze(board, analysisWorkspace.basic);
         mss::Structure::Pool shapes;
         const mss::Structure::Result structure = mss::Structure::analyze(board, basic, shapes, analysisWorkspace.structure);
@@ -45,12 +45,12 @@ inline void bruteforce() {
         for (int component = 0; component < (int)componentProbabilities.size(); ++component)
             mss::assert_(std::fabs(componentProbabilities[component] - 1.0L) < 1e-12L, "test::runBruteForceFixedEndgame: logicComponent API 概率未归一化");
 
-        mss::Workspace solverWorkspace;
+        mss::GameControl::Workspace solverWorkspace;
         const mss::BruteForce::Result result = mss::BruteForce::solve(board, basic, structure, shapes, config, solverWorkspace.bruteForce);
         mss::assert_(!result.moves.empty() && result.moves[0].wins == 83553, "test::runBruteForceFixedEndgame: 全盘搜索胜局数变化");
     };
-    const mss::BruteForce::Config single(false, mss::BruteForce::Config::Solver::Bitwise, engineConfig.bruteForce.candidateThreshold, engineConfig.bruteForce.threadLimit);
-    const mss::BruteForce::Config multi(false, mss::BruteForce::Config::Solver::BitwiseRootParallel, engineConfig.bruteForce.candidateThreshold, engineConfig.bruteForce.threadLimit);
+    const mss::BruteForce::Config single(false, mss::BruteForce::Config::Solver::Bitwise, engineConfig.game.bruteForce.candidateThreshold, engineConfig.game.bruteForce.threadLimit);
+    const mss::BruteForce::Config multi(false, mss::BruteForce::Config::Solver::BitwiseRootParallel, engineConfig.game.bruteForce.candidateThreshold, engineConfig.game.bruteForce.threadLimit);
     runBruteForceFixedEndgame(single, false);
     runBruteForceFixedEndgame(multi, false);
     runBruteForceFixedEndgame(single, true);

@@ -127,7 +127,6 @@
   <ItemGroup>
     <ClCompile Include="..\code\src\algo\winrate_engine\monte_carlo\monte_carlo.cpp" />
     <ClCompile Include="..\code\src\algo\winrate_engine\anytime_search\anytime_search.cpp" />
-    <ClCompile Include="..\code\src\algo\winrate_engine\internal\java_lite.cpp" />
     <ClCompile Include="..\code\src\algo\winrate_engine\internal\move_evaluate.cpp" />
     <ClCompile Include="..\code\src\algo\winrate_engine\java_transplant\java_evaluate.cpp" />
     <ClCompile Include="..\code\src\algo\winrate_engine\java_transplant\long_term_risk_helper.cpp" />
@@ -148,7 +147,6 @@
     <ClCompile Include="..\code\src\algo\probability_engine\structure\structure.cpp" />
     <ClCompile Include="..\code\src\game\game.cpp" />
     <ClInclude Include="..\code\src\algo\winrate_engine\anytime_search\anytime_search.h" />
-    <ClInclude Include="..\code\src\algo\winrate_engine\internal\java_lite.h" />
     <ClInclude Include="..\code\src\algo\winrate_engine\internal\move_evaluate.h" />
     <ClInclude Include="..\code\src\algo\winrate_engine\java_transplant\java_evaluate.h" />
     <ClInclude Include="..\code\src\algo\winrate_engine\types.h" />

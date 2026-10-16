@@ -44,7 +44,7 @@ struct Pseudo {
     };
 
   public:
-    // 临时链由工作区拥有；同一工作区只能串行复用。
+    // update 使用前清空临时容器，阶段间显式传递；同一工作区只能串行复用。
     struct Workspace {
       private:
         friend struct Pseudo;
@@ -62,9 +62,9 @@ struct Pseudo {
     static Kind update(Result &result, const winrate::View &input, winrate::Cells dead, const Config &config, Workspace &workspace);
 
   private:
-    static void collectLinks(const winrate::View &input, winrate::Cells dead, long double eqEps, Workspace &workspace);
-    static Kind extendChains(Result &result, const winrate::Board &board, Workspace &workspace);
-    static Kind connectChains(Result &result, const winrate::View &input, winrate::Cells dead, long double eqEps, Workspace &workspace);
+    static void collectLinks(const winrate::View &input, winrate::Cells dead, long double eqEps, std::vector<Link> &links, std::vector<std::vector<winrate::CellId>> &witnesses, Workspace &workspace);
+    static Kind extendChains(Result &result, const winrate::Board &board, std::span<Link> links, std::vector<Chain> &chains);
+    static Kind connectChains(Result &result, const winrate::View &input, winrate::Cells dead, long double eqEps, std::span<Chain> chains, std::span<const std::vector<winrate::CellId>> witnesses, Workspace &workspace);
     static bool pseudoContains(winrate::Cells cells, winrate::CellId cell);
     static bool adjacent(const winrate::Board &board, winrate::CellId lhs, winrate::CellId rhs);
     static bool isMine(const winrate::View &input, winrate::CellId cell, long double eqEps);

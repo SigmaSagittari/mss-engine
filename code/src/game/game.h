@@ -13,22 +13,37 @@
 #include <vector>
 
 #include "algo/probability_engine/basic/basic.h"
+#include "algo/probability_engine/bruteforce/bruteforce.h"
 #include "algo/probability_engine/observed_board/observed_board.h"
 #include "algo/probability_engine/probability/observe.h"
 #include "algo/probability_engine/probability/probability.h"
 #include "algo/probability_engine/shape_solver/shape_solver_types.h"
 #include "algo/probability_engine/structure/structure.h"
-#include "algo/winrate_engine/types.h"
+#include "algo/winrate_engine/java_transplant/java_evaluate.h"
+#include "core/utility/combination.h"
 #include "core/utility/flat_hashtable.h"
 #include "core/utility/grid.h"
 #include "core/utility/hash.h"
 
 namespace mss {
 
-struct Workspace;
-struct Config;
-
 struct GameControl {
+    struct Config {
+        BruteForce::Config bruteForce;
+        JavaEval::Config javaEval;
+        Config(BruteForce::Config bruteForce, JavaEval::Config javaEval) : bruteForce(bruteForce), javaEval(javaEval) {}
+    };
+    struct Workspace {
+        Combination::Workspace combination;
+        Basic::Workspace basic;
+        ShapeSolver::Workspace shapeSolver;
+        BruteForce::Workspace bruteForce;
+        Structure::Workspace structure;
+        Probability::Workspace probability;
+        JavaEval::Workspace javaEval;
+        Workspace() : bruteForce(shapeSolver), probability(shapeSolver, combination), javaEval(basic, structure, probability) {}
+    };
+
     // 调用方持有招法池；按完整观测和算法复用猜测格，同算法使用固定配置；串行共用，clear 清空内容，销毁释放内存。
     using SuggestPool = FlatHashTable<U128, ObservedBoard::CellId, U128Hash>;
     struct Game;

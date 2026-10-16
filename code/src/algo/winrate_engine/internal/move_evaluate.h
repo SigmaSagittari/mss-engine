@@ -11,31 +11,30 @@
 
 namespace mss {
 
-struct JavaEval;
-struct AnytimeSearch;
-
-// JavaEval 与 AnytimeSearch 共用的分支计算；树内只用 javaLite，JavaEval 另计长期风险。
+// JavaEval 与 AnytimeSearch 共用的分支计算；树内只用短期评分，JavaEval 另计长期风险。
 struct MoveEval {
     struct Config {
+        LongTermRisk::Config longTermRisk;
         long double progressContribution;
         long double influenceScale;
-        Config(long double progressContribution, long double influenceScale) : progressContribution(progressContribution), influenceScale(influenceScale) {}
+        Config(LongTermRisk::Config longTermRisk, long double progressContribution, long double influenceScale) : longTermRisk(longTermRisk), progressContribution(progressContribution), influenceScale(influenceScale) {}
     };
 
-    // 共用候选入口：特殊候选直接返回；普通候选窗过滤 dead 后交给评分或搜索。
+    // 候选生成与 dead 过滤独立；结果拥有候选和逐项对应的观测。
     struct Selection {
         enum class Reason { ForcedFiftyFifty, FiftyFiftyOrSafe, Score, BlindGuess, Safe };
         struct Result {
-            winrate::Cells cells;
-            std::span<const Observe::Result> observations;
+            std::vector<winrate::CellId> cells;
+            std::vector<Observe::Result> observations;
             Reason reason;
-            Result(winrate::Cells cells, std::span<const Observe::Result> observations, Reason reason) : cells(cells), observations(observations), reason(reason) {}
+            Result(std::vector<winrate::CellId> cells, std::vector<Observe::Result> observations, Reason reason) : cells(std::move(cells)), observations(std::move(observations)), reason(reason) {}
         };
         struct Config {
+            Pseudo::Config pseudo;
             long double selectionThreshold1;
             long double selectionThreshold2;
             int spaceThreshold;
-            Config(long double selectionThreshold1, long double selectionThreshold2, int spaceThreshold) : selectionThreshold1(selectionThreshold1), selectionThreshold2(selectionThreshold2), spaceThreshold(spaceThreshold) {}
+            Config(Pseudo::Config pseudo, long double selectionThreshold1, long double selectionThreshold2, int spaceThreshold) : pseudo(pseudo), selectionThreshold1(selectionThreshold1), selectionThreshold2(selectionThreshold2), spaceThreshold(spaceThreshold) {}
         };
       private:
         struct FrontierBox {
@@ -48,6 +47,7 @@ struct MoveEval {
       public:
         struct Workspace {
             Workspace() : visit(0) {}
+            Pseudo::Workspace pseudo;
           private:
             friend struct Selection;
             RawGrid<unsigned> visited;
@@ -56,25 +56,23 @@ struct MoveEval {
             std::vector<FrontierBox> boxes;
             std::vector<winrate::CellId> onEdge;
             std::vector<winrate::CellId> offEdgeCandidates;
-            std::vector<winrate::CellId> notDeferred;
-            std::vector<winrate::CellId> deferred;
             std::vector<winrate::CellId> offEdge;
             std::vector<winrate::CellId> witnesses;
-            Pseudo::Result pseudos;
-            std::vector<winrate::CellId> candidates;
-            std::vector<Observe::Result> observations;
         };
-        // 普通候选窗借用 workspace；只读盘面，不计算评分，dead 过滤由 select 统一处理。
+        // 普通候选窗由返回值拥有；只读盘面，不计算观测或过滤 dead。
         // offEdge 在 T 少于 30 时覆盖全部 T，否则只给 2/3 隐藏邻格的 T；witnesses 按 CellId 排序。
         // risk 为空时只按概率准备候选；非空时须来自同一盘面。
-        static winrate::Cells window(const winrate::View &input, const LongTermRisk::Result *risk, winrate::Cells dead, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, Workspace &workspace);
-        // 返回的候选及观测借用 workspace，下一次 prepare/select/specified 后失效；评分不再改变集合。
+        static std::vector<winrate::CellId> window(const winrate::View &input, const LongTermRisk::Result *risk, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, Workspace &workspace);
+        // find 只生成有序候选，观测为空；removeDead 保留特殊候选，普通候选全 dead 时按原顺序回退。
         // risk 非空时使用根层影响力资料；树内传空，仍识别 Pseudo，不计算长期风险。
-        static Result prepare(const winrate::Input &input, const LongTermRisk::Result *risk, const Config &cfg, const Pseudo::Config &pseudoConfig, Probability::Workspace &probability, Pseudo::Workspace &pseudo, Workspace &workspace);
-        static Result select(const winrate::Input &input, const LongTermRisk::Result *risk, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, const Pseudo::Config &pseudoConfig, Probability::Workspace &probability, Pseudo::Workspace &pseudo, Workspace &workspace);
+        static Result find(const winrate::Input &input, const LongTermRisk::Result *risk, const Config &cfg, Workspace &workspace);
+        static Result find(const winrate::Input &input, const LongTermRisk::Result *risk, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, Workspace &workspace);
+        static void removeDead(Result &result, const winrate::Input &input, Probability::Workspace &probability);
         // 显式指定格不经过自动筛选，按输入顺序准备观测。
-        static Result specified(const winrate::Input &input, winrate::Cells cells, Probability::Workspace &probability, Workspace &workspace);
+        static Result specified(const winrate::Input &input, winrate::Cells cells, Probability::Workspace &probability);
+        static bool offEdgeCandidate(const winrate::Board &board, winrate::CellId cell);
       private:
+        static bool isDead(const Observe::Result &observation);
         static bool contains(winrate::Cells cells, winrate::CellId cell);
         static bool meetsSpaceThreshold(int startX, int startY, const winrate::View &input, int threshold, Workspace &workspace);
     };
@@ -118,28 +116,28 @@ struct MoveEval {
     };
 
     struct Workspace {
-        Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, LongTermRisk::Workspace &risk) : basic(basic), structure(structure), probability(probability), risk(risk) {}
+        Probability::Workspace &probability;
+        LongTermRisk::Workspace longTermRisk;
+        Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) : probability(probability), longTermRisk(basic, structure, probability), basic(basic), structure(structure) {}
 
       private:
         friend struct MoveEval;
-        friend struct JavaEval;
-        friend struct AnytimeSearch;
         Basic::Workspace &basic;
         Structure::Workspace &structure;
-        Probability::Workspace &probability;
-        LongTermRisk::Workspace &risk;
         ObservedBoard::Delta boardDelta;
         Basic::Delta basicDelta;
         Structure::Delta structureDelta;
         std::optional<winrate::Probability> nextProbability;
     };
 
-  private:
-    friend struct JavaEval;
-    friend struct AnytimeSearch;
     // 每次推进至多计算一个概率分支，临时揭示在返回前撤回。
     struct Cursor {
         Analysis analysis;
+        // 逐个数字结局保留可证明始终安全且更安全的替代格。
+        std::vector<winrate::CellId> alternatives;
+        Cursor(winrate::CellId cell, Observe::Result observation, long double influence, bool safeSearch, long double candidates);
+      private:
+        friend struct MoveEval;
         Observe::Result observation;
         long double influence;
         bool safeSearch;
@@ -149,18 +147,20 @@ struct MoveEval {
         long double progress;
         long double remainingSafety;
         long double candidates;
-        // 逐个数字结局保留可证明始终安全且更安全的替代格。
-        std::vector<winrate::CellId> alternatives;
         // 借用调用方的固定候选池；Cursor 结束前不改变池或其顺序。
         std::span<const std::pair<long double, winrate::CellId>> peers;
-        Cursor(winrate::CellId cell, Observe::Result observation, long double influence, bool safeSearch, long double candidates);
     };
-    static Cursor begin(const winrate::Input &input, const LongTermRisk::Result &risk, winrate::CellId cell, const Observe::Result &observation, const Config &cfg, const LongTermRisk::Config &riskConfig, Workspace &workspace);
+    static Cursor begin(const winrate::Input &input, const LongTermRisk::Result &risk, winrate::CellId cell, const Observe::Result &observation, const Config &cfg, Workspace &workspace);
     static void prepareAlternatives(Cursor &cursor, std::span<const std::pair<long double, winrate::CellId>> peers);
     static bool advance(Cursor &cursor, winrate::Board &board, winrate::Basic &basic, winrate::Structure &structure, winrate::Shapes &shapes, winrate::Distributions &distributions, int remainingSafe, int forcedSafes, const Config &cfg, Workspace &workspace);
     static long double optimistic(const Cursor &cursor, const Config &cfg);
-    static bool isDead(const Observe::Result &observation);
-    static bool offEdgeCandidate(const winrate::Board &board, winrate::CellId cell);
+  private:
+    struct Summary {
+        long double blendedSafety;
+        int clears;
+        Summary(long double blendedSafety, int clears) : blendedSafety(blendedSafety), clears(clears) {}
+    };
+    static Summary shortTerm(const winrate::View &input, int remainingSafe);
 };
 
 } // 命名空间 mss

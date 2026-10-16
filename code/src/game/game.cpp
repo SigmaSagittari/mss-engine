@@ -6,10 +6,8 @@
 #include <vector>
 
 #include "core/assert.h"
-#include "core/config.h"
 #include "core/utility/neighbors.h"
 #include "core/utility/rng.h"
-#include "core/workspace.h"
 
 namespace mss {
 
@@ -245,8 +243,7 @@ GameControl::Position::SuggestResult GameControl::Position::suggest(const ShapeS
     if (suggestAlgo == SuggestAlgo::JavaEval || suggestAlgo == SuggestAlgo::JavaBrute) {
         const winrate::Input input(observedBoard_, result_.basic, result_.structure, currentProbability, pool_.shapes, pool_.distributions);
         // 死格过滤由共用候选入口完成。
-        const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, cfg.longTermRisk, workspace_.longTermRisk);
-        const JavaEval::Result evaluated = JavaEval::analyze(input, risk, MoveEval::Selection::prepare(input, &risk, cfg.javaEval, cfg.pseudo, workspace_.probability, workspace_.pseudo, workspace_.javaEval.selection), cfg.moveEval, cfg.longTermRisk, workspace_.javaEval);
+        const JavaEval::Result evaluated = JavaEval::analyze(input, cfg.javaEval, workspace_.javaEval);
         if (evaluated.empty())
             return {};
         return remember(std::max_element(evaluated.begin(), evaluated.end(), [](const JavaEval::Analysis &lhs, const JavaEval::Analysis &rhs) { return lhs.value < rhs.value; })->cellId);

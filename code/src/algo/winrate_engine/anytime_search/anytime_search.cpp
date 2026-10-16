@@ -4,7 +4,6 @@
 #include <numeric>
 
 #include "core/assert.h"
-#include "core/config.h"
 #include "core/utility/neighbors.h"
 #include "core/utility/vector_pool.h"
 
@@ -30,6 +29,26 @@ struct AnytimeSearch::State {
             return same;
         };
         return matches(lx, ly, rx, ry, rhs) && matches(rx, ry, lx, ly, lhs);
+    }
+
+    static void prune(std::vector<MoveEval::Analysis> &analyses, const winrate::Input &input, int width, std::vector<U128> &identities) {
+        for (int i = 0; i < (int)analyses.size(); ++i)
+            for (int j = i + 1; j < (int)analyses.size();)
+                if (interchangeable(analyses[i].cellId, analyses[j].cellId, input)) {
+                    // 完整乘数包含 influence，必须评分后才选代表；相同时保留小编号。
+                    if (analyses[j].multiplier > analyses[i].multiplier || (analyses[j].multiplier == analyses[i].multiplier && analyses[j].cellId < analyses[i].cellId)) std::swap(analyses[i], analyses[j]);
+                    analyses.erase(analyses.begin() + j);
+                } else ++j;
+        std::stable_sort(analyses.begin(), analyses.end(), [](const MoveEval::Analysis &lhs, const MoveEval::Analysis &rhs) { return lhs.value > rhs.value; });
+        identities.clear();
+        // 对换剪枝后按分数保留等价类代表，再计宽度；身份来自剪枝前的完整候选池。
+        std::erase_if(analyses, [&](const MoveEval::Analysis &analysis) {
+            if (!analysis.equivalence) return false;
+            if (std::find(identities.begin(), identities.end(), *analysis.equivalence) != identities.end()) return true;
+            identities.push_back(*analysis.equivalence);
+            return false;
+        });
+        if ((int)analyses.size() > width) analyses.erase(analyses.begin() + width, analyses.end());
     }
 
     struct Move {
@@ -102,6 +121,7 @@ struct AnytimeSearch::State {
     MoveEval::Pool deltas;
     vectorPool<int> children;
     std::vector<Frame> frames;
+    std::optional<winrate::Probability> probability;
 
     State(const winrate::Input &input, std::vector<MoveEval::Analysis> analyses) : board(input.board), basic(input.basic), structure(input.structure), shapes(input.shapes), distributions(input.distributions), remainingSafe(board.board.rows() * board.board.cols() - board.totalMines) {
         for (int row = 0; row < board.board.rows(); ++row)
@@ -112,7 +132,7 @@ struct AnytimeSearch::State {
                     else if (basic.marks[row][col] == Basic::Mark::T) {
                         rootOffEdge.push_back(board.id(row, col));
                         // 以后每次揭示会把邻接 T 移入 H，仍为 T 的格子不改变隐藏邻格数。
-                        if (MoveEval::offEdgeCandidate(board, board.id(row, col))) rootOffEdgeCandidates.push_back(board.id(row, col));
+                        if (MoveEval::Selection::offEdgeCandidate(board, board.id(row, col))) rootOffEdgeCandidates.push_back(board.id(row, col));
                     }
                 }
         nodes.emplace_back();
@@ -138,16 +158,15 @@ struct AnytimeSearch::State {
 
     winrate::Input input(Workspace &workspace) {
         // 只在准备新节点或新候选时重建工作概率；旧节点重访只重放 Delta。
-        std::optional<winrate::Probability> &probability = workspace.moveEval.nextProbability;
-        if (!probability) probability = Probability::analyze(board, basic, structure, shapes, distributions, workspace.moveEval.probability);
-        else Probability::analyze(board, basic, structure, shapes, distributions, *probability, workspace.moveEval.probability);
+        if (!probability) probability = Probability::analyze(board, basic, structure, shapes, distributions, workspace.javaEval.moveEval.probability);
+        else Probability::analyze(board, basic, structure, shapes, distributions, *probability, workspace.javaEval.moveEval.probability);
         return winrate::Input(board, basic, structure, *probability, shapes, distributions);
     }
 
-    void prepare(Frame &frame, const mss::Config &cfg, Workspace &workspace) {
+    void prepare(Frame &frame, const Config &cfg, Workspace &workspace) {
         const winrate::Input current = input(workspace);
         frame.candidates = current.probability.candidates();
-        MoveEval::Workspace &evaluation = workspace.moveEval;
+        MoveEval::Workspace &evaluation = workspace.javaEval.moveEval;
         winrate::CellId safe = -1;
         auto consider = [&](winrate::CellId cell) { if (safe == -1 || cell < safe) safe = cell; };
         auto basicSafe = [&](winrate::CellId cell) {
@@ -175,8 +194,8 @@ struct AnytimeSearch::State {
         if (safe != -1) frame.cells.push_back(safe);
         frame.safe = !frame.cells.empty();
         if (frame.safe) {
-            const MoveEval::Selection::Result selected = MoveEval::Selection::specified(current, frame.cells, evaluation.probability, workspace.selection);
-            frame.observations.assign(selected.observations.begin(), selected.observations.end());
+            MoveEval::Selection::Result selected = MoveEval::Selection::specified(current, frame.cells, evaluation.probability);
+            frame.observations = std::move(selected.observations);
         } else {
             frame.cells = rootWitnesses;
             for (const Frame &path : frames)
@@ -187,11 +206,13 @@ struct AnytimeSearch::State {
                 const auto [row, col] = board.pos(cell);
                 if (basic.marks[row][col] == Basic::Mark::T) { firstOffEdge = cell; break; }
             }
-            const MoveEval::Selection::Result selected = MoveEval::Selection::select(current, nullptr, basic.unknownSum < 30 ? rootOffEdge : rootOffEdgeCandidates, frame.cells, firstOffEdge, cfg.javaEval, cfg.pseudo, evaluation.probability, workspace.pseudo, workspace.selection);
-            frame.cells.assign(selected.cells.begin(), selected.cells.end());
-            frame.observations.assign(selected.observations.begin(), selected.observations.end());
+            MoveEval::Selection::Result selected = MoveEval::Selection::find(current, nullptr, basic.unknownSum < 30 ? rootOffEdge : rootOffEdgeCandidates, frame.cells, firstOffEdge, cfg.javaEval.selection, workspace.javaEval.selection);
+            MoveEval::Selection::removeDead(selected, current, evaluation.probability);
+            frame.cells = std::move(selected.cells);
+            frame.observations = std::move(selected.observations);
         }
-        for (winrate::CellId cell : frame.cells) frame.pending.emplace_back(current.probability.mineProbability(cell, board, basic, structure), cell);
+        // pending 必须保留去重前的完整集合，强制安全签名与安全支配都以它为输入。
+        for (int i = 0; i < (int)frame.cells.size(); ++i) frame.pending.emplace_back(frame.observations[i].probability[9], frame.cells[i]);
         int count = 0;
         for (int i = 0; i < (int)frame.cells.size(); ++i)
             if (std::none_of(frame.cells.begin(), frame.cells.begin() + count, [&](winrate::CellId cell) { return interchangeable(cell, frame.cells[i], current); })) {
@@ -227,7 +248,7 @@ struct AnytimeSearch::State {
         finishBranch(result, value, finished);
     }
 
-    bool advance(Result &result, const mss::Config &cfg, Workspace &workspace, long long &nodeBudget) {
+    bool advance(Result &result, const Config &cfg, Workspace &workspace, long long &nodeBudget) {
         Frame &frame = frames.back();
         Node &node = nodes[frame.node];
         if (!node.ready) {
@@ -245,13 +266,13 @@ struct AnytimeSearch::State {
                 }
                 const long long before = frame.cursor->analysis.node;
                 // 路径每帧只揭开一格；有 ForcedSafe 时必走 safeSearch，不计算强制安全。
-                const bool complete = MoveEval::advance(*frame.cursor, board, basic, structure, shapes, distributions, remainingSafe - (int)frames.size() + 1, 0, cfg.moveEval, workspace.moveEval);
+                const bool complete = MoveEval::advance(*frame.cursor, board, basic, structure, shapes, distributions, remainingSafe - (int)frames.size() + 1, 0, cfg.javaEval.moveEval, workspace.javaEval.moveEval);
                 const long long expanded = frame.cursor->analysis.node - before;
                 result.node += expanded;
                 nodeBudget -= expanded;
                 const bool equivalent = frame.cursor->analysis.equivalence && std::any_of(frame.selected.begin(), frame.selected.end(), [&](const MoveEval::Analysis &move) { return move.equivalence == frame.cursor->analysis.equivalence; });
-                const int width = frame.safe ? 1 : cfg.anytimeSearch.width[frames.size() == 2 ? 1 : 2];
-                const bool pruned = !complete && (int)frame.selected.size() == width && MoveEval::optimistic(*frame.cursor, cfg.moveEval) < frame.selected.back().value;
+                const int width = frame.safe ? 1 : cfg.width[frames.size() == 2 ? 1 : 2];
+                const bool pruned = !complete && (int)frame.selected.size() == width && MoveEval::optimistic(*frame.cursor, cfg.javaEval.moveEval) < frame.selected.back().value;
                 if (equivalent || pruned || (complete && !frame.cursor->alternatives.empty())) {
                     ++frame.next;
                     frame.cursor.reset();
@@ -336,10 +357,16 @@ winrate::CellId AnytimeSearch::Result::recommended() const {
     return best ? best->cellId : -1;
 }
 
-AnytimeSearch::Result AnytimeSearch::analyze(const winrate::Input &input, const LongTermRisk::Result &risk, const MoveEval::Selection::Result &candidates, const mss::Config &cfg, Workspace &workspace, long long nodeBudget, std::stop_token stop) {
+AnytimeSearch::Result AnytimeSearch::analyze(const winrate::Input &input, const Config &cfg, Workspace &workspace, long long nodeBudget, std::stop_token stop, winrate::Cells cells) {
+    const LongTermRisk::Result risk = LongTermRisk::analyze(input, {}, cfg.javaEval.moveEval.longTermRisk, workspace.javaEval.moveEval.longTermRisk);
+    MoveEval::Selection::Result selected = cells.empty() ? MoveEval::Selection::find(input, &risk, cfg.javaEval.selection, workspace.javaEval.selection) : MoveEval::Selection::specified(input, cells, workspace.javaEval.moveEval.probability);
+    if (cells.empty()) MoveEval::Selection::removeDead(selected, input, workspace.javaEval.moveEval.probability);
+    return analyze(input, risk, selected, cfg, workspace, nodeBudget, stop);
+}
+
+AnytimeSearch::Result AnytimeSearch::analyze(const winrate::Input &input, const LongTermRisk::Result &risk, const MoveEval::Selection::Result &candidates, const Config &cfg, Workspace &workspace, long long nodeBudget, std::stop_token stop) {
     Result result;
-    assert_(cfg.anytimeSearch.width[0] > 0 && cfg.anytimeSearch.width[1] > 0 && cfg.anytimeSearch.width[2] > 0, "AnytimeSearch: 候选宽度须为正数");
-    LongTermRisk::resetCache(workspace.moveEval.risk, input.board.board.rows() * input.board.board.cols());
+    assert_(cfg.width[0] > 0 && cfg.width[1] > 0 && cfg.width[2] > 0, "AnytimeSearch: 候选宽度须为正数");
     int remainingSafe = input.board.board.rows() * input.board.board.cols() - input.board.totalMines;
     int forcedSafes = 0;
     for (int row = 0; row < input.board.board.rows(); ++row)
@@ -348,34 +375,16 @@ AnytimeSearch::Result AnytimeSearch::analyze(const winrate::Input &input, const 
             else if (input.board.board[row][col] == winrate::CellState::ForcedSafe) ++forcedSafes;
         }
     std::vector<std::pair<long double, winrate::CellId>> peers;
-    for (winrate::CellId cell : candidates.cells) peers.emplace_back(input.probability.mineProbability(cell, input.board, input.basic, input.structure), cell);
+    for (int i = 0; i < (int)candidates.cells.size(); ++i) peers.emplace_back(candidates.observations[i].probability[9], candidates.cells[i]);
     std::vector<MoveEval::Analysis> analyses;
     for (int i = 0; i < (int)candidates.cells.size(); ++i) {
-        MoveEval::Cursor cursor = MoveEval::begin(input, risk, candidates.cells[i], candidates.observations[i], cfg.moveEval, cfg.longTermRisk, workspace.moveEval);
-        if (!cfg.anytimeSearch.fullAnalysis) MoveEval::prepareAlternatives(cursor, peers);
-        while (!MoveEval::advance(cursor, input.board, input.basic, input.structure, input.shapes, input.distributions, remainingSafe, forcedSafes, cfg.moveEval, workspace.moveEval)) {}
+        MoveEval::Cursor cursor = MoveEval::begin(input, risk, candidates.cells[i], candidates.observations[i], cfg.javaEval.moveEval, workspace.javaEval.moveEval);
+        if (!cfg.fullAnalysis) MoveEval::prepareAlternatives(cursor, peers);
+        while (!MoveEval::advance(cursor, input.board, input.basic, input.structure, input.shapes, input.distributions, remainingSafe, forcedSafes, cfg.javaEval.moveEval, workspace.javaEval.moveEval)) {}
         result.node += cursor.analysis.node;
-        if (cfg.anytimeSearch.fullAnalysis || cursor.alternatives.empty()) analyses.push_back(std::move(cursor.analysis));
+        if (cfg.fullAnalysis || cursor.alternatives.empty()) analyses.push_back(std::move(cursor.analysis));
     }
-    if (!cfg.anytimeSearch.fullAnalysis) {
-        for (int i = 0; i < (int)analyses.size(); ++i)
-            for (int j = i + 1; j < (int)analyses.size();)
-                if (State::interchangeable(analyses[i].cellId, analyses[j].cellId, input)) {
-                    // 可对换格的进度相同，完整乘数的大小即 influence 的大小；相同时固定保留小编号。
-                    if (analyses[j].multiplier > analyses[i].multiplier || (analyses[j].multiplier == analyses[i].multiplier && analyses[j].cellId < analyses[i].cellId)) std::swap(analyses[i], analyses[j]);
-                    analyses.erase(analyses.begin() + j);
-                } else ++j;
-        std::stable_sort(analyses.begin(), analyses.end(), [](const MoveEval::Analysis &lhs, const MoveEval::Analysis &rhs) { return lhs.value > rhs.value; });
-        std::vector<U128> identities;
-        // 安全支配和对换剪枝后按分数保留等价类代表，再计宽度；G 指定根招法不进入此分支。
-        std::erase_if(analyses, [&](const MoveEval::Analysis &analysis) {
-            if (!analysis.equivalence) return false;
-            if (std::find(identities.begin(), identities.end(), *analysis.equivalence) != identities.end()) return true;
-            identities.push_back(*analysis.equivalence);
-            return false;
-        });
-        if ((int)analyses.size() > cfg.anytimeSearch.width[0]) analyses.erase(analyses.begin() + cfg.anytimeSearch.width[0], analyses.end());
-    }
+    if (!cfg.fullAnalysis) State::prune(analyses, input, cfg.width[0], workspace.identities);
     for (const MoveEval::Analysis &analysis : analyses) {
         result.candidates.emplace_back(analysis.cellId, analysis.value, analysis.multiplier);
         for (const MoveEval::Branch &branch : analysis.branches) result.candidates.back().branches.emplace_back(branch.digit, branch.value, 0);
@@ -386,9 +395,10 @@ AnytimeSearch::Result AnytimeSearch::analyze(const winrate::Input &input, const 
     return result;
 }
 
-void AnytimeSearch::update(Result &result, const mss::Config &cfg, Workspace &workspace, long long nodeBudget, std::stop_token stop) {
+void AnytimeSearch::update(Result &result, const Config &cfg, Workspace &workspace, long long nodeBudget, std::stop_token stop) {
     assert_(nodeBudget >= 0, "AnytimeSearch: 节点预算须非负");
     while (!result.finished && !stop.stop_requested() && result.state->advance(result, cfg, workspace, nodeBudget)) {}
+    if (result.finished) result.state.reset();
 }
 
 } // 命名空间 mss

@@ -101,12 +101,8 @@ bool Pseudo::linkLess(const Link &lhs, const Link &rhs) {
     return lhs.witnessSize < rhs.witnessSize;
 }
 
-void Pseudo::collectLinks(const winrate::View &input, winrate::Cells dead, long double eqEps, Workspace &workspace) {
+void Pseudo::collectLinks(const winrate::View &input, winrate::Cells dead, long double eqEps, std::vector<Link> &links, std::vector<std::vector<winrate::CellId>> &pseudoWitnesses, Workspace &workspace) {
     const auto &[board, basic, structure, probability, shapes] = input;
-    std::vector<Link> &links = workspace.links;
-    std::vector<std::vector<winrate::CellId>> &pseudoWitnesses = workspace.witnesses;
-    links.clear();
-    pseudoWitnesses.clear();
     // 先按完整概率扣除必雷，再找还差一雷的约束；仅用 Basic 会使等价分支产生不同的链。
     for (int component = 0; component < (int)structure.components.size(); ++component) {
         const Structure::Instance &instance = shapes.getInstance(structure.components[component]);
@@ -142,12 +138,9 @@ void Pseudo::collectLinks(const winrate::View &input, winrate::Cells dead, long 
 
 }
 
-Pseudo::Kind Pseudo::extendChains(Result &result, const winrate::Board &board, Workspace &workspace) {
-    std::vector<Link> &links = workspace.links;
+Pseudo::Kind Pseudo::extendChains(Result &result, const winrate::Board &board, std::span<Link> links, std::vector<Chain> &chains) {
     // 链：从一个只封闭一端的 link 出发，沿开口端扩展，封口且步数为偶 + 无 trouble
     // 即成不可避免的 50/50。
-    std::vector<Chain> &chains = workspace.chains;
-    chains.clear();
     for (Link &start : links) {
         if (start.processed || start.closedFirst == start.closedSecond)
             continue; // 恰一端封闭
@@ -211,10 +204,8 @@ Pseudo::Kind Pseudo::extendChains(Result &result, const winrate::Board &board, W
     return Kind::None;
 }
 
-Pseudo::Kind Pseudo::connectChains(Result &result, const winrate::View &input, winrate::Cells dead, long double eqEps, Workspace &workspace) {
+Pseudo::Kind Pseudo::connectChains(Result &result, const winrate::View &input, winrate::Cells dead, long double eqEps, std::span<Chain> chains, std::span<const std::vector<winrate::CellId>> pseudoWitnesses, Workspace &workspace) {
     const auto &[board, basic, structure, probability, shapes] = input;
-    std::vector<Chain> &chains = workspace.chains;
-    const std::vector<std::vector<winrate::CellId>> &pseudoWitnesses = workspace.witnesses;
     // 用 pseudo witness 连接两条链成不可避免的 50/50。
     for (const std::vector<winrate::CellId> &witness : pseudoWitnesses) {
         Chain *chain1 = nullptr;
@@ -282,8 +273,10 @@ Pseudo::Kind Pseudo::connectChains(Result &result, const winrate::View &input, w
 Pseudo::Kind Pseudo::update(Result &result, const winrate::View &input, winrate::Cells dead, const Config &config, Workspace &workspace) {
     const auto &[board, basic, structure, probability, shapes] = input;
     result.clear();
-    collectLinks(input, dead, config.eqEps, workspace);
-    std::vector<Link> &links = workspace.links;
+    std::vector<Link> &links = workspace.links; links.clear();
+    std::vector<Chain> &chains = workspace.chains; chains.clear();
+    std::vector<std::vector<winrate::CellId>> &witnesses = workspace.witnesses; witnesses.clear();
+    collectLinks(input, dead, config.eqEps, links, witnesses, workspace);
     // Java：优先返回非 pseudo 的不可避免 link。
     std::sort(links.begin(), links.end(), linkLess);
     const Link *unavoidable = nullptr;
@@ -298,9 +291,9 @@ Pseudo::Kind Pseudo::update(Result &result, const winrate::View &input, winrate:
         result = {unavoidable->first, unavoidable->second};
         return unavoidable->pseudo ? Kind::OrSafe : Kind::Forced;
     }
-    const Kind kind = extendChains(result, board, workspace);
+    const Kind kind = extendChains(result, board, links, chains);
     if (kind != Kind::None) return kind;
-    return connectChains(result, input, dead, config.eqEps, workspace);
+    return connectChains(result, input, dead, config.eqEps, chains, witnesses, workspace);
 }
 
 Pseudo::Result Pseudo::analyze(const winrate::View &input, winrate::Cells dead, const Config &config, Workspace &workspace) {
