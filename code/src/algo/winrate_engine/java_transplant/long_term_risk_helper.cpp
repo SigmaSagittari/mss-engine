@@ -68,7 +68,7 @@ long double LongTermRisk::boxTally(winrate::CellId cell, const winrate::View &in
 // 的阈值（Java 直接传 maxMissingMines）。
 
 long double LongTermRisk::candidateTally(const winrate::Input &input, winrate::Cells tiles, std::span<const std::pair<int, int>> source, int mineCount, int maxMissing, int minesLeft, long double eqEps, TallyKind kind, int index, const Result &full, Workspace &workspace) {
-    const auto &[board, basic, structure, probability, shapes, distributions] = input;
+    const auto &[board, basic, structure, probability, shapes, distributions, boardPool, basicPool] = input;
     if (hasSafeSource(board, source))
         return 0.0L;
     const CellList missing = missingMines(input, source, eqEps);
@@ -96,25 +96,24 @@ long double LongTermRisk::candidateTally(const winrate::Input &input, winrate::C
 }
 
 long double LongTermRisk::countWithForces(const winrate::Input &input, winrate::Cells mines, winrate::Cells safes, Workspace &workspace) {
-    const auto &[board, basic, structure, probability, shapes, distributions] = input;
-    ObservedBoard::Delta &updates = workspace.boardDelta;
-    updates.clear();
+    const auto &[board, basic, structure, probability, shapes, distributions, boardPool, basicPool] = input;
+    ObservedBoard::Delta updates(boardPool.changes.push_back());
     workspace.changedCells.clear();
     for (winrate::CellId cell : mines) {
         const auto [row, col] = board.pos(cell);
-        updates.changes.emplace_back(cell, board.board[row][col], winrate::CellState::ForcedMine);
+        updates.changes.push_back(boardPool.changes, {cell, board.board[row][col], winrate::CellState::ForcedMine});
         workspace.changedCells.push_back(cell);
     }
     for (winrate::CellId cell : safes) {
         const auto [row, col] = board.pos(cell);
-        updates.changes.emplace_back(cell, board.board[row][col], winrate::CellState::ForcedSafe);
+        updates.changes.push_back(boardPool.changes, {cell, board.board[row][col], winrate::CellState::ForcedSafe});
         workspace.changedCells.push_back(cell);
     }
-    ObservedBoard::applyDelta(board, updates.changes);
-    Basic::update(basic, workspace.basicDelta, board, updates, workspace.basic);
+    ObservedBoard::applyDelta(board, updates, boardPool);
+    const Basic::Delta basicDelta = Basic::update(basic, board, updates, boardPool, basicPool, workspace.basic);
     // 根局面有效，只重算本次标记变化所影响的数字约束；最后一个 H 被移走的矛盾数字会从 Structure 消失，不能漏掉。
     bool valid = true;
-    for (const Basic::Delta::Change &change : workspace.basicDelta.changes) {
+    for (const Basic::Delta::Change &change : basicDelta.changes.span(basicPool.changes)) {
         const auto [row, col] = board.pos(change.cell);
         forEachAdjacent(row, col, board.board.rows(), board.board.cols(), [&](int numberRow, int numberCol) {
             const winrate::CellState state = board.board[numberRow][numberCol];
@@ -138,19 +137,23 @@ long double LongTermRisk::countWithForces(const winrate::Input &input, winrate::
     // 标记和邻域缓存由 Basic::update 维护；全局剩余雷数由 Probability 计数，不在这里重复审计。
     long double candidates = 0.0L;
     if (valid) {
-        Structure::update(structure, workspace.structureDelta, board, basic, shapes, workspace.changedCells, workspace.structure);
+        const Structure::Delta structureDelta = Structure::update(structure, board, basic, shapes, workspace.changedCells, workspace.structure);
         if (!workspace.forcedProbability) workspace.forcedProbability = Probability::analyze(board, basic, structure, shapes, distributions, workspace.probability);
         else Probability::analyze(board, basic, structure, shapes, distributions, *workspace.forcedProbability, workspace.probability);
         candidates = workspace.forcedProbability->candidates();
-        Structure::applyDelta(structure, shapes, workspace.structureDelta.removed, workspace.structureDelta.added, true);
+        Structure::applyDelta(structure, shapes, structureDelta, true);
+        shapes.removed.pop_back(structureDelta.removed);
+        shapes.added.pop_back(structureDelta.added);
     }
-    Basic::applyDelta(basic, workspace.basicDelta.changes, true);
-    ObservedBoard::applyDelta(board, updates.changes, true);
+    Basic::applyDelta(basic, basicDelta, basicPool, true);
+    ObservedBoard::applyDelta(board, updates, boardPool, true);
+    basicPool.changes.pop_back(basicDelta.changes);
+    boardPool.changes.pop_back(updates.changes);
     return candidates;
 }
 
 void LongTermRisk::update(Result &out, const winrate::Input &input, winrate::Cells dead, const Config &cfg, Workspace &workspace) {
-    const auto &[board, basic, structure, probability, shapes, distributions] = input;
+    const auto &[board, basic, structure, probability, shapes, distributions, boardPool, basicPool] = input;
     const int size = board.board.rows() * board.board.cols();
     out.influences.resize(board.board.rows(), board.board.cols(), 0.0L);
     out.enablers.assign(size, 0.0L);
@@ -254,7 +257,7 @@ void LongTermRisk::update(Result &out, const winrate::Input &input, winrate::Cel
 }
 
 long double LongTermRisk::influence(winrate::CellId cell, const winrate::Input &input, const Result &full, const Config &cfg, Workspace &workspace) {
-    const auto &[board, basic, structure, probability, shapes, distributions] = input;
+    const auto &[board, basic, structure, probability, shapes, distributions, boardPool, basicPool] = input;
     const int minesLeft = board.totalMines - basic.mineSum;
     const auto [x, y] = board.pos(cell);
 

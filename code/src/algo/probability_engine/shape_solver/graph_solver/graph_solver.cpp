@@ -115,7 +115,7 @@ template <typename Plan> void Workspace::GraphSolverWorkspace::Layer::advance(co
     }
 }
 
-DistributionResult GraphSolver::analyze(const Structure::Shape &shape, const Structure::Pool &shapes, const OrderAlgo &algo, Workspace &workspace) {
+DistributionResult GraphSolver::analyze(const Structure::Shape &shape, const Structure::Pool &shapes, const OrderAlgo &algo, DistributionPool &distPool, Workspace &workspace) {
     const GraphStepGenerator::Graph graph = GraphStepGenerator::Graph::fromShape(shape, shapes, workspace);
     const std::vector<Structure::BoxId> order = GraphStepGenerator::makeOrder(graph, algo, workspace);
     Workspace::GraphSolverWorkspace::Layer *current = &workspace.graph_solver.current;
@@ -131,7 +131,7 @@ DistributionResult GraphSolver::analyze(const Structure::Shape &shape, const Str
     GraphStepGenerator::forEach(shape, shapes, order, workspace, callback);
 
     if (current->states.empty())
-        return {0, shape.boxes.size, {}, {}};
+        return {0, shape.boxes.size, {0, 0}, {0, 0}};
     int start = (std::numeric_limits<int>::max)();
     int end = -1;
     for (const Workspace::GraphSolverWorkspace::Layer::State &state : current->states)
@@ -147,24 +147,25 @@ DistributionResult GraphSolver::analyze(const Structure::Shape &shape, const Str
     momentSlot.assign(boxCount, -1);
     for (int slot = 0; slot < (int)(current->momentBoxes.size()); ++slot)
         momentSlot[current->momentBoxes[slot]] = slot;
-    std::vector<long double> ways(distributionSize, 0.0L);
+    vectorPool<long double>::vector ways = distPool.values.push_back();
+    for (int i = 0; i < distributionSize; ++i) ways.push_back(distPool.values, 0.0L);
     std::vector<long double> &moments = workspace.graph_solver.moments;
     moments.assign((std::size_t)distributionSize * boxCount, 0.0L);
     for (const Workspace::GraphSolverWorkspace::Layer::State &state : current->states)
         for (int index = state.firstCount; index >= 0; index = current->counts[index].next) {
             const Workspace::GraphSolverWorkspace::Layer::Count &count = current->counts[index];
             const int mineIndex = count.mineCount - start;
-            ways[mineIndex] += count.ways;
+            ways.span(distPool.values)[mineIndex] += count.ways;
             for (int box = 0; box < boxCount; ++box)
                 moments[(std::size_t)mineIndex * boxCount + box] += current->momentValues[count.momentOffset + momentSlot[box]].value;
         }
-    std::vector<long double> &expectations = workspace.graph_solver.expectations;
-    expectations.assign(moments.size(), 0.0L);
-    for (int mineIndex = 0; mineIndex < distributionSize; ++mineIndex)
-        if (ways[mineIndex] != 0.0L)
-            for (int box = 0; box < boxCount; ++box)
-                expectations[(std::size_t)mineIndex * boxCount + box] = moments[(std::size_t)mineIndex * boxCount + box] / ways[mineIndex];
-    return {start, boxCount, std::move(ways), expectations};
+    vectorPool<long double>::vector expectations = distPool.values.push_back();
+    for (int mineIndex = 0; mineIndex < distributionSize; ++mineIndex) {
+        const long double weight = ways.span(distPool.values)[mineIndex];
+        for (int box = 0; box < boxCount; ++box)
+            expectations.push_back(distPool.values, weight == 0.0L ? 0.0L : moments[(std::size_t)mineIndex * boxCount + box] / weight);
+    }
+    return {start, boxCount, ways, expectations};
 }
 
 Workspace::ObservedWorkspace::GraphLayer::Count &Workspace::ObservedWorkspace::GraphLayer::findOrAddCount(State &state, int componentMines, int neighborMines) {

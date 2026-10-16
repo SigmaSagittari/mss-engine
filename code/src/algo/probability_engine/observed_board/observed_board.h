@@ -3,9 +3,9 @@
 #include <cstdint>
 #include <span>
 #include <utility>
-#include <vector>
 
 #include "core/utility/grid.h"
+#include "core/utility/vector_pool.h"
 
 namespace mss {
 
@@ -56,15 +56,19 @@ struct ObservedBoard {
 
         // CellId 必须属于同一盘面且不得重复；previous 必须等于应用前的状态。
         // 允许 Hidden 转为数字或 Forced 状态，以及 ForcedSafe 转为数字。
-        std::vector<Change> changes;
-        // 清空变化但保留容量，供后续复用。
-        void clear();
+        vectorPool<Change>::vector changes;
+        explicit Delta(vectorPool<Change>::vector changes) : changes(changes) {}
+    };
+
+    // Delta 只保存切片；记录由调用方持有的池拥有，clear 或退回池尾后对应切片失效。
+    struct Pool {
+        vectorPool<Delta::Change> changes;
     };
 
     // 参数必须描述合法盘面；只记录尺寸和总雷数并创建全 Hidden 盘面，不检查输入或推断数字、雷位。
     static Result analyze(int rows, int cols, int mines);
     // 正向时 board 对应更新前状态，满足 Delta 转换契约；reverse 时对应更新后状态且必须后进先出。切片只在调用期间借用。
-    static void applyDelta(Result &board, std::span<const Delta::Change> changes, bool reverse = false);
+    static void applyDelta(Result &board, const Delta &delta, const Pool &pool, bool reverse = false);
 };
 
 } // namespace mss

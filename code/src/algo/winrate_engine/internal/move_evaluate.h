@@ -59,14 +59,15 @@ struct MoveEval {
             std::vector<winrate::CellId> offEdge;
             std::vector<winrate::CellId> witnesses;
         };
-        // 普通候选窗由返回值拥有；只读盘面，不计算观测或过滤 dead。
+        // 普通候选窗写入 result 并复用容量；只读盘面，不计算观测或过滤 dead。
         // offEdge 在 T 少于 30 时覆盖全部 T，否则只给 2/3 隐藏邻格的 T；witnesses 按 CellId 排序。
         // risk 为空时只按概率准备候选；非空时须来自同一盘面。
-        static std::vector<winrate::CellId> window(const winrate::View &input, const LongTermRisk::Result *risk, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, Workspace &workspace);
+        static void window(std::vector<winrate::CellId> &result, const winrate::View &input, const LongTermRisk::Result *risk, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, Workspace &workspace);
         // find 只生成有序候选，观测为空；removeDead 保留特殊候选，普通候选全 dead 时按原顺序回退。
         // risk 非空时使用根层影响力资料；树内传空，仍识别 Pseudo，不计算长期风险。
         static Result find(const winrate::Input &input, const LongTermRisk::Result *risk, const Config &cfg, Workspace &workspace);
-        static Result find(const winrate::Input &input, const LongTermRisk::Result *risk, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, Workspace &workspace);
+        // 结果由调用方持有，复用其数组；输出不得与输入格列表别名。
+        static void find(Result &result, const winrate::Input &input, const LongTermRisk::Result *risk, winrate::Cells offEdge, winrate::Cells witnesses, winrate::CellId firstOffEdge, const Config &cfg, Workspace &workspace);
         static void removeDead(Result &result, const winrate::Input &input, Probability::Workspace &probability);
         // 显式指定格不经过自动筛选，按输入顺序准备观测。
         static Result specified(const winrate::Input &input, winrate::Cells cells, Probability::Workspace &probability);
@@ -77,27 +78,17 @@ struct MoveEval {
         static bool meetsSpaceThreshold(int startX, int startY, const winrate::View &input, int threshold, Workspace &workspace);
     };
 
-    // 分支只保存池内下标和长度；Analysis 与搜索状态分别拥有自己的池。
-    struct Pool {
-        vectorPool<ObservedBoard::Delta::Change> boardChanges;
-        vectorPool<Basic::Delta::Change> basicChanges;
-        vectorPool<Structure::Delta::Change> removed;
-        vectorPool<Structure::InstanceId> added;
-    };
-
     struct Branch {
         int digit;
         int clears;
         // 该数字结局的基础子评分，供 Search 第零层发布。
         long double value;
-        // 真实结局权重和可重放切片；必须配合同一 Pool 读取，实例 ID 依赖的 shapes 池不可清空。
+        // 真实结局权重和可重放切片；记录由输入的各模块 Pool 拥有，保留分支期间不得清空。
         long double probability;
-        vectorPool<ObservedBoard::Delta::Change>::vector boardChanges;
-        vectorPool<Basic::Delta::Change>::vector basicChanges;
-        vectorPool<Structure::Delta::Change>::vector removed;
-        vectorPool<Structure::InstanceId>::vector added;
-        // 输入切片不能借用目标 pool；构造按原顺序复制到各池尾部，池扩容后须重新获取 span。
-        Branch(int digit, int clears, long double value, long double probability, std::span<const ObservedBoard::Delta::Change> boardChanges, std::span<const Basic::Delta::Change> basicChanges, std::span<const Structure::Delta::Change> removed, std::span<const Structure::InstanceId> added, Pool &pool);
+        ObservedBoard::Delta boardDelta;
+        Basic::Delta basicDelta;
+        Structure::Delta structureDelta;
+        Branch(int digit, int clears, long double value, long double probability, ObservedBoard::Delta boardDelta, Basic::Delta basicDelta, Structure::Delta structureDelta);
     };
 
     struct Analysis {
@@ -105,7 +96,6 @@ struct MoveEval {
         // 本招的评分。
         long double value;
         std::vector<Branch> branches;
-        Pool deltas;
         // 本招的 influence 与进度乘数；初始为无修正，完整评分后交给根层续搜。
         long double multiplier;
         // 固定候选集合的必安子集；集合相同意味着双方互相必安，不同根盘面不比较。
@@ -124,9 +114,6 @@ struct MoveEval {
         friend struct MoveEval;
         Basic::Workspace &basic;
         Structure::Workspace &structure;
-        ObservedBoard::Delta boardDelta;
-        Basic::Delta basicDelta;
-        Structure::Delta structureDelta;
         std::optional<winrate::Probability> nextProbability;
     };
 
@@ -136,6 +123,8 @@ struct MoveEval {
         // 逐个数字结局保留可证明始终安全且更安全的替代格。
         std::vector<winrate::CellId> alternatives;
         Cursor(winrate::CellId cell, Observe::Result observation, long double influence, bool safeSearch, long double candidates);
+        // 开始下一候选并保留自身数组容量。
+        void reset(winrate::CellId cell, Observe::Result observation, long double influence, bool safeSearch, long double candidates);
       private:
         friend struct MoveEval;
         Observe::Result observation;
@@ -152,7 +141,7 @@ struct MoveEval {
     };
     static Cursor begin(const winrate::Input &input, const LongTermRisk::Result &risk, winrate::CellId cell, const Observe::Result &observation, const Config &cfg, Workspace &workspace);
     static void prepareAlternatives(Cursor &cursor, std::span<const std::pair<long double, winrate::CellId>> peers);
-    static bool advance(Cursor &cursor, winrate::Board &board, winrate::Basic &basic, winrate::Structure &structure, winrate::Shapes &shapes, winrate::Distributions &distributions, int remainingSafe, int forcedSafes, const Config &cfg, Workspace &workspace);
+    static bool advance(Cursor &cursor, winrate::Board &board, winrate::Basic &basic, winrate::Structure &structure, winrate::Shapes &shapes, winrate::Distributions &distributions, ObservedBoard::Pool &boardPool, Basic::Pool &basicPool, int remainingSafe, int forcedSafes, const Config &cfg, Workspace &workspace);
     static long double optimistic(const Cursor &cursor, const Config &cfg);
   private:
     struct Summary {

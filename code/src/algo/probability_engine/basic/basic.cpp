@@ -98,9 +98,8 @@ Basic::Result Basic::analyze(const ObservedBoard::Result &state, Basic::Workspac
     return result;
 }
 
-void Basic::update(Result &result, Delta &delta, const ObservedBoard::Result &board, const ObservedBoard::Delta &updates,
-                   Basic::Workspace &workspace) {
-    delta.changes.clear();
+Basic::Delta Basic::update(Result &result, const ObservedBoard::Result &board, const ObservedBoard::Delta &updates, const ObservedBoard::Pool &boardPool, Pool &pool, Workspace &workspace) {
+    Delta delta(pool.changes.push_back());
 
     const int rows = board.board.rows();
     const int cols = board.board.cols();
@@ -127,7 +126,7 @@ void Basic::update(Result &result, Delta &delta, const ObservedBoard::Result &bo
         if (mark == Mark::F)
             ++result.mineSum;
         current = mark;
-        delta.changes.push_back({board.id(row, col), previous, mark});
+        delta.changes.push_back(pool.changes, {board.id(row, col), previous, mark});
 
         const bool previousMine = previous == Mark::F;
         const bool nextMine = mark == Mark::F;
@@ -155,7 +154,7 @@ void Basic::update(Result &result, Delta &delta, const ObservedBoard::Result &bo
         });
     };
 
-    for (const ObservedBoard::Delta::Change &change : updates.changes) {
+    for (const ObservedBoard::Delta::Change &change : updates.changes.span(boardPool.changes)) {
         const std::pair<int, int> position = board.pos(change.cell);
         const int row = position.first;
         const int col = position.second;
@@ -196,9 +195,11 @@ void Basic::update(Result &result, Delta &delta, const ObservedBoard::Result &bo
         }
         queued[pending[head]] = 0;
     }
+    return delta;
 }
 
-void Basic::applyDelta(Result &result, std::span<const Delta::Change> changes, bool reverse) {
+void Basic::applyDelta(Result &result, const Delta &delta, const Pool &pool, bool reverse) {
+    const std::span<const Delta::Change> changes = delta.changes.span(pool.changes);
     // 同一格可能分多次记录；正向依序重放，逆向倒序撤回。
     for (int i = 0; i < (int)changes.size(); ++i) {
         const Delta::Change &change = changes[reverse ? changes.size() - 1 - i : i];

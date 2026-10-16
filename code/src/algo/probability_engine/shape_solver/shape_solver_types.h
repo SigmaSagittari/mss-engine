@@ -11,6 +11,7 @@
 #include "core/utility/flat_hashtable.h"
 #include "core/utility/grid.h"
 #include "core/utility/hash.h"
+#include "core/utility/vector_pool.h"
 
 namespace mss {
 namespace ShapeSolver {
@@ -129,8 +130,6 @@ struct Workspace {
         // Box 到矩槽位的反向表及归一化前的加权雷数矩，均跨调用保留容量。
         std::vector<int> momentSlot;
         std::vector<long double> moments;
-        // 归一化缓冲；返回结果需独立持有数据，因此从此处复制。
-        std::vector<long double> expectations;
 
         struct Layer {
             // State 只区分当前未闭合 Box 的赋值；同一 State 的 Count 按组件总雷数累计 ways 和已闭合 Box 的加权雷数。
@@ -223,27 +222,29 @@ class DistributionResult {
   public:
     // ways 为空表示此 Shape 没有满足约束的赋值；上层将其作为零候选组件处理。
     // ways[i] 对应 start+i 个组件雷；expectationValues 按 [雷数索引][Box] 行优先连续存储。
-    // 前置条件：boxCount 非负，expectationValues.size() 等于 ways.size() 乘以 boxCount。
-    DistributionResult(int start, int boxCount, std::vector<long double> ways, std::vector<long double> expectationValues) : start_(start), boxCount_(boxCount), ways_(std::move(ways)), expectationValues_(std::move(expectationValues)) {}
+    // 两段数据由所属 DistributionPool 的 values 保存；expectationValues.size 等于 ways.size 乘以 boxCount。
+    DistributionResult(int start, int boxCount, vectorPool<long double>::vector ways, vectorPool<long double>::vector expectationValues) : start_(start), boxCount_(boxCount), ways_(ways), expectationValues_(expectationValues) {}
 
     // ways[i] 对应的实际组件雷数为 start()+i。
     int start() const { return start_; }
     // 返回形状中的 Box 数。
     int boxCount() const { return boxCount_; }
-    // 返回每个组件雷数对应的布局权重。
-    const std::vector<long double> &ways() const { return ways_; }
-    // i 必须小于 ways().size()；返回该组件雷数下各 Box 的期望雷数，视图在本对象移动或销毁后失效。
-    std::span<const long double> perBoxExpectation(std::size_t i) const { return std::span<const long double>(expectationValues_).subspan(i * boxCount_, boxCount_); }
+    // values 必须来自所属池；视图在 values 扩容或清空后失效。
+    std::span<const long double> ways(const vectorPool<long double> &values) const { return ways_.span(values); }
+    // i 必须小于 ways(values).size()；返回该组件雷数下各 Box 的期望雷数，视图有效期同 ways。
+    std::span<const long double> perBoxExpectation(std::size_t i, const vectorPool<long double> &values) const { return expectationValues_.span(values).subspan(i * boxCount_, boxCount_); }
 
   private:
     int start_;
     int boxCount_;
-    std::vector<long double> ways_;
-    std::vector<long double> expectationValues_;
+    vectorPool<long double>::vector ways_;
+    vectorPool<long double>::vector expectationValues_;
 };
 
 // 按 Shape 内容哈希复用分布；ID 在池清空前有效，哈希按项目约定作为内容身份。
 struct DistributionPool {
+    vectorPool<long double> values;
+
     // 未命中返回 -1。
     DistributionId find(U128 hash) const {
         if (const DistributionId *found = index_.find(hash))
@@ -263,6 +264,7 @@ struct DistributionPool {
     void clear() {
         results_.clear();
         index_.clear();
+        values.clear();
     }
 
   private:

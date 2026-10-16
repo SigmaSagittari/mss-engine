@@ -114,7 +114,7 @@ Observe::Result Observe::observe(const ObservedBoard::Result &board, const Basic
         const ShapeSolver::DistributionId id = ShapeSolver::analyze(shapes.get(instance.shape), shapes, distributions, workspace.shapeSolver, algo);
         const ShapeSolver::DistributionResult &distribution = distributions.get(id);
         const Poly left(restStart, ws.restCoefficients);
-        const Poly right(distribution.start(), distribution.ways());
+        const Poly right(distribution.start(), distribution.ways(distributions.values));
         const int nextStart = left.start + right.start;
         Poly::multiply(left, right, ws.productScratch);
         std::swap(ws.restCoefficients, ws.productScratch);

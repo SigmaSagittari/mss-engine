@@ -12,7 +12,7 @@ JavaEval::Result JavaEval::analyze(const winrate::Input &input, const Config &cf
 
 JavaEval::Result JavaEval::analyze(const winrate::Input &input, const LongTermRisk::Result &risk, const MoveEval::Selection::Result &candidates, const Config &cfg, Workspace &workspace) {
     Result result;
-    const auto &[board, basic, structure, probability, shapes, distributions] = input;
+    const auto &[board, basic, structure, probability, shapes, distributions, boardPool, basicPool] = input;
     int remainingSafe = board.board.rows() * board.board.cols() - board.totalMines;
     int forcedSafes = 0;
     for (int row = 0; row < board.board.rows(); ++row)
@@ -23,7 +23,7 @@ JavaEval::Result JavaEval::analyze(const winrate::Input &input, const LongTermRi
     for (int i = 0; i < (int)candidates.cells.size(); ++i) {
         if (candidates.reason == MoveEval::Selection::Reason::Safe) { result.emplace_back(candidates.cells[i], 1.0L); continue; }
         MoveEval::Cursor cursor = MoveEval::begin(input, risk, candidates.cells[i], candidates.observations[i], cfg.moveEval, workspace.moveEval);
-        while (!MoveEval::advance(cursor, board, basic, structure, shapes, distributions, remainingSafe, forcedSafes, cfg.moveEval, workspace.moveEval)) {}
+        while (!MoveEval::advance(cursor, board, basic, structure, shapes, distributions, boardPool, basicPool, remainingSafe, forcedSafes, cfg.moveEval, workspace.moveEval)) {}
         result.push_back(std::move(cursor.analysis));
     }
     return result;

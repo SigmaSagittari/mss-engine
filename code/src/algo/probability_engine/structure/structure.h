@@ -41,6 +41,8 @@ struct Structure {
 
         // 这些 vectorPool::vector 只是池内数组切片，必须配合同一个 Pool 读取。
         vectorPool<Box>::vector boxes;
+        // 内容哈希同时作为池去重身份，不再做结构相等核验。
+        U128 hash;
 
         // 返回 Shape 中数字约束的数量。
         std::size_t constraintCount() const;
@@ -62,8 +64,6 @@ struct Structure {
             Constraint(int sum, std::uint32_t offset, std::uint8_t count) : sum(sum), offset(offset), count(count) {}
         };
 
-        // 内容哈希同时作为池去重身份，不再做结构相等核验。
-        U128 hash;
         vectorPool<Constraint>::vector constraints_;
         vectorPool<BoxId>::vector boxIds_;
 
@@ -119,9 +119,10 @@ struct Structure {
         };
 
         // 被删除的旧组件按下标降序记录；逆序恢复时依赖此顺序。
-        std::vector<Change> removed;
+        vectorPool<Change>::vector removed;
         // 按追加顺序保存实例 ID；重放复用池内实例，撤回先弹出这些尾项。
-        std::vector<InstanceId> added;
+        vectorPool<InstanceId>::vector added;
+        Delta(vectorPool<Change>::vector removed, vectorPool<InstanceId>::vector added) : removed(removed), added(added) {}
     };
 
     // 池拥有 Shape、Instance 及其切片的存储；ID 只在池未 clear 时有效。
@@ -132,6 +133,9 @@ struct Structure {
         vectorPool<ObservedBoard::CellId> cells;
         vectorPool<int> boxOf;
         vectorPool<ObservedBoard::CellId> constraintCells;
+        // Delta 与 Shape、Instance 共用本池生命周期；退尾只回收对应的 Delta 记录。
+        vectorPool<Delta::Change> removed;
+        vectorPool<InstanceId> added;
 
         // 按 Shape 内容哈希复用已有形状，哈希命中不再逐项比对。
         ShapeId internShape(Shape shape);
@@ -172,7 +176,6 @@ struct Structure {
             RawGrid<char> dirty;
             std::vector<ObservedBoard::CellId> dirtyCells;
             std::vector<char> removed;
-            std::vector<InstanceId> staged;
         } update;
 
         FlatHashTable<U128, BoxId, U128Hash> hashBox;
@@ -207,10 +210,10 @@ struct Structure {
     // changedCells 覆盖自 result 状态以来的全部观测变化；board/basic 是经正常 Basic::update 得到的最终状态，尺寸相同，Pool 与 result 匹配。
     // 允许合并多轮变化；新增连接位于变化邻域，Basic 的远端传播由命中的整组旧组件覆盖，重建只读取最终状态。
     // 只重建受影响组件，delta 记录回到调用前 result 所需的信息。
-    static void update(Result &result, Delta &delta, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool,
+    static Delta update(Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool,
                        std::span<const ObservedBoard::CellId> changedCells, Workspace &workspace);
     // 正向时 result 对应更新前状态；reverse 时对应更新后状态且必须后进先出。切片沿 Delta 的记录顺序且只在调用期间借用；池不得清空，重放组件及格子映射，不改动 board/basic。
-    static void applyDelta(Result &result, const Pool &pool, std::span<const Delta::Change> removed, std::span<const InstanceId> added, bool reverse = false);
+    static void applyDelta(Result &result, const Pool &pool, const Delta &delta, bool reverse = false);
 };
 
 } // 命名空间 mss

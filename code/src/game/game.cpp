@@ -50,9 +50,8 @@ void GameControl::Position::initialize() {
     basicSafeCells_.clear();
     basicSafeSeen_.assign(observedBoard_.board.rows() * observedBoard_.board.cols(), 0);
     result_.probabilityDirty = true;
-    delta_.basic.changes.clear();
-    delta_.structure.removed.clear();
-    delta_.structure.added.clear();
+    pool_.board.changes.clear();
+    pool_.basic.changes.clear();
     structureLazyUpdate_.clear();
     pool_.shapes.clear();
     pool_.distributions.clear();
@@ -73,12 +72,12 @@ void GameControl::Position::reset(ObservedBoard::Result board) {
 }
 
 void GameControl::Position::update(ObservedBoard::Delta &updates) {
-    ObservedBoard::applyDelta(observedBoard_, updates.changes);
-    Basic::update(result_.basic, delta_.basic, observedBoard_, updates, workspace_.basic);
-    for (const ObservedBoard::Delta::Change &change : updates.changes)
+    ObservedBoard::applyDelta(observedBoard_, updates, pool_.board);
+    const Basic::Delta delta = Basic::update(result_.basic, observedBoard_, updates, pool_.board, pool_.basic, workspace_.basic);
+    for (const ObservedBoard::Delta::Change &change : updates.changes.span(pool_.board.changes))
         structureLazyUpdate_.push_back(change.cell);
     result_.probabilityDirty = true;
-    for (const Basic::Delta::Change &change : delta_.basic.changes) {
+    for (const Basic::Delta::Change &change : delta.changes.span(pool_.basic.changes)) {
         const ObservedBoard::CellId cell = change.cell;
         const std::pair<int, int> position = observedBoard_.pos(cell);
         const ObservedBoard::CellState state = observedBoard_.board[position.first][position.second];
@@ -87,12 +86,15 @@ void GameControl::Position::update(ObservedBoard::Delta &updates) {
             basicSafeSeen_[cell] = 1;
         }
     }
+    pool_.basic.changes.pop_back(delta.changes);
 }
 
 void GameControl::Position::updateStructure() const {
     if (structureLazyUpdate_.empty())
         return;
-    Structure::update(result_.structure, delta_.structure, observedBoard_, result_.basic, pool_.shapes, structureLazyUpdate_, workspace_.structure);
+    const Structure::Delta delta = Structure::update(result_.structure, observedBoard_, result_.basic, pool_.shapes, structureLazyUpdate_, workspace_.structure);
+    pool_.shapes.removed.pop_back(delta.removed);
+    pool_.shapes.added.pop_back(delta.added);
     structureLazyUpdate_.clear();
 }
 
@@ -140,7 +142,7 @@ const Probability::Result &GameControl::Position::probability(const ShapeSolver:
 
 winrate::Input GameControl::Position::input(const ShapeSolver::OrderAlgo &algo) {
     const Probability::Result &currentProbability = probability(algo);
-    return {observedBoard_, result_.basic, result_.structure, currentProbability, pool_.shapes, pool_.distributions};
+    return {observedBoard_, result_.basic, result_.structure, currentProbability, pool_.shapes, pool_.distributions, pool_.board, pool_.basic};
 }
 
 long double GameControl::Position::mineProbability(ObservedBoard::CellId cell, const ShapeSolver::OrderAlgo &algo) const {
@@ -178,13 +180,13 @@ const std::vector<ObservedBoard::CellId> &GameControl::Position::safeMoves(const
         const Structure::Shape &shape = pool_.shapes.getShape(instance.shape);
         const ShapeSolver::DistributionId distributionId = ShapeSolver::analyze(shape, pool_.shapes, pool_.distributions, workspace_.shapeSolver, algo);
         const ShapeSolver::DistributionResult &distribution = pool_.distributions.get(distributionId);
-        const std::vector<long double> &ways = distribution.ways();
+        const std::span<const long double> ways = distribution.ways(pool_.distributions.values);
         const std::span<const int> offsets = instance.boxes.boxOf.span(pool_.shapes.boxOf);
         const std::span<const ObservedBoard::CellId> cells = instance.boxes.cells.span(pool_.shapes.cells);
         for (int box = 0; box < distribution.boxCount(); ++box) {
             bool safe = true;
             for (int i = 0; i < (int)ways.size(); ++i)
-                if (ways[i] != 0.0L && distribution.perBoxExpectation(i)[box] != 0.0L) {
+                if (ways[i] != 0.0L && distribution.perBoxExpectation(i, pool_.distributions.values)[box] != 0.0L) {
                     safe = false;
                     break;
                 }
@@ -241,7 +243,7 @@ GameControl::Position::SuggestResult GameControl::Position::suggest(const ShapeS
         return remember(best->cell);
     }
     if (suggestAlgo == SuggestAlgo::JavaEval || suggestAlgo == SuggestAlgo::JavaBrute) {
-        const winrate::Input input(observedBoard_, result_.basic, result_.structure, currentProbability, pool_.shapes, pool_.distributions);
+        const winrate::Input input(observedBoard_, result_.basic, result_.structure, currentProbability, pool_.shapes, pool_.distributions, pool_.board, pool_.basic);
         // 死格过滤由共用候选入口完成。
         const JavaEval::Result evaluated = JavaEval::analyze(input, cfg.javaEval, workspace_.javaEval);
         if (evaluated.empty())
@@ -307,7 +309,6 @@ void GameControl::Game::reset(U128 seed) {
     pendingSeed_ = seed;
     remainingSafe_ = rows * cols - mines;
     state_ = State::Running;
-    playDelta_.clear();
     position_.reset(ObservedBoard::Result(rows, cols, mines));
 }
 
@@ -324,7 +325,7 @@ GameControl::Game::SuggestResult GameControl::Game::suggest(const ShapeSolver::O
 }
 
 void GameControl::Game::play(const std::vector<ObservedBoard::CellId> &cells) {
-    playDelta_.clear();
+    ObservedBoard::Delta delta(position_.pool_.board.changes.push_back());
     int safeCount = 0;
     for (int i = 0; i < (int)cells.size(); ++i) {
         const std::pair<int, int> location = position_.observedBoard_.pos(cells[i]);
@@ -344,13 +345,13 @@ void GameControl::Game::play(const std::vector<ObservedBoard::CellId> &cells) {
             state_ = State::Lost;
             break;
         }
-        playDelta_.changes.push_back({cells[i], previous, (ObservedBoard::CellState)value});
+        delta.changes.push_back(position_.pool_.board.changes, {cells[i], previous, (ObservedBoard::CellState)value});
         ++safeCount;
         if (safeCount == remainingSafe_)
             break;
     }
-    if (!playDelta_.changes.empty())
-        position_.update(playDelta_);
+    if (delta.changes.size != 0) position_.update(delta);
+    position_.pool_.board.changes.pop_back(delta.changes);
     remainingSafe_ -= safeCount;
     if (remainingSafe_ == 0)
         state_ = State::Won;

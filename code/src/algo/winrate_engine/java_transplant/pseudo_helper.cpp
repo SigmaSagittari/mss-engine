@@ -8,6 +8,11 @@
 
 namespace mss {
 
+void Pseudo::Link::reset(winrate::CellId first, winrate::CellId second, bool deadFirst, bool deadSecond, bool pseudo, int witnessSize) {
+    this->first = first; this->second = second; this->deadFirst = deadFirst; this->deadSecond = deadSecond; this->pseudo = pseudo; this->witnessSize = witnessSize;
+    closedFirst = closedSecond = unavoidable = true; processed = false; trouble.clear();
+}
+
 bool Pseudo::pseudoContains(winrate::Cells cells, winrate::CellId cell) {
     return std::find(cells.begin(), cells.end(), cell) != cells.end();
 }
@@ -52,7 +57,7 @@ void Pseudo::assess(Link &link, const winrate::View &input, long double eqEps) {
 
 // Java findRootedLinks：大 witness（>2 格）内相邻且至少一端封闭、至少一格活的
 // 相邻对 → 根化 pseudo link。
-void Pseudo::findRootedLinks(winrate::Cells cells, const winrate::View &input, winrate::Cells dead, int witnessSize, long double eqEps, std::vector<Link> &links) {
+void Pseudo::findRootedLinks(winrate::Cells cells, const winrate::View &input, winrate::Cells dead, int witnessSize, long double eqEps, std::vector<Link> &links, int &linkCount) {
     const auto &[board, basic, structure, probability, shapes] = input;
     // Java 只检查"正上方"与"正右方"两个相对位置（x 为列、y 为行的坐标约定）。
     constexpr std::array<std::pair<int, int>, 2> offsets{
@@ -70,11 +75,13 @@ void Pseudo::findRootedLinks(winrate::Cells cells, const winrate::View &input, w
             const winrate::CellId tile2 = board.id(nx, ny);
             if (!pseudoContains(cells, tile2))
                 continue;
-            Link link(tile1, tile2, pseudoContains(dead, tile1), pseudoContains(dead, tile2), true, witnessSize);
+            if (linkCount == (int)links.size()) links.emplace_back(tile1, tile2, pseudoContains(dead, tile1), pseudoContains(dead, tile2), true, witnessSize);
+            else links[linkCount].reset(tile1, tile2, pseudoContains(dead, tile1), pseudoContains(dead, tile2), true, witnessSize);
+            Link &link = links[linkCount];
             assess(link, input, eqEps);
             if ((link.closedFirst || link.closedSecond) && // 至少一端封闭
                 (!link.deadFirst || !link.deadSecond))     // 至少一格活
-                links.push_back(std::move(link));
+                ++linkCount;
         }
     }
 }
@@ -101,7 +108,7 @@ bool Pseudo::linkLess(const Link &lhs, const Link &rhs) {
     return lhs.witnessSize < rhs.witnessSize;
 }
 
-void Pseudo::collectLinks(const winrate::View &input, winrate::Cells dead, long double eqEps, std::vector<Link> &links, std::vector<std::vector<winrate::CellId>> &pseudoWitnesses, Workspace &workspace) {
+void Pseudo::collectLinks(const winrate::View &input, winrate::Cells dead, long double eqEps, std::vector<Link> &links, int &linkCount, std::vector<std::vector<winrate::CellId>> &pseudoWitnesses, int &witnessCount, Workspace &workspace) {
     const auto &[board, basic, structure, probability, shapes] = input;
     // 先按完整概率扣除必雷，再找还差一雷的约束；仅用 Basic 会使等价分支产生不同的链。
     for (int component = 0; component < (int)structure.components.size(); ++component) {
@@ -124,28 +131,35 @@ void Pseudo::collectLinks(const winrate::View &input, winrate::Cells dead, long 
                 continue;
             if (cells.size() == 2) {
                 // 不同数字可给出同一条边；重复加入会让链折返并错误封口。
-                if (std::any_of(links.begin(), links.end(), [&](const Link &link) { return !link.pseudo && ((link.first == cells[0] && link.second == cells[1]) || (link.first == cells[1] && link.second == cells[0])); })) continue;
-                Link link(cells[0], cells[1], pseudoContains(dead, cells[0]), pseudoContains(dead, cells[1]), false, 2);
+                if (std::any_of(links.begin(), links.begin() + linkCount, [&](const Link &link) { return !link.pseudo && ((link.first == cells[0] && link.second == cells[1]) || (link.first == cells[1] && link.second == cells[0])); })) continue;
+                if (linkCount == (int)links.size()) links.emplace_back(cells[0], cells[1], pseudoContains(dead, cells[0]), pseudoContains(dead, cells[1]), false, 2);
+                else links[linkCount].reset(cells[0], cells[1], pseudoContains(dead, cells[0]), pseudoContains(dead, cells[1]), false, 2);
+                Link &link = links[linkCount++];
                 assess(link, input, eqEps);
-                links.push_back(std::move(link));
             } else {
-                const std::size_t previous = links.size();
-                findRootedLinks(cells, input, dead, cells.size(), eqEps, links);
-                if (links.size() == previous) pseudoWitnesses.push_back(cells);
+                const int previous = linkCount;
+                findRootedLinks(cells, input, dead, cells.size(), eqEps, links, linkCount);
+                if (linkCount == previous) {
+                    if (witnessCount == (int)pseudoWitnesses.size()) pseudoWitnesses.emplace_back();
+                    pseudoWitnesses[witnessCount++] = cells;
+                }
             }
         }
     }
 
 }
 
-Pseudo::Kind Pseudo::extendChains(Result &result, const winrate::Board &board, std::span<Link> links, std::vector<Chain> &chains) {
+Pseudo::Kind Pseudo::extendChains(Result &result, const winrate::Board &board, std::span<Link> links, std::vector<Chain> &chains, int &chainCount) {
     // 链：从一个只封闭一端的 link 出发，沿开口端扩展，封口且步数为偶 + 无 trouble
     // 即成不可避免的 50/50。
     for (Link &start : links) {
         if (start.processed || start.closedFirst == start.closedSecond)
             continue; // 恰一端封闭
         start.processed = true;
-        Chain chain(start.closedFirst ? start.second : start.first, start.pseudo);
+        if (chainCount == (int)chains.size()) chains.emplace_back(start.closedFirst ? start.second : start.first, start.pseudo);
+        Chain &chain = chains[chainCount];
+        chain.openTile = start.closedFirst ? start.second : start.first; chain.pseudo = start.pseudo;
+        chain.whole5050.clear(); chain.trouble.clear();
         chain.whole5050.push_back(start.first);
         chain.whole5050.push_back(start.second);
         chain.trouble.insert(chain.trouble.end(), start.trouble.begin(), start.trouble.end());
@@ -198,7 +212,7 @@ Pseudo::Kind Pseudo::extendChains(Result &result, const winrate::Board &board, s
             }
         }
         if (noMatch)
-            chains.push_back(std::move(chain)); // 未封口的链可被 pseudo witness 连接
+            ++chainCount; // 未封口的链可被 pseudo witness 连接
     }
 
     return Kind::None;
@@ -235,13 +249,14 @@ Pseudo::Kind Pseudo::connectChains(Result &result, const winrate::View &input, w
             continue;
 
         Link linker(chain1->openTile, chain2->openTile, pseudoContains(dead, chain1->openTile), pseudoContains(dead, chain2->openTile), false, witness.size());
+        linker.trouble.swap(workspace.trouble); linker.trouble.clear();
         assess(linker, input, eqEps);
 
         std::vector<winrate::CellId> &combined = workspace.combined;
         combined = chain1->whole5050;
         combined.insert(combined.end(), chain2->whole5050.begin(), chain2->whole5050.end());
         std::vector<winrate::CellId> &trouble = workspace.trouble;
-        trouble = linker.trouble;
+        trouble.swap(linker.trouble);
         trouble.insert(trouble.end(), chain1->trouble.begin(), chain1->trouble.end());
         trouble.insert(trouble.end(), chain2->trouble.begin(), chain2->trouble.end());
         if (combined.size() % 2 != 0 || !noTrouble(board, trouble, combined))
@@ -273,10 +288,9 @@ Pseudo::Kind Pseudo::connectChains(Result &result, const winrate::View &input, w
 Pseudo::Kind Pseudo::update(Result &result, const winrate::View &input, winrate::Cells dead, const Config &config, Workspace &workspace) {
     const auto &[board, basic, structure, probability, shapes] = input;
     result.clear();
-    std::vector<Link> &links = workspace.links; links.clear();
-    std::vector<Chain> &chains = workspace.chains; chains.clear();
-    std::vector<std::vector<winrate::CellId>> &witnesses = workspace.witnesses; witnesses.clear();
-    collectLinks(input, dead, config.eqEps, links, witnesses, workspace);
+    int linkCount = 0, chainCount = 0, witnessCount = 0;
+    collectLinks(input, dead, config.eqEps, workspace.links, linkCount, workspace.witnesses, witnessCount, workspace);
+    const std::span<Link> links(workspace.links.data(), linkCount);
     // Java：优先返回非 pseudo 的不可避免 link。
     std::sort(links.begin(), links.end(), linkLess);
     const Link *unavoidable = nullptr;
@@ -291,9 +305,9 @@ Pseudo::Kind Pseudo::update(Result &result, const winrate::View &input, winrate:
         result = {unavoidable->first, unavoidable->second};
         return unavoidable->pseudo ? Kind::OrSafe : Kind::Forced;
     }
-    const Kind kind = extendChains(result, board, links, chains);
+    const Kind kind = extendChains(result, board, links, workspace.chains, chainCount);
     if (kind != Kind::None) return kind;
-    return connectChains(result, input, dead, config.eqEps, chains, witnesses, workspace);
+    return connectChains(result, input, dead, config.eqEps, std::span(workspace.chains).first(chainCount), std::span(workspace.witnesses).first(witnessCount), workspace);
 }
 
 Pseudo::Result Pseudo::analyze(const winrate::View &input, winrate::Cells dead, const Config &config, Workspace &workspace) {

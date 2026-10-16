@@ -53,13 +53,13 @@ inline void anytimeEquivalent() {
     mss::GameControl::Position position(std::move(board), workspace.game);
     const mss::winrate::Input root = position.input(mss::ShapeSolver::OrderAlgo::Auto);
     for (int branch = 0; branch < 2; ++branch) {
-        mss::ObservedBoard::Delta delta;
-        delta.changes.emplace_back(branch == 0 ? 422 : 452, mss::ObservedBoard::CellState::Hidden, branch == 0 ? mss::ObservedBoard::CellState::Num6 : mss::ObservedBoard::CellState::Num3);
-        mss::ObservedBoard::applyDelta(root.board, delta.changes);
-        mss::Basic::Delta basicDelta; mss::Basic::update(root.basic, basicDelta, root.board, delta, workspace.game.basic);
-        mss::Structure::Delta structureDelta; const mss::winrate::CellId changed = delta.changes.front().cell; mss::Structure::update(root.structure, structureDelta, root.board, root.basic, root.shapes, std::span{&changed, 1}, workspace.game.structure);
+        mss::ObservedBoard::Delta delta(root.boardPool.changes.push_back());
+        delta.changes.push_back(root.boardPool.changes, {branch == 0 ? 422 : 452, mss::ObservedBoard::CellState::Hidden, branch == 0 ? mss::ObservedBoard::CellState::Num6 : mss::ObservedBoard::CellState::Num3});
+        mss::ObservedBoard::applyDelta(root.board, delta, root.boardPool);
+        const mss::Basic::Delta basicDelta = mss::Basic::update(root.basic, root.board, delta, root.boardPool, root.basicPool, workspace.game.basic);
+        const mss::winrate::CellId changed = delta.changes.span(root.boardPool.changes).front().cell; const mss::Structure::Delta structureDelta = mss::Structure::update(root.structure, root.board, root.basic, root.shapes, std::span{&changed, 1}, workspace.game.structure);
         const mss::Probability::Result probability = mss::Probability::analyze(root.board, root.basic, root.structure, root.shapes, root.distributions, workspace.game.probability);
-        const mss::winrate::Input input(root.board, root.basic, root.structure, probability, root.shapes, root.distributions);
+        const mss::winrate::Input input(root.board, root.basic, root.structure, probability, root.shapes, root.distributions, root.boardPool, root.basicPool);
         const mss::LongTermRisk::Result risk = mss::LongTermRisk::analyze(input, {}, engineConfig.game.javaEval.moveEval.longTermRisk, workspace.game.javaEval.moveEval.longTermRisk);
         std::vector<mss::winrate::CellId> offEdge, witnesses;
         for (int cell = 0; cell < 480; ++cell) {
@@ -67,14 +67,19 @@ inline void anytimeEquivalent() {
             else if (input.basic.marks[cell / 30][cell % 30] == mss::Basic::Mark::T) offEdge.push_back(cell);
         }
         mss::MoveEval::Selection::Workspace selection;
-        const std::vector<mss::winrate::CellId> selected = mss::MoveEval::Selection::window(input, &risk, offEdge, witnesses, offEdge.empty() ? -1 : offEdge.front(), engineConfig.game.javaEval.selection, selection);
+        std::vector<mss::winrate::CellId> selected;
+        mss::MoveEval::Selection::window(selected, input, &risk, offEdge, witnesses, offEdge.empty() ? -1 : offEdge.front(), engineConfig.game.javaEval.selection, selection);
         mss::assert_(input.probability.mineProbability(391, input.board, input.basic, input.structure) == 1.0L, "test::anytimeEquivalent: 两个分支的 (14,2) 都必须为雷");
         mss::assert_((input.basic.marks[13][1] == mss::Basic::Mark::F) == (branch == 0), "test::anytimeEquivalent: 固定盘面应覆盖 Basic 标雷与仅概率确认雷两种路径");
         const std::array<mss::winrate::CellId, 5> expected{25, 26, 27, 28, 29};
         mss::assert_(selected.size() == expected.size() && std::equal(selected.begin(), selected.end(), expected.begin()), "test::anytimeEquivalent: 把必雷当通路会使七格区域跨过八格阈值");
-        mss::Structure::applyDelta(root.structure, root.shapes, structureDelta.removed, structureDelta.added, true);
-        mss::Basic::applyDelta(root.basic, basicDelta.changes, true);
-        mss::ObservedBoard::applyDelta(root.board, delta.changes, true);
+        mss::Structure::applyDelta(root.structure, root.shapes, structureDelta, true);
+        mss::Basic::applyDelta(root.basic, basicDelta, root.basicPool, true);
+        mss::ObservedBoard::applyDelta(root.board, delta, root.boardPool, true);
+        root.shapes.removed.pop_back(structureDelta.removed);
+        root.shapes.added.pop_back(structureDelta.added);
+        root.basicPool.changes.pop_back(basicDelta.changes);
+        root.boardPool.changes.pop_back(delta.changes);
     }
     std::vector<long double> automaticValues;
     for (bool full : {false, true}) {
@@ -351,21 +356,25 @@ inline void anytimeReplay() {
     mss::Structure::Result structure = mss::Structure::analyze(board, basic, shapes, workspace.game.structure);
     const std::array<mss::ObservedBoard::CellId, 2> cells{40, 20};
     const std::array<int, 2> digits{0, 1};
-    std::array<mss::ObservedBoard::Delta, 2> boards;
-    std::array<mss::Basic::Delta, 2> basics;
-    std::array<mss::Structure::Delta, 2> structures;
+    mss::ObservedBoard::Pool boardPool;
+    mss::Basic::Pool basicPool;
+    std::vector<mss::ObservedBoard::Delta> boards;
+    std::vector<mss::Basic::Delta> basics;
+    std::vector<mss::Structure::Delta> structures;
     std::vector<mss::ObservedBoard::Result> boardStates{board};
     std::vector<mss::Basic::Result> basicStates{basic};
     std::vector<mss::Structure::Result> structureStates{structure};
     for (int i = 0; i < 2; ++i) {
         const auto [row, col] = board.pos(cells[i]);
-        boards[i].changes.emplace_back(cells[i], board.board[row][col], (mss::ObservedBoard::CellState)digits[i]);
-        mss::ObservedBoard::applyDelta(board, boards[i].changes);
-        mss::Basic::update(basic, basics[i], board, boards[i], workspace.game.basic);
-        mss::Structure::update(structure, structures[i], board, basic, shapes, std::span{&cells[i], 1}, workspace.game.structure);
+        boards.emplace_back(boardPool.changes.push_back());
+        boards[i].changes.push_back(boardPool.changes, {cells[i], board.board[row][col], (mss::ObservedBoard::CellState)digits[i]});
+        mss::ObservedBoard::applyDelta(board, boards[i], boardPool);
+        basics.push_back(mss::Basic::update(basic, board, boards[i], boardPool, basicPool, workspace.game.basic));
+        structures.push_back(mss::Structure::update(structure, board, basic, shapes, std::span{&cells[i], 1}, workspace.game.structure));
         boardStates.push_back(board); basicStates.push_back(basic); structureStates.push_back(structure);
     }
-    mss::assert_(std::count_if(basics[0].changes.begin(), basics[0].changes.end(), [](const mss::Basic::Delta::Change &change) { return change.cell == 31; }) == 2, "test::anytimeReplay: 未覆盖同格 T→H→S 的两次变化");
+    const std::span<const mss::Basic::Delta::Change> firstChanges = basics[0].changes.span(basicPool.changes);
+    mss::assert_(std::count_if(firstChanges.begin(), firstChanges.end(), [](const mss::Basic::Delta::Change &change) { return change.cell == 31; }) == 2, "test::anytimeReplay: 未覆盖同格 T→H→S 的两次变化");
     auto check = [&](int state) {
         mss::assert_(mss::Basic::checkValid(board, basic) && structure.components == structureStates[state].components, "test::anytimeReplay: 重放后邻域计数或组件顺序改变");
         for (int cell = 0; cell < 81; ++cell) {
@@ -375,15 +384,15 @@ inline void anytimeReplay() {
     };
     for (int repeat = 0; repeat < 3; ++repeat) {
         for (int i = 1; i >= 0; --i) {
-            mss::Structure::applyDelta(structure, shapes, structures[i].removed, structures[i].added, true);
-            mss::Basic::applyDelta(basic, basics[i].changes, true);
-            mss::ObservedBoard::applyDelta(board, boards[i].changes, true);
+            mss::Structure::applyDelta(structure, shapes, structures[i], true);
+            mss::Basic::applyDelta(basic, basics[i], basicPool, true);
+            mss::ObservedBoard::applyDelta(board, boards[i], boardPool, true);
             check(i);
         }
         for (int i = 0; i < 2; ++i) {
-            mss::ObservedBoard::applyDelta(board, boards[i].changes);
-            mss::Basic::applyDelta(basic, basics[i].changes);
-            mss::Structure::applyDelta(structure, shapes, structures[i].removed, structures[i].added);
+            mss::ObservedBoard::applyDelta(board, boards[i], boardPool);
+            mss::Basic::applyDelta(basic, basics[i], basicPool);
+            mss::Structure::applyDelta(structure, shapes, structures[i]);
             check(i + 1);
         }
     }

@@ -109,7 +109,7 @@ void DfsSolver::forEachAssignment(const Structure::Shape &shape, const Structure
     enumerateAssignments(shape, shapes, workspace, [&](const std::vector<char> &assignment, long double ways) { callback(assignment, ways); });
 }
 
-DistributionResult DfsSolver::analyze(const Structure::Shape &shape, const Structure::Pool &shapes, Workspace &workspace) {
+DistributionResult DfsSolver::analyze(const Structure::Shape &shape, const Structure::Pool &shapes, DistributionPool &distPool, Workspace &workspace) {
     const int boxCount = shape.boxes.size;
     int maxMineCount = 0;
     for (const Structure::Shape::Box &box : shape.boxes.span(shapes.boxes))
@@ -132,20 +132,18 @@ DistributionResult DfsSolver::analyze(const Structure::Shape &shape, const Struc
     while (start <= maxMineCount && ways[start] == 0.0L)
         ++start;
     if (start > maxMineCount)
-        return {0, boxCount, {}, {}};
+        return {0, boxCount, {0, 0}, {0, 0}};
     int end = maxMineCount;
     while (ways[end] == 0.0L)
         --end;
 
-    std::vector<long double> compactWays(ways.begin() + start, ways.begin() + end + 1);
-    std::vector<long double> expectationValues((std::size_t)(end - start + 1) * boxCount, 0.0L);
-    for (int mineCount = start; mineCount <= end; ++mineCount) {
-        if (ways[mineCount] == 0.0L)
-            continue;
+    vectorPool<long double>::vector compactWays = distPool.values.push_back();
+    for (int mineCount = start; mineCount <= end; ++mineCount) compactWays.push_back(distPool.values, ways[mineCount]);
+    vectorPool<long double>::vector expectationValues = distPool.values.push_back();
+    for (int mineCount = start; mineCount <= end; ++mineCount)
         for (int box = 0; box < boxCount; ++box)
-            expectationValues[(std::size_t)(mineCount - start) * boxCount + box] = moments[mineCount][box] / ways[mineCount];
-    }
-    return {start, boxCount, std::move(compactWays), std::move(expectationValues)};
+            expectationValues.push_back(distPool.values, ways[mineCount] == 0.0L ? 0.0L : moments[mineCount][box] / ways[mineCount]);
+    return {start, boxCount, compactWays, expectationValues};
 }
 
 void DfsSolver::observe(const Structure::Shape &shape, const Structure::Pool &shapes, const std::vector<int> &adjacentBoxCells, Structure::BoxId xBox, ObversedResult &result, Workspace &workspace) {

@@ -80,13 +80,13 @@ void Probability::analyze(const ObservedBoard::Result &board, const Basic::Resul
     ws.frontiers.clear();
     ws.distributionIds.reserve(structure.components.size());
     ws.frontiers.reserve(structure.components.size());
-    // 先完成所有池插入，再借用 ways 向量；中途插入可能搬动池内的 DistributionResult。
+    // 先完成所有池插入，再借用系数；中途插入可能搬动池内的结果与系数数组。
     for (int component = 0; component < (int)structure.components.size(); ++component) {
         const Structure::Instance &instance = shapes.getInstance(structure.components[component]);
         ws.distributionIds.push_back(ShapeSolver::analyze(shapes.get(instance.shape), shapes, distributions, ws.shapeSolver, algo));
     }
     for (const ShapeSolver::DistributionId id : ws.distributionIds)
-        if (distributions.get(id).ways().empty()) {
+        if (distributions.get(id).ways(distributions.values).empty()) {
             result.components_.clear();
             result.boxProbabilities_.clear();
             result.candidates_ = 0.0L;
@@ -107,7 +107,7 @@ void Probability::analyze(const ObservedBoard::Result &board, const Basic::Resul
     result.tCellProbability_ = 0.0L;
     for (int component = 0; component < (int)ws.distributionIds.size(); ++component) {
         const ShapeSolver::DistributionResult &distribution = distributions.get(ws.distributionIds[component]);
-        ws.frontiers.push_back(Poly(distribution.start(), distribution.ways()));
+        ws.frontiers.push_back(Poly(distribution.start(), distribution.ways(distributions.values)));
     }
 
     const int totalMines = board.totalMines - basic.mineSum;
@@ -118,7 +118,7 @@ void Probability::analyze(const ObservedBoard::Result &board, const Basic::Resul
         const Structure::Instance &instance = shapes.getInstance(structure.components[component]);
         const Structure::Shape &shape = shapes.get(instance.shape);
         const Probability::Result::Component &componentResult = result.components_[component];
-        const std::vector<long double> &componentWays = distribution.ways();
+        const std::span<const long double> componentWays = distribution.ways(distributions.values);
         for (int i = 0; i < (int)componentWays.size(); ++i) {
             if (componentWays[i] == 0.0L)
                 continue;
@@ -127,7 +127,7 @@ void Probability::analyze(const ObservedBoard::Result &board, const Basic::Resul
             if (outsideWays == 0.0L)
                 continue;
             const long double totalWays = componentWays[i] * outsideWays;
-            const std::span<const long double> expectations = distribution.perBoxExpectation(i);
+            const std::span<const long double> expectations = distribution.perBoxExpectation(i, distributions.values);
             // expectation 是该雷数档下 Box 中的期望雷数，除以 Box 大小后才是任一格概率的分子。
             for (int box = 0; box < shape.boxes.size; ++box)
                 result.boxProbabilities_[componentResult.boxOffset + box] += totalWays * expectations[box] / shape.boxes.span(shapes.boxes)[box].size;

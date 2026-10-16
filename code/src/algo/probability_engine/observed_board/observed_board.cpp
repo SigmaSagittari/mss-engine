@@ -11,11 +11,10 @@ ObservedBoard::CellId ObservedBoard::Result::id(int row, int col) const { return
 
 std::pair<int, int> ObservedBoard::Result::pos(CellId cell) const { return {cell / board.cols(), cell % board.cols()}; }
 
-void ObservedBoard::Delta::clear() { changes.clear(); }
-
 ObservedBoard::Result ObservedBoard::analyze(int rows, int cols, int mines) { return Result(rows, cols, mines); }
 
-void ObservedBoard::applyDelta(Result &board, std::span<const Delta::Change> changes, bool reverse) {
+void ObservedBoard::applyDelta(Result &board, const Delta &delta, const Pool &pool, bool reverse) {
+    const std::span<const Delta::Change> changes = delta.changes.span(pool.changes);
     for (int i = 0; i < (int)changes.size(); ++i) {
         const Delta::Change &change = changes[reverse ? changes.size() - 1 - i : i];
         const std::pair<int, int> position = board.pos(change.cell);

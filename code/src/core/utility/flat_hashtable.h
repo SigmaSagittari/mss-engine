@@ -112,7 +112,8 @@ template <typename Key, typename Value, typename Hash = SplitMix64Hash> class Fl
 
     void rehash(std::size_t newCapacity) {
         const bool allocate = capacity_ + newCapacity > allocated_;
-        Slot *next = allocate ? new Slot[newCapacity] : (activeSlots_ == slots_ ? slots_ + allocated_ - newCapacity : slots_);
+        // 留够新旧两张表的空间，清空后重建到相同规模时继续复用双端区间。
+        Slot *next = allocate ? new Slot[capacity_ + newCapacity] : (activeSlots_ == slots_ ? slots_ + allocated_ - newCapacity : slots_);
         for (std::size_t i = 0; i < newCapacity; ++i) next[i].used = 0;
         for (std::size_t i = 0; i < capacity_; ++i) {
             const Slot &source = activeSlots_[i];
@@ -126,7 +127,7 @@ template <typename Key, typename Value, typename Hash = SplitMix64Hash> class Fl
         if (allocate) {
             delete[] slots_;
             slots_ = next;
-            allocated_ = newCapacity;
+            allocated_ = capacity_ + newCapacity;
         }
         activeSlots_ = next;
         capacity_ = newCapacity;

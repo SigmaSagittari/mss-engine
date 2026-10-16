@@ -127,13 +127,9 @@ struct GameControl {
             explicit PositionResult(Basic::Result basic) : basic(std::move(basic)), probabilityDirty(true) {}
         };
 
-        // Basic 保存最近一轮的撤回记录，Structure 保存最近一次合并更新的撤回记录。
-        struct PositionDelta {
-            Basic::Delta basic;
-            mutable Structure::Delta structure;
-        };
-
         struct PositionPool {
+            ObservedBoard::Pool board;
+            Basic::Pool basic;
             // Structure::Result 的组件 ID 由 shapes 拥有，池必须活得比 Result 久。
             mutable Structure::Pool shapes;
             // 按 Shape 复用求解分布，池内 ID 在 clear 前有效。
@@ -143,7 +139,6 @@ struct GameControl {
         ObservedBoard::Result observedBoard_;
         Error error_;
         PositionResult result_;
-        PositionDelta delta_;
         PositionPool pool_;
         // 自上次结构同步以来揭开的格子；Game 每格只揭开一次，无需去重，空列表即表示结构已同步。
         mutable std::vector<ObservedBoard::CellId> structureLazyUpdate_;
@@ -173,8 +168,6 @@ struct GameControl {
         // 统计仍为 Hidden 的安全格。
         int remainingSafe_;
         State state_;
-        // 每次批量 play 复用同一份观测变化，保留 changes 的容量。
-        ObservedBoard::Delta playDelta_;
         Position position_;
         // 借用调用方招法池；跨 reset 保留，生命周期覆盖 Game，串行使用。
         SuggestPool &suggestions_;

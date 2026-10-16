@@ -35,7 +35,7 @@ inline void bruteforce() {
         // Structure 组件分别作为前沿因子，全部 T 格作为一个无前沿因子，覆盖全盘候选布局。
         for (int component = 0; component < (int)distributionIds.size(); ++component) {
             const mss::ShapeSolver::DistributionResult &distribution = distributions.get(distributionIds[component]);
-            logicComponents.push_back({mss::Poly(distribution.start(), distribution.ways()), 0});
+            logicComponents.push_back({mss::Poly(distribution.start(), distribution.ways(distributions.values)), 0});
         }
         if (basic.unknownSum > 0)
             logicComponents.push_back({mss::Poly(0, unitWays), basic.unknownSum});

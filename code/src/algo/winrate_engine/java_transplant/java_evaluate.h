@@ -24,7 +24,7 @@ struct JavaEval {
     // 空 cells 自动找候选并过滤 dead；指定格按输入顺序评分。reason 仅用于返回自动选择原因。
     static Result analyze(const winrate::Input &input, const Config &cfg, Workspace &workspace, winrate::Cells cells = {}, MoveEval::Selection::Reason *reason = nullptr);
     // 已准备候选的评分入口保留原顺序，不执行搜索剪枝。
-    // 结果拥有分支与 Delta；工作区串行复用，临时揭示在返回前已撤回。
+    // 结果拥有分支和 Delta 切片；记录借用 input 的各模块池，读取分支前不得清空或退回这些记录。工作区串行复用，临时揭示在返回前已撤回。
     static Result analyze(const winrate::Input &input, const LongTermRisk::Result &risk, const MoveEval::Selection::Result &candidates, const Config &cfg, Workspace &workspace);
 };
 

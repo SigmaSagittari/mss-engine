@@ -33,6 +33,7 @@ struct Pseudo {
         std::vector<winrate::CellId> trouble; // 只监控到链中一格的格（会打破封闭性）
         int witnessSize;         // Java Link 排序的次级键（witness squares 数）
         Link(winrate::CellId first, winrate::CellId second, bool deadFirst, bool deadSecond, bool pseudo, int witnessSize) : first(first), second(second), closedFirst(true), closedSecond(true), deadFirst(deadFirst), deadSecond(deadSecond), processed(false), pseudo(pseudo), unavoidable(true), witnessSize(witnessSize) {}
+        void reset(winrate::CellId first, winrate::CellId second, bool deadFirst, bool deadSecond, bool pseudo, int witnessSize);
     };
     struct Chain {
         std::vector<winrate::CellId> whole5050;  // 全部组成格
@@ -44,7 +45,7 @@ struct Pseudo {
     };
 
   public:
-    // update 使用前清空临时容器，阶段间显式传递；同一工作区只能串行复用。
+    // 保留临时槽及其内部 vector 容量；每次 update 从零计数，阶段间只传本次有效范围。
     struct Workspace {
       private:
         friend struct Pseudo;
@@ -62,14 +63,14 @@ struct Pseudo {
     static Kind update(Result &result, const winrate::View &input, winrate::Cells dead, const Config &config, Workspace &workspace);
 
   private:
-    static void collectLinks(const winrate::View &input, winrate::Cells dead, long double eqEps, std::vector<Link> &links, std::vector<std::vector<winrate::CellId>> &witnesses, Workspace &workspace);
-    static Kind extendChains(Result &result, const winrate::Board &board, std::span<Link> links, std::vector<Chain> &chains);
+    static void collectLinks(const winrate::View &input, winrate::Cells dead, long double eqEps, std::vector<Link> &links, int &linkCount, std::vector<std::vector<winrate::CellId>> &witnesses, int &witnessCount, Workspace &workspace);
+    static Kind extendChains(Result &result, const winrate::Board &board, std::span<Link> links, std::vector<Chain> &chains, int &chainCount);
     static Kind connectChains(Result &result, const winrate::View &input, winrate::Cells dead, long double eqEps, std::span<Chain> chains, std::span<const std::vector<winrate::CellId>> witnesses, Workspace &workspace);
     static bool pseudoContains(winrate::Cells cells, winrate::CellId cell);
     static bool adjacent(const winrate::Board &board, winrate::CellId lhs, winrate::CellId rhs);
     static bool isMine(const winrate::View &input, winrate::CellId cell, long double eqEps);
     static void assess(Link &link, const winrate::View &input, long double eqEps);
-    static void findRootedLinks(winrate::Cells cells, const winrate::View &input, winrate::Cells dead, int witnessSize, long double eqEps, std::vector<Link> &links);
+    static void findRootedLinks(winrate::Cells cells, const winrate::View &input, winrate::Cells dead, int witnessSize, long double eqEps, std::vector<Link> &links, int &linkCount);
     static bool noTrouble(const winrate::Board &board, winrate::Cells trouble, winrate::Cells chain);
     static bool linkLess(const Link &lhs, const Link &rhs);
 };

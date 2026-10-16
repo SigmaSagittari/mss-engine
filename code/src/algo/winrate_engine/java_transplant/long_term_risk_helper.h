@@ -40,9 +40,6 @@ struct LongTermRisk {
         Basic::Workspace &basic;
         Structure::Workspace &structure;
         Probability::Workspace &probability;
-        ObservedBoard::Delta boardDelta;
-        Basic::Delta basicDelta;
-        Structure::Delta structureDelta;
         std::vector<winrate::CellId> changedCells;
         // winrate::Probability 不允许空构造；首次以真实分支构造，以后复用输出容量。
         std::optional<winrate::Probability> forcedProbability;

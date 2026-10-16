@@ -13,8 +13,8 @@ namespace ShapeSolver {
 struct DfsSolver {
     using AssignmentCallback = std::function<void(const std::vector<char> &, long double)>;
 
-    // 汇总合法 Box 雷数赋值，返回按组件总雷数分组的布局权重和 Box 条件期望雷数。
-    static DistributionResult analyze(const Structure::Shape &shape, const Structure::Pool &shapes, Workspace &workspace);
+    // 汇总合法 Box 雷数赋值，结果数据写入 distPool，返回布局权重和 Box 条件期望雷数的下标。
+    static DistributionResult analyze(const Structure::Shape &shape, const Structure::Pool &shapes, DistributionPool &distPool, Workspace &workspace);
     // adjacentBoxCells 长度必须等于 shape.boxes.size()，其第 b 项是第 b 个 Box 中与点击格相邻的格数。
     // xBox 为点击格所属 Box 的 ID，或在该组件外时为 -1；非负时必须小于 shape.boxes.size()。
     // 覆写 result 为按邻居雷数和组件雷数联合统计的中间权重，供外层 DP 使用。

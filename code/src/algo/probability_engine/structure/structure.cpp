@@ -101,6 +101,8 @@ void Structure::Pool::clear() {
     cells.clear();
     boxOf.clear();
     constraintCells.clear();
+    removed.clear();
+    added.clear();
 }
 
 U128 Structure::Pool::computeInstanceHash(const Instance &data, const Pool &pool) {
@@ -260,7 +262,7 @@ U128 Structure::computeHash(vectorPool<Shape::Box>::vector boxes, vectorPool<Sha
     return hasher.finalize();
 }
 
-void Structure::update(Result &result, Delta &delta, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool,
+Structure::Delta Structure::update(Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool,
                        std::span<const ObservedBoard::CellId> changedCells, Workspace &workspace) {
     const int rows = board.board.rows();
     const int cols = board.board.cols();
@@ -272,7 +274,7 @@ void Structure::update(Result &result, Delta &delta, const ObservedBoard::Result
         scratch.cells.reserve((std::size_t)rows * cols / 2);
     }
     scratch.dirtyCells.clear();
-    scratch.staged.clear();
+    Delta delta(pool.removed.push_back(), pool.added.push_back());
     scratch.removed.assign(result.components.size(), 0);
     auto markDirty = [&](int row, int col) {
         if (scratch.dirty[row][col])
@@ -319,16 +321,14 @@ void Structure::update(Result &result, Delta &delta, const ObservedBoard::Result
             if (basic.marks[componentRow][componentCol] == Basic::Mark::H)
                 scratch.cellHash[componentRow][componentCol] = cellSignature(componentRow, componentCol, board);
         }
-        scratch.staged.push_back(buildComponent(scratch.cells, board, basic, scratch.cellHash, pool, workspace));
+        delta.added.push_back(pool.added, buildComponent(scratch.cells, board, basic, scratch.cellHash, pool, workspace));
     }
-    delta.removed.clear();
-    delta.added.assign(scratch.staged.begin(), scratch.staged.end());
     for (int i = (int)(result.components.size()) - 1; i >= 0; --i) {
         if (!scratch.removed[i])
             continue;
-        delta.removed.push_back({i, result.components[i]});
+        delta.removed.push_back(pool.removed, {i, result.components[i]});
     }
-    applyDelta(result, pool, delta.removed, delta.added);
+    applyDelta(result, pool, delta);
     // 新连接只会出现在变化格及其邻格；远端传播变化落在已命中的旧组件中，前面的失效流程已登记整组格子。因此 collectComponent 访问的格子均在 dirtyCells，按 dirtyCells 清理即可。
     for (ObservedBoard::CellId cell : scratch.dirtyCells) {
         const auto [row, col] = board.pos(cell);
@@ -336,9 +336,12 @@ void Structure::update(Result &result, Delta &delta, const ObservedBoard::Result
         scratch.visited[row][col] = 0;
         scratch.cellHash[row][col] = U128{};
     }
+    return delta;
 }
 
-void Structure::applyDelta(Result &result, const Pool &pool, std::span<const Delta::Change> removed, std::span<const InstanceId> added, bool reverse) {
+void Structure::applyDelta(Result &result, const Pool &pool, const Delta &delta, bool reverse) {
+    const std::span<const Delta::Change> removed = delta.removed.span(pool.removed);
+    const std::span<const InstanceId> added = delta.added.span(pool.added);
     if (reverse) {
         for (int i = (int)added.size() - 1; i >= 0; --i) {
             clearInstance(result.components.back(), pool, result.cellLoc);

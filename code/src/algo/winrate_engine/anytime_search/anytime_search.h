@@ -63,13 +63,14 @@ struct AnytimeSearch {
         friend struct AnytimeSearch;
         JavaEval::Workspace &javaEval;
         std::vector<U128> identities;
+        std::vector<winrate::CellId> witnesses;
     };
 
     // 空 cells 自动找候选并过滤 dead；指定格按输入顺序准备观测。剪枝只在 Search 内执行。
     static Result analyze(const winrate::Input &input, const Config &cfg, Workspace &workspace, long long nodeBudget, std::stop_token stop, winrate::Cells cells = {});
     // 候选及观测已在同一有效根盘面上准备完成。
     // 第零层无条件发布，预算只约束后续展开；每个 node 是一次强制安全或数字分支概率计算。
-    // Result 拥有输入副本、搜索树和续算进度；借用的 shapes/distributions 池必须覆盖 Result 生命周期，不能清空或并发写入。
+    // Result 拥有输入副本、搜索树和续算进度；借用的 shapes/distributions/boardPool/basicPool 必须覆盖 Result 生命周期，不能清空或并发写入。
     // 配置在续算期间不变；工作区只借用临时容量，可在两次 update 之间串行用于其他分析。
     static Result analyze(const winrate::Input &input, const LongTermRisk::Result &risk, const MoveEval::Selection::Result &candidates, const Config &cfg, Workspace &workspace, long long nodeBudget, std::stop_token stop);
     static void update(Result &result, const Config &cfg, Workspace &workspace, long long nodeBudget, std::stop_token stop);

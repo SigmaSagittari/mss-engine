@@ -34,7 +34,9 @@ inline void monteCarlo(const Config &config = {9, 9, 10, 10.0L, 1000000, Algo::J
         for (int col = row; col <= board.board.cols() / 2; ++col)
             if (board.board[row][col] == mss::ObservedBoard::CellState::Hidden)
                 targets.push_back(board.id(row, col));
-    const mss::winrate::Input root(board, basic, structure, probability, shapes, distributions);
+    mss::ObservedBoard::Pool boardPool;
+    mss::Basic::Pool basicPool;
+    const mss::winrate::Input root(board, basic, structure, probability, shapes, distributions, boardPool, basicPool);
     const std::chrono::steady_clock::time_point prepareStart = std::chrono::steady_clock::now();
     mss::MonteCarlo::Result result = mss::MonteCarlo::analyze(root, algorithm, engineConfig.monteCarlo, workspace.monteCarlo, targets);
     const long double prepareMilliseconds = std::chrono::duration<long double, std::milli>(std::chrono::steady_clock::now() - prepareStart).count();
