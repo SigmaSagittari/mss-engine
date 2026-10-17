@@ -27,210 +27,210 @@
     <Filter Include="code\test\benchmark" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\code\src\algo\winrate_engine\monte_carlo\monte_carlo.cpp">
+    <ClCompile Include="..\code1.5\src\algo\winrate_engine\monte_carlo\monte_carlo.cpp">
       <Filter>code\src\algo\winrate_engine\monte_carlo</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\winrate_engine\anytime_search\anytime_search.cpp">
+    <ClCompile Include="..\code1.5\src\algo\winrate_engine\anytime_search\anytime_search.cpp">
       <Filter>code\src\algo\winrate_engine\anytime_search</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\winrate_engine\internal\move_evaluate.cpp">
+    <ClCompile Include="..\code1.5\src\algo\winrate_engine\internal\move_evaluate.cpp">
       <Filter>code\src\algo\winrate_engine\internal</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\winrate_engine\java_transplant\java_evaluate.cpp">
+    <ClCompile Include="..\code1.5\src\algo\winrate_engine\java_transplant\java_evaluate.cpp">
       <Filter>code\src\algo\winrate_engine\java_transplant</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\winrate_engine\java_transplant\long_term_risk_helper.cpp">
+    <ClCompile Include="..\code1.5\src\algo\winrate_engine\java_transplant\long_term_risk_helper.cpp">
       <Filter>code\src\algo\winrate_engine\java_transplant</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\winrate_engine\java_transplant\pseudo_helper.cpp">
+    <ClCompile Include="..\code1.5\src\algo\winrate_engine\java_transplant\pseudo_helper.cpp">
       <Filter>code\src\algo\winrate_engine\java_transplant</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\main.cpp">
+    <ClCompile Include="..\code1.5\main.cpp">
       <Filter>code</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\probability_engine\basic\basic.cpp">
+    <ClCompile Include="..\code1.5\src\algo\probability_engine\basic\basic.cpp">
       <Filter>code\src\algo\probability_engine\basic</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\probability_engine\bruteforce\bruteforce.cpp">
+    <ClCompile Include="..\code1.5\src\algo\probability_engine\bruteforce\bruteforce.cpp">
       <Filter>code\src\algo\probability_engine\bruteforce</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\probability_engine\bruteforce\bruteforce_normal.cpp">
+    <ClCompile Include="..\code1.5\src\algo\probability_engine\bruteforce\bruteforce_normal.cpp">
       <Filter>code\src\algo\probability_engine\bruteforce</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\probability_engine\bruteforce\bruteforce_multimask.cpp">
+    <ClCompile Include="..\code1.5\src\algo\probability_engine\bruteforce\bruteforce_multimask.cpp">
       <Filter>code\src\algo\probability_engine\bruteforce</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\probability_engine\bruteforce\bruteforce_parallel.cpp">
+    <ClCompile Include="..\code1.5\src\algo\probability_engine\bruteforce\bruteforce_parallel.cpp">
       <Filter>code\src\algo\probability_engine\bruteforce</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\probability_engine\observed_board\observed_board.cpp">
+    <ClCompile Include="..\code1.5\src\algo\probability_engine\observed_board\observed_board.cpp">
       <Filter>code\src\algo\probability_engine\observed_board</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\probability_engine\structure\structure.cpp">
+    <ClCompile Include="..\code1.5\src\algo\probability_engine\structure\structure.cpp">
       <Filter>code\src\algo\probability_engine\structure</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\probability_engine\probability\probability.cpp">
+    <ClCompile Include="..\code1.5\src\algo\probability_engine\probability\probability.cpp">
       <Filter>code\src\algo\probability_engine\probability</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\probability_engine\probability\observe.cpp">
+    <ClCompile Include="..\code1.5\src\algo\probability_engine\probability\observe.cpp">
       <Filter>code\src\algo\probability_engine\probability</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\probability_engine\shape_solver\dfs_solver.cpp">
+    <ClCompile Include="..\code1.5\src\algo\probability_engine\shape_solver\dfs_solver.cpp">
       <Filter>code\src\algo\probability_engine\shape_solver</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\probability_engine\shape_solver\graph_solver\graph_step.cpp">
+    <ClCompile Include="..\code1.5\src\algo\probability_engine\shape_solver\graph_solver\graph_step.cpp">
       <Filter>code\src\algo\probability_engine\shape_solver\graph_solver</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\probability_engine\shape_solver\graph_solver\graph_solver.cpp">
+    <ClCompile Include="..\code1.5\src\algo\probability_engine\shape_solver\graph_solver\graph_solver.cpp">
       <Filter>code\src\algo\probability_engine\shape_solver\graph_solver</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\algo\probability_engine\shape_solver\shape_solver.cpp">
+    <ClCompile Include="..\code1.5\src\algo\probability_engine\shape_solver\shape_solver.cpp">
       <Filter>code\src\algo\probability_engine\shape_solver</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\game\game.cpp">
+    <ClCompile Include="..\code1.5\src\game\game.cpp">
       <Filter>code\src\game</Filter>
     </ClCompile>
-    <ClInclude Include="..\code\src\algo\winrate_engine\types.h">
+    <ClInclude Include="..\code1.5\src\algo\winrate_engine\types.h">
       <Filter>code\src\algo\winrate_engine</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\winrate_engine\monte_carlo\monte_carlo.h">
+    <ClInclude Include="..\code1.5\src\algo\winrate_engine\monte_carlo\monte_carlo.h">
       <Filter>code\src\algo\winrate_engine\monte_carlo</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\winrate_engine\java_transplant\long_term_risk_helper.h">
+    <ClInclude Include="..\code1.5\src\algo\winrate_engine\java_transplant\long_term_risk_helper.h">
       <Filter>code\src\algo\winrate_engine\java_transplant</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\winrate_engine\java_transplant\pseudo_helper.h">
+    <ClInclude Include="..\code1.5\src\algo\winrate_engine\java_transplant\pseudo_helper.h">
       <Filter>code\src\algo\winrate_engine\java_transplant</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\probability_engine\observed_board\observed_board.h">
+    <ClInclude Include="..\code1.5\src\algo\probability_engine\observed_board\observed_board.h">
       <Filter>code\src\algo\probability_engine\observed_board</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\probability_engine\probability\probability.h">
+    <ClInclude Include="..\code1.5\src\algo\probability_engine\probability\probability.h">
       <Filter>code\src\algo\probability_engine\probability</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\probability_engine\probability\observe.h">
+    <ClInclude Include="..\code1.5\src\algo\probability_engine\probability\observe.h">
       <Filter>code\src\algo\probability_engine\probability</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\probability_engine\basic\basic.h">
+    <ClInclude Include="..\code1.5\src\algo\probability_engine\basic\basic.h">
       <Filter>code\src\algo\probability_engine\basic</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\probability_engine\bruteforce\bruteforce.h">
+    <ClInclude Include="..\code1.5\src\algo\probability_engine\bruteforce\bruteforce.h">
       <Filter>code\src\algo\probability_engine\bruteforce</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\probability_engine\bruteforce\bruteforce_normal.h">
+    <ClInclude Include="..\code1.5\src\algo\probability_engine\bruteforce\bruteforce_normal.h">
       <Filter>code\src\algo\probability_engine\bruteforce</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\probability_engine\bruteforce\bruteforce_multimask.h">
+    <ClInclude Include="..\code1.5\src\algo\probability_engine\bruteforce\bruteforce_multimask.h">
       <Filter>code\src\algo\probability_engine\bruteforce</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\probability_engine\bruteforce\bruteforce_parallel.h">
+    <ClInclude Include="..\code1.5\src\algo\probability_engine\bruteforce\bruteforce_parallel.h">
       <Filter>code\src\algo\probability_engine\bruteforce</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\core\assert.h">
+    <ClInclude Include="..\code1.5\src\core\assert.h">
       <Filter>code\src\core</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\core\config.h">
+    <ClInclude Include="..\code1.5\src\core\config.h">
       <Filter>code\src\core</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\core\workspace.h">
+    <ClInclude Include="..\code1.5\src\core\workspace.h">
       <Filter>code\src\core</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\game\game.h">
+    <ClInclude Include="..\code1.5\src\game\game.h">
       <Filter>code\src\game</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\core\utility\grid.h">
+    <ClInclude Include="..\code1.5\src\core\utility\grid.h">
       <Filter>code\src\core\utility</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\core\utility\combination.h">
+    <ClInclude Include="..\code1.5\src\core\utility\combination.h">
       <Filter>code\src\core\utility</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\core\utility\bit_mask.h">
+    <ClInclude Include="..\code1.5\src\core\utility\bit_mask.h">
       <Filter>code\src\core\utility</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\core\utility\dynamic_bitset.h">
+    <ClInclude Include="..\code1.5\src\core\utility\dynamic_bitset.h">
       <Filter>code\src\core\utility</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\core\utility\neighbors.h">
+    <ClInclude Include="..\code1.5\src\core\utility\neighbors.h">
       <Filter>code\src\core\utility</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\core\utility\vector_pool.h">
+    <ClInclude Include="..\code1.5\src\core\utility\vector_pool.h">
       <Filter>code\src\core\utility</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\core\utility\flat_hashtable.h">
+    <ClInclude Include="..\code1.5\src\core\utility\flat_hashtable.h">
       <Filter>code\src\core\utility</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\core\utility\hash.h">
+    <ClInclude Include="..\code1.5\src\core\utility\hash.h">
       <Filter>code\src\core\utility</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\core\utility\rng.h">
+    <ClInclude Include="..\code1.5\src\core\utility\rng.h">
       <Filter>code\src\core\utility</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\core\utility\poly.h">
+    <ClInclude Include="..\code1.5\src\core\utility\poly.h">
       <Filter>code\src\core\utility</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\probability_engine\structure\structure.h">
+    <ClInclude Include="..\code1.5\src\algo\probability_engine\structure\structure.h">
       <Filter>code\src\algo\probability_engine\structure</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\probability_engine\shape_solver\shape_solver_types.h">
+    <ClInclude Include="..\code1.5\src\algo\probability_engine\shape_solver\shape_solver_types.h">
       <Filter>code\src\algo\probability_engine\shape_solver</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\probability_engine\shape_solver\shape_solver.h">
+    <ClInclude Include="..\code1.5\src\algo\probability_engine\shape_solver\shape_solver.h">
       <Filter>code\src\algo\probability_engine\shape_solver</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\probability_engine\shape_solver\dfs_solver.h">
+    <ClInclude Include="..\code1.5\src\algo\probability_engine\shape_solver\dfs_solver.h">
       <Filter>code\src\algo\probability_engine\shape_solver</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\probability_engine\shape_solver\graph_solver\graph_step.h">
+    <ClInclude Include="..\code1.5\src\algo\probability_engine\shape_solver\graph_solver\graph_step.h">
       <Filter>code\src\algo\probability_engine\shape_solver\graph_solver</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\probability_engine\shape_solver\graph_solver\graph_solver.h">
+    <ClInclude Include="..\code1.5\src\algo\probability_engine\shape_solver\graph_solver\graph_solver.h">
       <Filter>code\src\algo\probability_engine\shape_solver\graph_solver</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\test\benchmark\anytime_search.h">
+    <ClInclude Include="..\code1.5\test\benchmark\anytime_search.h">
       <Filter>code\test\benchmark</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\test\benchmark\bruteforce.h">
+    <ClInclude Include="..\code1.5\test\benchmark\bruteforce.h">
       <Filter>code\test\benchmark</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\test\benchmark\graph_solver_frequency.h">
+    <ClInclude Include="..\code1.5\test\benchmark\graph_solver_frequency.h">
       <Filter>code\test\benchmark</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\test\benchmark\monte_carlo.h">
+    <ClInclude Include="..\code1.5\test\benchmark\monte_carlo.h">
       <Filter>code\test\benchmark</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\test\benchmark\performance.h">
+    <ClInclude Include="..\code1.5\test\benchmark\performance.h">
       <Filter>code\test\benchmark</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\test\cases.h">
+    <ClInclude Include="..\code1.5\test\cases.h">
       <Filter>code\test</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\test\common.h">
+    <ClInclude Include="..\code1.5\test\common.h">
       <Filter>code\test</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\test\correctness\anytime_search.h">
+    <ClInclude Include="..\code1.5\test\correctness\anytime_search.h">
       <Filter>code\test\correctness</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\test\correctness\bruteforce.h">
+    <ClInclude Include="..\code1.5\test\correctness\bruteforce.h">
       <Filter>code\test\correctness</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\test\correctness\monte_carlo.h">
+    <ClInclude Include="..\code1.5\test\correctness\monte_carlo.h">
       <Filter>code\test\correctness</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\test\correctness\probability_case.h">
+    <ClInclude Include="..\code1.5\test\correctness\probability_case.h">
       <Filter>code\test\correctness</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\test\harness.h">
+    <ClInclude Include="..\code1.5\test\harness.h">
       <Filter>code\test</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\code\src\algo\winrate_engine\anytime_search\anytime_search.h">
+    <ClInclude Include="..\code1.5\src\algo\winrate_engine\anytime_search\anytime_search.h">
       <Filter>code\src\algo\winrate_engine\anytime_search</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\winrate_engine\internal\move_evaluate.h">
+    <ClInclude Include="..\code1.5\src\algo\winrate_engine\internal\move_evaluate.h">
       <Filter>code\src\algo\winrate_engine\internal</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\algo\winrate_engine\java_transplant\java_evaluate.h">
+    <ClInclude Include="..\code1.5\src\algo\winrate_engine\java_transplant\java_evaluate.h">
       <Filter>code\src\algo\winrate_engine\java_transplant</Filter>
     </ClInclude>
   </ItemGroup>
@@ -240,53 +240,53 @@
     <Filter Include="code\src\ui\web" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\code\src\ui\http_server.cpp">
+    <ClCompile Include="..\code1.5\src\ui\http_server.cpp">
       <Filter>code\src\ui</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\ui\session.cpp">
+    <ClCompile Include="..\code1.5\src\ui\session.cpp">
       <Filter>code\src\ui</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\src\ui\ui.cpp">
+    <ClCompile Include="..\code1.5\src\ui\ui.cpp">
       <Filter>code\src\ui</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\code\src\ui\internal\http_server.h">
+    <ClInclude Include="..\code1.5\src\ui\internal\http_server.h">
       <Filter>code\src\ui\internal</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\ui\internal\session.h">
+    <ClInclude Include="..\code1.5\src\ui\internal\session.h">
       <Filter>code\src\ui\internal</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\src\ui\ui.h">
+    <ClInclude Include="..\code1.5\src\ui\ui.h">
       <Filter>code\src\ui</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <CopyFileToFolders Include="..\code\src\ui\web\anytime_search.js">
+    <CopyFileToFolders Include="..\code1.5\src\ui\web\anytime_search.js">
       <Filter>code\src\ui\web</Filter>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="..\code\src\ui\web\analysis.js">
+    <CopyFileToFolders Include="..\code1.5\src\ui\web\analysis.js">
       <Filter>code\src\ui\web</Filter>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="..\code\src\ui\web\game.js">
+    <CopyFileToFolders Include="..\code1.5\src\ui\web\game.js">
       <Filter>code\src\ui\web</Filter>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="..\code\src\ui\web\index.html">
+    <CopyFileToFolders Include="..\code1.5\src\ui\web\index.html">
       <Filter>code\src\ui\web</Filter>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="..\code\src\ui\web\main.js">
+    <CopyFileToFolders Include="..\code1.5\src\ui\web\main.js">
       <Filter>code\src\ui\web</Filter>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="..\code\src\ui\web\monte_carlo.js">
+    <CopyFileToFolders Include="..\code1.5\src\ui\web\monte_carlo.js">
       <Filter>code\src\ui\web</Filter>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="..\code\src\ui\web\state.js">
+    <CopyFileToFolders Include="..\code1.5\src\ui\web\state.js">
       <Filter>code\src\ui\web</Filter>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="..\code\src\ui\web\style.css">
+    <CopyFileToFolders Include="..\code1.5\src\ui\web\style.css">
       <Filter>code\src\ui\web</Filter>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="..\code\src\ui\web\view.js">
+    <CopyFileToFolders Include="..\code1.5\src\ui\web\view.js">
       <Filter>code\src\ui\web</Filter>
     </CopyFileToFolders>
   </ItemGroup>
