@@ -179,11 +179,8 @@ struct Structure {
         } update;
 
         FlatHashTable<U128, BoxId, U128Hash> hashBox;
-        std::vector<BoxId> boxOfCells;
         std::vector<std::array<ObservedBoard::CellId, 9>> buckets;
-        std::vector<std::uint8_t> bucketSize;
         std::vector<char> boxUsed;
-        std::vector<BoxId> allBoxIds;
     };
 
   private:
