@@ -14,10 +14,10 @@ namespace test {
 
 inline void harness() {
     // 正确性检查
-    // correctness::anytimeSearch();
-    // correctness::bruteforce();
-    // correctness::probabilityCase();
-    // correctness::monteCarlo();
+    correctness::probabilityCase();
+    correctness::anytimeSearch();
+    correctness::bruteforce();
+    correctness::monteCarlo();
 
     // 基准测试
     benchmark::anytimeSearch();

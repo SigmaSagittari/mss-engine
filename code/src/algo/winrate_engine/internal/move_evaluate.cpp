@@ -326,7 +326,10 @@ bool MoveEval::advance(Cursor &cursor, winrate::Board &board, winrate::Basic &ba
     const winrate::CellId cell = cursor.analysis.cellId;
     const auto [row, col] = board.pos(cell);
     while (cursor.digit <= 8 && cursor.observation.probability[cursor.digit] == 0.0L) ++cursor.digit;
-    if (cursor.linkedClears && cursor.digit == 9) return true;
+    if (cursor.linkedClears && cursor.digit == 9) {
+        ++cursor.analysis.node;
+        return true;
+    }
     const bool forced = !cursor.linkedClears;
     ObservedBoard::Delta delta(boardPool.changes.push_back());
     delta.changes.push_back(boardPool.changes, {cell, board.board[row][col], cursor.linkedClears ? (winrate::CellState)cursor.digit : winrate::CellState::ForcedSafe});
@@ -335,7 +338,6 @@ bool MoveEval::advance(Cursor &cursor, winrate::Board &board, winrate::Basic &ba
     const Structure::Delta structureDelta = Structure::update(structure, board, basic, shapes, std::span{&cell, 1}, workspace.structure);
     if (!workspace.nextProbability) workspace.nextProbability = Probability::analyze(board, basic, structure, shapes, distributions, workspace.probability);
     else Probability::analyze(board, basic, structure, shapes, distributions, *workspace.nextProbability, workspace.probability);
-    ++cursor.analysis.node;
     const winrate::Probability &next = *workspace.nextProbability;
     const winrate::View nextInput(board, basic, structure, next, shapes);
     const Summary summary = shortTerm(nextInput, remainingSafe - (forced ? 0 : 1));
@@ -373,6 +375,7 @@ bool MoveEval::advance(Cursor &cursor, winrate::Board &board, winrate::Basic &ba
     const long double bonus = 1.0L + (cursor.safeSearch ? 0.0L : cursor.progress * cfg.progressContribution);
     cursor.analysis.multiplier = cursor.influence * bonus;
     cursor.analysis.value *= cursor.analysis.multiplier;
+    ++cursor.analysis.node;
     return true;
 }
 

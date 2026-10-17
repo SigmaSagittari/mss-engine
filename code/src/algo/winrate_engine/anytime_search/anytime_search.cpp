@@ -286,12 +286,14 @@ struct AnytimeSearch::State {
                 const long long before = frame.cursor->analysis.node;
                 // 路径每帧只揭开一格；有 ForcedSafe 时必走 safeSearch，不计算强制安全。
                 const bool complete = MoveEval::advance(*frame.cursor, board, basic, structure, shapes, distributions, boardPool, basicPool, remainingSafe - frameCount + 1, 0, cfg.javaEval.moveEval, workspace.javaEval.moveEval);
-                const long long expanded = frame.cursor->analysis.node - before;
-                result.node += expanded;
-                nodeBudget -= expanded;
                 const bool equivalent = frame.cursor->analysis.equivalence && std::any_of(frame.selected.begin(), frame.selected.begin() + frame.selectedCount, [&](const MoveEval::Analysis &move) { return move.equivalence == frame.cursor->analysis.equivalence; });
                 const int width = frame.safe ? 1 : cfg.width[frameCount == 2 ? 1 : 2];
                 const bool pruned = !complete && frame.selectedCount == width && MoveEval::optimistic(*frame.cursor, cfg.javaEval.moveEval) < frame.selected[frame.selectedCount - 1].value;
+                // 候选在这里结算；被剪掉或被去重的不再走 advance 的完成分支，也补计一次。
+                if (!complete && (equivalent || pruned)) ++frame.cursor->analysis.node;
+                const long long expanded = frame.cursor->analysis.node - before;
+                result.node += expanded;
+                nodeBudget -= expanded;
                 if (equivalent || pruned || (complete && !frame.cursor->alternatives.empty())) {
                     ++frame.next;
                     frame.evaluating = false;
