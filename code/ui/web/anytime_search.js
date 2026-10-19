@@ -1,0 +1,114 @@
+function renderSearch() {
+    searchButton.hidden = mode !== "analysis";
+    searchButton.disabled = operationBusy;
+    searchButton.textContent = searchController && searchResult?.paused !== true ? "结束搜索" : Number(searchNodeBudget.value) === -1 ? "开始搜索" : `搜索 ${Number(searchNodeBudget.value)} 节点`;
+    searchSummary.hidden = mode !== "analysis" || (!searchController && !searchResult);
+    const now = performance.now();
+    while (searchSamples.length > 1 && searchSamples[1].time <= now - 1000) searchSamples.shift();
+    const speed = searchController && searchResult && !searchResult.paused && !searchResult.finished ? (searchResult.nodes - searchSamples[0].nodes) * 1000 / Math.max(1, now - searchSamples[0].time) : 0;
+    searchSummary.textContent = searchResult?.moves.length ? `逐层搜索 · ${formatCount(searchResult.nodes)} 节点 · ${formatCount(Math.round(speed))} 节点/s · 完成第 ${searchResult.completedDepth} 层 · ${searchResult.safe ? "全部安全格" : searchResult.finished ? "已完成" : searchResult.paused ? "已暂停" : "搜索中"}` : searchResult?.finished ? "逐层搜索 · 棋盘已完成，没有待分析招法" : "正在完成第零层…";
+    const move = searchMoves.get(selectedCell);
+    searchHistory.hidden = mode !== "analysis" || !move;
+    observeResult.classList.add("search-observe");
+    for (const item of observeResult.querySelectorAll(".java-score")) {
+        item.firstElementChild.textContent = move ? "根层修正" : "Java 评分";
+        item.lastElementChild.textContent = move ? `×${Number(move.multiplier).toFixed(4)}` : item.lastElementChild.dataset.javaScore;
+        item.title = move ? "本招固定的 influence 与进度修正；精确解出的分支不乘，全部解出后显示 1" : "";
+    }
+    for (const item of observeResult.querySelectorAll(".search-branch-heading")) item.lastElementChild.textContent = "搜索子评分";
+    for (const item of observeResult.querySelectorAll(".search-branch-score")) {
+        const digit = Number(item.dataset.digit);
+        const branch = move?.branches.find((branch) => branch.digit === digit);
+        const value = move ? branch?.value : item.dataset.javaScore;
+        item.textContent = digit === 9 ? "0%" : value === undefined ? "—" : `${(Number(value) * 100).toFixed(4)}%`;
+        item.title = digit === 9 ? "爆炸结局评分为 0" : branch ? `第 ${branch.depth} 层子评分` : "该结局尚无搜索评分";
+    }
+    if (!move) return;
+    const body = searchHistory.querySelector("tbody");
+    // 引擎发布当前已完成评分；保留表格节点和页面滚动位置。
+    let row = body.rows[0];
+    if (!row) {
+        row = body.insertRow();
+        const label = document.createElement("th");
+        label.scope = "row";
+        row.append(label);
+        row.insertCell();
+    }
+    row.cells[0].textContent = `${move.depth} 层`;
+    row.cells[1].textContent = Number(move.value).toFixed(6);
+}
+
+function stopSearch(clear = false) {
+    if (searchController) {
+        searchController.abort();
+        searchController = null;
+        searchStopQueue = searchStopQueue.then(() => post("/api/anytime-search/stop")).catch((error) => setMessage(error.message, "error"));
+    }
+    if (clear) { searchResult = null; searchMoves.clear(); }
+    renderSearch();
+}
+
+function updateSearch(result) {
+    // 暂停期间重复推送无需刷新。
+    if (JSON.stringify(result) === JSON.stringify(searchResult)) return;
+    searchSamples.push({ time: performance.now(), nodes: result.nodes });
+    const changed = new Set(searchMoves.keys());
+    searchResult = result;
+    searchMoves = new Map(result.moves.map((move) => [move.cell, move]));
+    for (const cell of searchMoves.keys()) changed.add(cell);
+    const state = activeState();
+    for (const cell of changed) updateCell(boardElement.children[cell], cell, state);
+    renderSearch();
+    if (result.finished) stopSearch();
+}
+
+async function requestSearch() {
+    if (mode !== "analysis" || operationBusy) return;
+    try {
+        if (searchController && searchResult?.paused !== true) {
+            await post("/api/anytime-search/control", { action: "pause" });
+            return;
+        }
+        const nodes = Number(searchNodeBudget.value);
+        if (!Number.isInteger(nodes) || (nodes !== -1 && nodes < 1) || nodes > 2147483647) throw new Error("节点数必须是 -1 或正整数。");
+        const run = nodes === -1;
+        if (searchController) {
+            searchSamples = [{ time: performance.now(), nodes: searchResult.nodes }];
+            await post("/api/anytime-search/control", { action: run ? "resume" : "step", nodes });
+            return;
+        }
+        const width = searchWidths.map((input) => Number(input.value));
+        if (width.some((value) => !Number.isInteger(value) || value < 1 || value > 2147483647)) throw new Error("候选宽度必须是正整数。");
+        stopMcts(true);
+        clearEndgameResult();
+        searchResult = null;
+        searchMoves.clear();
+        searchSamples = [{ time: performance.now(), nodes: 0 }];
+        const controller = new AbortController();
+        searchController = controller;
+        ++probabilityRevision;
+        probabilityPending = false;
+        render();
+        const timer = setInterval(renderSearch, 100);
+        try {
+            await Promise.all([mctsStopQueue, searchStopQueue]);
+            if (searchController !== controller) return;
+            const state = activeState();
+            const response = await fetch("/api/anytime-search/start", {
+                method: "POST",
+                headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Mss-Token": token },
+                body: new URLSearchParams({ rows: state.rows, cols: state.cols, mines: state.mines, cells: state.cells, algo: shapeAlgo.value, rootWidth: width[0], middleWidth: width[1], deepWidth: width[2], run }),
+                signal: controller.signal
+            });
+            if (!run && response.ok && response.headers.get("Content-Type").startsWith("text/event-stream")) await post("/api/anytime-search/control", { action: "step", nodes });
+            await readUpdates(response, controller, updateSearch);
+        } catch (error) {
+            if (!controller.signal.aborted) setMessage(error.message, "error");
+        } finally {
+            clearInterval(timer);
+            if (searchController === controller) { searchController = null; renderSearch(); }
+        }
+    } catch (error) {
+        setMessage(error.message, "error");
+    }
+}

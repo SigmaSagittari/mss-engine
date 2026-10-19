@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="mss-token" content="__MSS_TOKEN__">
+    <title>mss__MSS_VERSION__</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">mss<span>__MSS_VERSION__</span></div>
+        <label class="difficulty-label" for="difficulty">盘面</label>
+        <select id="difficulty">
+            <option value="beginner">初级 9×9 / 10</option>
+            <option value="intermediate">中级 16×16 / 40</option>
+            <option value="advanced" selected>高级 30×16 / 99</option>
+            <option value="custom">自定义</option>
+        </select>
+        <div id="custom-settings" class="custom-settings" hidden>
+            <label>行 <input id="rows" type="number" min="1" max="100" value="16"></label>
+            <label>列 <input id="cols" type="number" min="1" max="100" value="30"></label>
+            <label>雷 <input id="mines" type="number" min="0" value="99"></label>
+        </div>
+        <button id="new-game" class="primary">新游戏</button>
+        <div class="mode-tabs" role="tablist">
+            <button id="play-mode" class="mode active" role="tab">游玩</button>
+            <button id="analysis-mode" class="mode" role="tab">分析</button>
+        </div>
+        <button id="endgame-analysis" class="secondary">JavaEval</button>
+        <button id="mcts-analysis" class="secondary" aria-pressed="false" hidden>蒙特卡洛</button>
+        <button id="anytime-search" class="secondary" hidden>开始搜索</button>
+        <div id="play-actions" class="play-actions">
+            <button id="play-until-no-safe">开到无安全格</button>
+        </div>
+        <button id="open-settings" class="settings-button">设置</button>
+    </header>
+    <main>
+        <section class="game-area">
+            <div class="board-heading">
+                <div id="board-status">正在载入盘面…</div>
+                <div id="mine-counter"></div>
+            </div>
+            <div id="mcts-summary" class="mcts-summary" hidden></div>
+            <div id="anytime-search-summary" class="mcts-summary" hidden></div>
+            <div class="board-scroll"><div id="board" class="board" role="grid"></div></div>
+            <div id="message" class="message" aria-live="polite" hidden></div>
+        </section>
+        <aside class="details">
+            <h2>详细信息</h2>
+            <div id="detail-empty" class="muted">左键揭格，右键标旗。</div>
+            <section id="analysis-editor" class="analysis-editor" hidden>
+                <div class="editor-row">
+                    <select id="cell-state" aria-label="所选格状态">
+                        <option value="?">隐藏（H）</option>
+                        <option value="G">分析目标格（G）</option>
+                        <option value="0">0</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8</option>
+                        <option value="S">确定安全（S）</option>
+                        <option value="M">确定为雷（M）</option>
+                    </select>
+                </div>
+            </section>
+            <div id="detail-content" hidden>
+                <div id="detail-position" class="detail-position"></div>
+                <div class="risk-row"><span>雷概率</span><strong id="detail-risk">—</strong></div>
+                <div class="candidate-row"><span>总候选方案数</span><strong id="detail-candidates">—</strong></div>
+                <div id="observe-result" class="observe-result"></div>
+                <table id="anytime-search-history" class="score-history" hidden>
+                    <caption>当前层评分</caption>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div id="mcts-detail" class="mcts-detail" hidden>
+                <div class="candidate-row"><span>采样局数</span><strong id="mcts-visits"></strong></div>
+                <div class="candidate-row"><span>总获胜数</span><strong id="mcts-wins"></strong></div>
+                <div class="risk-row"><span>胜率</span><strong id="mcts-winrate"></strong></div>
+            </div>
+            <section id="endgame-result" class="endgame-result" hidden>
+                <h3>分析结果</h3>
+                <div id="endgame-summary" class="muted"></div>
+                <ol id="endgame-moves" class="endgame-moves"></ol>
+            </section>
+        </aside>
+    </main>
+    <dialog id="settings-dialog" aria-labelledby="settings-title">
+        <div class="settings-title"><h2 id="settings-title">设置</h2><button id="close-settings" aria-label="关闭设置">关闭</button></div>
+        <fieldset class="settings-body">
+            <legend class="settings-legend">设置选项</legend>
+            <input class="settings-category-radio" id="settings-category-analysis" type="radio" name="settings-category" value="analysis" checked>
+            <label class="settings-tab" id="settings-tab-analysis" for="settings-category-analysis">分析</label>
+            <input class="settings-category-radio" id="settings-category-board" type="radio" name="settings-category" value="board">
+            <label class="settings-tab" id="settings-tab-board" for="settings-category-board">棋盘</label>
+            <input class="settings-category-radio" id="settings-category-import-export" type="radio" name="settings-category" value="import-export">
+            <label class="settings-tab" id="settings-tab-import-export" for="settings-category-import-export">导入/导出</label>
+            <div class="settings-panels">
+                <section id="settings-analysis" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-analysis">
+                    <label class="settings-row"><span>显示分析概率</span><input id="probability-display" type="checkbox" checked></label>
+                    <label class="settings-row"><span>蒙特卡洛对局策略</span><select id="suggest-strategy"><option value="lowrisk">LowRisk</option><option value="java">JavaEval</option><option value="javaBrute" selected>JavaBrute</option></select></label>
+                    <h3>BruteForce</h3>
+                    <label class="settings-row"><span>少于此方案数尝试暴力</span><input id="endgame-candidate-limit" type="number" min="1" step="1" value="__MSS_BRUTE_FORCE_THRESHOLD__"></label>
+                    <label class="settings-row"><span>BruteForce 分析所有候选格</span><input id="endgame-check-all-moves" type="checkbox" __MSS_BRUTE_FORCE_CHECK_ALL__></label>
+                    <label class="settings-row"><span>BruteForce 多线程</span><input id="endgame-multithread" type="checkbox" __MSS_BRUTE_FORCE_MULTITHREAD__></label>
+                    <label class="settings-row"><span>核心数</span><input id="endgame-max-threads" type="number" min="1" max="2147483647" step="1" value="__MSS_THREAD_LIMIT__"></label>
+                    <h3>逐层搜索</h3>
+                    <div class="search-widths">
+                        <label>根层候选宽度<input id="search-root-width" type="number" min="1" max="2147483647" value="__MSS_SEARCH_ROOT_WIDTH__"></label>
+                        <label>中层候选宽度<input id="search-middle-width" type="number" min="1" max="2147483647" value="__MSS_SEARCH_MIDDLE_WIDTH__"></label>
+                        <label>深层候选宽度<input id="search-deep-width" type="number" min="1" max="2147483647" value="__MSS_SEARCH_DEEP_WIDTH__"></label>
+                    </div>
+                    <label class="settings-row"><span>手动搜索节点数</span><input id="anytime-search-nodes" type="number" min="-1" max="2147483647" value="-1"></label>
+                    <h3>概率求解</h3>
+                    <label class="settings-row"><span>ShapeSolver 算法</span><select id="shape-algo"><option value="auto" selected>auto（默认）</option><option value="autoSA">autoSA</option></select></label>
+                </section>
+                <section id="settings-board" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-board">
+                    <label class="settings-row"><span>棋盘格子大小</span><select id="cell-size"><option value="auto" selected>自适应（默认）</option><option value="25">25 px</option><option value="28">28 px</option><option value="32">32 px</option><option value="34">34 px</option><option value="38">38 px</option><option value="42">42 px</option><option value="48">48 px</option></select></label>
+                    <div>
+                        <label for="rng-seed">RNG seed</label>
+                        <div class="seed-row"><input id="rng-seed" type="text" maxlength="32" spellcheck="false" value="243f6a8885a308d313198a2e03707344"><button id="regenerate-seed">以此种子开局</button></div>
+                    </div>
+                </section>
+                <section id="settings-import-export" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-import-export">
+                    <div class="board-export">
+                        <label for="board-string">当前盘面字符串</label>
+                        <textarea id="board-string" rows="5" spellcheck="false"></textarea>
+                        <div class="board-export-actions"><button id="export-davidnhill">导出为 davidNhill 格式</button><button id="import-board-string" disabled>从字符串导入</button></div>
+                        <div class="muted">导入仅在分析模式开放。</div>
+                        <div id="board-export-status" class="muted" aria-live="polite"></div>
+                    </div>
+                </section>
+            </div>
+        </fieldset>
+    </dialog>
+    <div id="analysis-blocker" class="analysis-blocker" hidden role="dialog" aria-modal="true" aria-labelledby="analysis-blocker-title">
+        <div class="analysis-blocker-content">
+            <div class="analysis-spinner" aria-hidden="true"></div>
+            <h2 id="analysis-blocker-title">正在分析</h2>
+        </div>
+    </div>
+    <script src="/state.js" defer></script>
+    <script src="/game.js" defer></script>
+    <script src="/view.js" defer></script>
+    <script src="/analysis.js" defer></script>
+    <script src="/monte_carlo.js" defer></script>
+    <script src="/anytime_search.js" defer></script>
+    <script src="/main.js" defer></script>
+</body>
+</html>
