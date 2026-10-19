@@ -220,7 +220,7 @@ Pseudo::Kind Pseudo::extendChains(Result &result, const winrate::Board &board, s
 
 Pseudo::Kind Pseudo::connectChains(Result &result, const winrate::View &input, winrate::Cells dead, long double eqEps, std::span<Chain> chains, std::span<const std::vector<winrate::CellId>> pseudoWitnesses, Workspace &workspace) {
     const auto &[board, basic, structure, probability, shapes] = input;
-    // 用 pseudo witness 连接两条链成不可避免的 50/50。
+    // 用多格一雷约束连接两条链。
     for (const std::vector<winrate::CellId> &witness : pseudoWitnesses) {
         Chain *chain1 = nullptr;
         Chain *chain2 = nullptr;
@@ -280,7 +280,8 @@ Pseudo::Kind Pseudo::connectChains(Result &result, const winrate::View &input, w
         if (c == 0)
             result = {chain1->openTile, chain2->openTile};
         else result = {c < 0 ? chain1->openTile : chain2->openTile};
-        return chain1->pseudo || chain2->pseudo ? Kind::OrSafe : Kind::Forced;
+        // 连接约束含两格之外的可能雷位，两端可以同时安全。
+        return Kind::OrSafe;
     }
     return Kind::None;
 }
