@@ -123,6 +123,20 @@ shapeAlgo.addEventListener("change", () => {
         render();
     }
 });
+function updatePolicySettings() {
+    document.getElementById("policy-nodes-row").hidden = suggestStrategy.value !== "anytime";
+    document.getElementById("fifty-fifty-row").hidden = suggestStrategy.value === "lowrisk";
+    document.getElementById("template-prefix-row").hidden = suggestStrategy.value === "lowrisk" || fiftyFifty.value !== "templates";
+    for (const input of [endgameCheckAllMoves, endgameMultithread, endgameMaxThreads]) input.disabled = !(Number(endgameCandidateLimit.value) > 0);
+}
+for (const input of [suggestStrategy, fiftyFifty, templatePrefix, policyNodeBudget, endgameCandidateLimit, endgameCheckAllMoves, endgameMultithread, endgameMaxThreads, ...searchWidths]) input.addEventListener("change", () => {
+    stopMcts(true);
+    stopSearch(true);
+    clearEndgameResult();
+    updatePolicySettings();
+    render();
+});
+updatePolicySettings();
 regenerateSeedButton.addEventListener("click", () => {
     const seed = parseRngSeed(rngSeedInput.value.trim());
     if (!seed) {
@@ -151,7 +165,6 @@ document.getElementById("endgame-analysis").addEventListener("click", requestSug
 mctsButton.addEventListener("click", requestMcts);
 searchButton.addEventListener("click", requestSearch);
 searchNodeBudget.addEventListener("input", renderSearch);
-for (const input of searchWidths) input.addEventListener("change", () => { stopSearch(true); render(); });
 cellState.addEventListener("change", () => editAnalysisCell(selectedCell, cellState.value));
 
 document.addEventListener("click", (event) => {

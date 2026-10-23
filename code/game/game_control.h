@@ -17,7 +17,9 @@ struct Position;
 struct Game;
 
 // 调用方持有、跨 Position/Game 串行复用的建议缓存。
-using SuggestPool = FlatHashTable<U128, ObservedBoard::CellId, U128Hash>;
+struct SuggestPool {
+    FlatHashTable<U128, ObservedBoard::CellId, U128Hash> cache;
+};
 
 // 目前只有 ShapeSolver 参数；策略配置不进这里，随 SuggestPolicy 由调用方提供。
 struct Config {

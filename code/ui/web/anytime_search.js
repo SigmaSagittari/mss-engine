@@ -6,7 +6,8 @@ function renderSearch() {
     const now = performance.now();
     while (searchSamples.length > 1 && searchSamples[1].time <= now - 1000) searchSamples.shift();
     const speed = searchController && searchResult && !searchResult.paused && !searchResult.finished ? (searchResult.nodes - searchSamples[0].nodes) * 1000 / Math.max(1, now - searchSamples[0].time) : 0;
-    searchSummary.textContent = searchResult?.moves.length ? `逐层搜索 · ${formatCount(searchResult.nodes)} 节点 · ${formatCount(Math.round(speed))} 节点/s · 完成第 ${searchResult.completedDepth} 层 · ${searchResult.safe ? "全部安全格" : searchResult.finished ? "已完成" : searchResult.paused ? "已暂停" : "搜索中"}` : searchResult?.finished ? "逐层搜索 · 棋盘已完成，没有待分析招法" : "正在完成第零层…";
+    const engine = searchResult?.engine === "BruteForce" ? "精确枚举" : "逐层搜索";
+    searchSummary.textContent = searchResult?.moves.length ? `${engine} · ${formatCount(searchResult.nodes)} 节点 · ${formatCount(Math.round(speed))} 节点/s · 完成第 ${searchResult.completedDepth} 层 · ${searchResult.safe ? "全部安全格" : searchResult.finished ? "已完成" : searchResult.paused ? "已暂停" : "搜索中"}` : searchResult?.finished ? "逐层搜索 · 棋盘已完成，没有待分析招法" : "正在完成第零层…";
     const move = searchMoves.get(selectedCell);
     searchHistory.hidden = mode !== "analysis" || !move;
     observeResult.classList.add("search-observe");
@@ -34,7 +35,7 @@ function renderSearch() {
         row.append(label);
         row.insertCell();
     }
-    row.cells[0].textContent = `${move.depth} 层`;
+    row.cells[0].textContent = searchResult.engine === "BruteForce" ? "精确结果" : `${move.depth} 层`;
     row.cells[1].textContent = Number(move.value).toFixed(6);
 }
 
@@ -77,8 +78,7 @@ async function requestSearch() {
             await post("/api/anytime-search/control", { action: run ? "resume" : "step", nodes });
             return;
         }
-        const width = searchWidths.map((input) => Number(input.value));
-        if (width.some((value) => !Number.isInteger(value) || value < 1 || value > 2147483647)) throw new Error("候选宽度必须是正整数。");
+        const config = analysisConfig("anytime");
         stopMcts(true);
         clearEndgameResult();
         searchResult = null;
@@ -97,7 +97,7 @@ async function requestSearch() {
             const response = await fetch("/api/anytime-search/start", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Mss-Token": token },
-                body: new URLSearchParams({ rows: state.rows, cols: state.cols, mines: state.mines, cells: state.cells, algo: shapeAlgo.value, rootWidth: width[0], middleWidth: width[1], deepWidth: width[2], run }),
+                body: new URLSearchParams({ rows: state.rows, cols: state.cols, mines: state.mines, cells: state.cells, ...config, run }),
                 signal: controller.signal
             });
             if (!run && response.ok && response.headers.get("Content-Type").startsWith("text/event-stream")) await post("/api/anytime-search/control", { action: "step", nodes });

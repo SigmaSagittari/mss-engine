@@ -36,16 +36,8 @@ void GameControl::Game::reset(U128 seed) {
 const GameControl::Position &GameControl::Game::position() const { return position_; }
 GameControl::Position &GameControl::Game::position() { return position_; }
 
-void GameControl::Game::suggest(SuggestResult &result) {
-    position_.suggest(result, suggestions_);
-}
-
-void GameControl::Game::suggestJavaEval(const JavaEval::Config &config, JavaEval::Workspace &workspace, SuggestResult &result) {
-    position_.suggestJavaEval(config, workspace, result, suggestions_);
-}
-
-void GameControl::Game::suggestJavaBrute(const JavaBrute::Config &config, JavaBrute::Workspace &workspace, SuggestResult &result) {
-    position_.suggestJavaBrute(config, workspace, result, suggestions_);
+void GameControl::Game::suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &pool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, vector<ObservedBoard::CellId> &result) {
+    position_.suggest(policy, suggestions_, fiftyPool, pool, workspace, bruteForce, result);
 }
 
 void GameControl::Game::play(span<const ObservedBoard::CellId> cells) {

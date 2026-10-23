@@ -3,7 +3,7 @@
 #include <string>
 
 #include "algo/probability_engine/probability/observe.h"
-#include "algo/winrate_engine/java_brute/java_brute.h"
+#include "algo/winrate_engine/move_policy.h"
 #include "core/datastructure/span.h"
 #include "core/datastructure/vector.h"
 #include "game/game_control.h"
@@ -16,15 +16,6 @@ namespace GameControl {
 // 人工观测入口会检查局部数字约束和全盘可满足性；失败写入 error()，这是预期错误。
 // 合法 Position 的查询共用 Workspace，不得并发或重入。
 struct Position {
-    struct SuggestResult {
-        // 安全时是所有确定安全格；否则最多一个猜测格。空列表表示没有建议。
-        vector<ObservedBoard::CellId> suggest;
-        // true 表示列表全部确定安全；false 表示只有一个待猜格。
-        bool safeResult;
-
-        SuggestResult() : safeResult(true) {}
-    };
-
     // 人工观测入口：检查局部数字约束和全盘可满足性，错误写入 error()。
     static Position fromUserInput(const ObservedBoard::Result &board, Workspace &workspace, const Config &config);
 
@@ -48,16 +39,14 @@ struct Position {
     long double mineProbability(ObservedBoard::CellId cell);
     // cell 必须是 Hidden 或 ForcedSafe；返回揭开后的数字与爆炸概率。
     void observe(ObservedBoard::CellId cell, Observe::Result &result);
-    // 返回全部确定安全格：Basic 推导、前沿零雷、T 格零雷。
+    // 优先返回 Basic 推导的安全格；没有时统一检查前沿和 T 格的全盘零雷概率。
     span<const ObservedBoard::CellId> safeMoves();
-    // 无确定安全格时选择最低雷概率格；同概率优先上行、右列；没有可点击格返回 -1。
-    ObservedBoard::CellId lowRiskMove();
-    // 优先返回全部确定安全格，否则返回一个最低雷概率猜测格。
-    void suggest(SuggestResult &result, SuggestPool &pool);
-    // JavaBrute：安全格优先，否则按阈值在 BruteForce / JavaEval 中选择一个建议格。
-    void suggestJavaBrute(const JavaBrute::Config &config, JavaBrute::Workspace &workspace, SuggestResult &result, SuggestPool &pool);
-    // JavaEval：安全格优先，否则返回 JavaEval 评分最高的一个候选。
-    void suggestJavaEval(const JavaEval::Config &config, JavaEval::Workspace &workspace, SuggestResult &result, SuggestPool &pool);
+    // 完整评分快照，不读写推荐缓存；fiftyPool 由调用方持有并跨查询复用。
+    // cells 非空时至少一格，只比较指定首招；安全格始终优先。
+    // search 非空时接收 Anytime 续搜句柄，借用 searchPool 和当前根状态。
+    void suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells = nullptr, AnytimeSearch::Result *search = nullptr);
+    // 只查询推荐格，使用盘面及有效配置缓存；安全时返回全部安全格。
+    void suggest(const MovePolicy &policy, SuggestPool &pool, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, vector<ObservedBoard::CellId> &result);
 
   private:
     friend struct Game;
@@ -66,9 +55,9 @@ struct Position {
     Position(const ObservedBoard::Result &board, Workspace &workspace, const Config &config, Check check);
     // Game 专用：输入必须合法，冷路径用 assert_ 检查基础一致性。
     static Position assumeLegal(const ObservedBoard::Result &board, Workspace &workspace, const Config &config);
-    static U128 suggestionKey(const ObservedBoard::Result &board, int algorithm);
-    static U128 suggestionKey(const ObservedBoard::Result &board, int algorithm, const JavaEval::Config &config);
-    static U128 suggestionKey(const ObservedBoard::Result &board, int algorithm, const JavaBrute::Config &config);
+    static U128 suggestionKey(const ObservedBoard::Result &board, const MovePolicy &policy);
+    // 两个查询入口排除安全格后共用分派；缓存未命中时不再重复安全检查。
+    void suggest(PositionState &current, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search);
 
     void initialize();
     void reset(const ObservedBoard::Result &board);

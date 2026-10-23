@@ -3,7 +3,7 @@
 #include "core/datastructure/grid.h"
 #include "core/datastructure/span.h"
 #include "core/datastructure/vector.h"
-#include "algo/winrate_engine/pseudo/pseudo.h"
+#include "algo/winrate_engine/fifty_fifty/old_java/pseudo.h"
 #include "game/position_state.h"
 
 namespace mss {

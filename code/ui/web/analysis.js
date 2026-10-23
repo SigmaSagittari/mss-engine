@@ -1,6 +1,6 @@
 // 普通分析串行引用同一个计算 ID；候选标记 G 不改变观测约束。
 function calculate(state, options = {}) {
-    const config = options.suggest ? { ...analysisConfig(), strategy: "javaBrute" } : { algo: shapeAlgo.value };
+    const config = options.suggest || options.cell !== undefined ? analysisConfig() : { algo: shapeAlgo.value };
     const snapshot = { rows: state.rows, cols: state.cols, mines: state.mines, cells: state.cells.replace(/[G*]/g, "?"), algo: config.algo };
     const key = JSON.stringify(snapshot);
     const includeProbabilities = options.includeProbabilities ?? true;
@@ -18,14 +18,20 @@ function calculate(state, options = {}) {
     return result;
 }
 
-function analysisConfig() {
+function analysisConfig(strategy = suggestStrategy.value) {
     const limit = Number(endgameCandidateLimit.value);
-    if (!Number.isInteger(limit) || limit < 1 || limit > 2147483647)
-        throw new Error("JavaBrute 切换阈值必须是正整数。");
+    if (!Number.isInteger(limit) || limit < 0 || limit > 2147483647) throw new Error("暴力接管阈值必须是非负整数。");
     const maxThreads = Number(endgameMaxThreads.value);
-    if (!Number.isInteger(maxThreads) || maxThreads < 1 || maxThreads > 2147483647)
-        throw new Error("BruteForce 核心数必须是正整数。");
-    return { limit, maxThreads, algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, checkAllMoves: endgameCheckAllMoves.checked, multiThread: endgameMultithread.checked };
+    if (limit > 0 && (!Number.isInteger(maxThreads) || maxThreads < 1 || maxThreads > 2147483647)) throw new Error("BruteForce 核心数必须是正整数。");
+    const nodes = Number(policyNodeBudget.value);
+    const width = searchWidths.map((input) => Number(input.value));
+    if (strategy === "anytime") {
+        if (!Number.isInteger(nodes) || nodes < 1 || nodes > 2147483647) throw new Error("Anytime 每步节点数必须是正整数。");
+        if (width.some((value) => !Number.isInteger(value) || value < 1 || value > 2147483647)) throw new Error("候选宽度必须是正整数。");
+    }
+    const prefix = Number(templatePrefix.value);
+    if (strategy !== "lowrisk" && fiftyFifty.value === "templates" && (!Number.isInteger(prefix) || prefix < 1 || prefix > Number(templatePrefix.max))) throw new Error("模板前缀超出目录。");
+    return { strategy, fiftyFifty: fiftyFifty.value, templatePrefix: prefix, limit, maxThreads, nodeBudget: nodes, rootWidth: width[0], middleWidth: width[1], deepWidth: width[2], algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, checkAllMoves: endgameCheckAllMoves.checked, multiThread: endgameMultithread.checked };
 }
 
 async function requestDetail(cell) {

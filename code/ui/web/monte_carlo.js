@@ -15,12 +15,14 @@ function renderMcts() {
         const baseline = first.simulations + (next.simulations - first.simulations) * (start - first.time) / (next.time - first.time);
         speed = (mctsResult.simulations - baseline) * 1000 / (now - start);
     }
-    mctsSummary.textContent = mctsResult && mctsResult.simulations > 0 ? `蒙特卡洛 · ${formatCount(mctsResult.simulations)} 次模拟 · ${mctsCountFormat.format(Math.round(speed))} 局/s · ${mctsResult.winrate ? "整局胜率" : "最佳胜率"} ${(mctsResult.value * 100).toFixed(2)}% · ${mctsController ? "搜索中" : "已停止"}` : "正在开始模拟…";
+    mctsSummary.textContent = mctsResult?.exact ? `暴力精确胜率 · ${(mctsResult.value * 100).toFixed(2)}%` : mctsResult && mctsResult.simulations > 0 ? `蒙特卡洛 · ${formatCount(mctsResult.simulations)} 次模拟 · ${mctsCountFormat.format(Math.round(speed))} 局/s · ${mctsResult.winrate ? "整局胜率" : "最佳胜率"} ${(mctsResult.value * 100).toFixed(2)}% · ${mctsController ? "搜索中" : "已停止"}` : "正在开始模拟…";
     const move = mode === "analysis" ? mctsMoves.get(selectedCell) : null;
     mctsDetail.hidden = !move;
     if (move) {
-        mctsVisits.textContent = move.visits;
-        mctsWins.textContent = move.wins;
+        mctsVisits.parentElement.hidden = mctsResult.exact;
+        mctsWins.parentElement.hidden = mctsResult.exact;
+        mctsVisits.textContent = mctsResult.exact ? "" : move.visits;
+        mctsWins.textContent = mctsResult.exact ? "" : move.wins;
         mctsWinrate.textContent = Number(move.winrate).toFixed(6);
     }
 }
@@ -48,14 +50,17 @@ function updateMcts(result) {
         mctsHistory.push({ time, simulations: result.simulations });
     const changed = new Set(mctsMoves.keys());
     mctsResult = result;
-    mctsMoves = new Map(result.moves.filter((move) => BigInt(move.visits) > 0n).map((move) => [move.cell, move]));
+    mctsMoves = new Map(result.moves.filter((move) => result.exact || BigInt(move.visits) > 0n).map((move) => [move.cell, move]));
     for (const cell of mctsMoves.keys())
         changed.add(cell);
     const state = activeState();
     for (const cell of changed)
         updateCell(boardElement.children[cell], cell, state);
     renderMcts();
-    if (result.complete) {
+    if (result.exact) {
+        stopMcts();
+        setMessage("已返回暴力精确结果。", "success");
+    } else if (result.complete) {
         stopMcts();
         setMessage("棋盘已完成，没有待研究招法。", "success");
     }
@@ -88,7 +93,7 @@ async function requestMcts() {
         const response = await fetch("/api/mcts/start", {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Mss-Token": token },
-            body: new URLSearchParams({ mode, rows: state.rows, cols: state.cols, mines: state.mines, cells, ...analysisConfig(), strategy: suggestStrategy.value }),
+            body: new URLSearchParams({ mode, rows: state.rows, cols: state.cols, mines: state.mines, cells, ...analysisConfig() }),
             signal: controller.signal
         });
         await readUpdates(response, controller, updateMcts);

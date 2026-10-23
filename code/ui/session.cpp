@@ -155,27 +155,31 @@ bool Session::parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolverCo
     return true;
 }
 
-bool Session::parseConfig(const std::vector<FormField> &fields, JavaBrute::Config &config, MonteCarlo::PlayoutAlgo &strategy, std::string &response) {
-    if (!parseInteger(value(fields, "limit"), config.candidateThreshold) || config.candidateThreshold < 1) {
-        response = error("JavaBrute 切换阈值无效");
-        return false;
-    }
-    if (!parseInteger(value(fields, "maxThreads"), config.bruteForce.threadCount) || config.bruteForce.threadCount < 1) {
-        response = error("BruteForce 核心数必须是正整数");
-        return false;
-    }
-    config.bruteForce.checkAllMoves = value(fields, "checkAllMoves") == "true";
-    config.bruteForce.parallel = value(fields, "multiThread") == "true";
+bool Session::parseConfig(const std::vector<FormField> &fields, Config &config, std::string &response) {
     const std::string name = value(fields, "strategy");
-    if (name == "lowrisk")
-        strategy = MonteCarlo::PlayoutAlgo::LowRisk;
-    else if (name == "java")
-        strategy = MonteCarlo::PlayoutAlgo::JavaEval;
-    else if (name == "javaBrute")
-        strategy = MonteCarlo::PlayoutAlgo::JavaBrute;
-    else {
-        response = error("建议策略无效");
-        return false;
+    if (name == "lowrisk") config.algorithm = MovePolicy::Basic::Algorithm::LowRisk;
+    else if (name == "java") config.algorithm = MovePolicy::Basic::Algorithm::JavaEval;
+    else if (name == "anytime") config.algorithm = MovePolicy::Basic::Algorithm::Anytime;
+    else { response = error("建议算法无效"); return false; }
+    if (!parseInteger(value(fields, "limit"), config.brute.limit) || config.brute.limit < 0) { response = error("暴力接管阈值必须是非负整数"); return false; }
+    if (config.brute.limit != 0) {
+        if (!parseInteger(value(fields, "maxThreads"), config.brute.config.threadCount) || config.brute.config.threadCount < 1) { response = error("BruteForce 核心数必须是正整数"); return false; }
+        config.brute.config.checkAllMoves = value(fields, "checkAllMoves") == "true";
+        config.brute.config.parallel = value(fields, "multiThread") == "true";
+    }
+    if (config.algorithm == MovePolicy::Basic::Algorithm::Anytime) {
+        int nodes;
+        if (!parseInteger(value(fields, "nodeBudget"), nodes) || nodes < 1) { response = error("Anytime 每步节点数必须是正整数"); return false; }
+        config.anytime.nodeLimit = nodes;
+        const char *names[] = {"rootWidth", "middleWidth", "deepWidth"};
+        for (int i = 0; i < 3; ++i) if (!parseInteger(value(fields, names[i]), config.anytime.width[i]) || config.anytime.width[i] < 1) { response = error("搜索候选宽度必须是正整数"); return false; }
+    }
+    if (config.algorithm != MovePolicy::Basic::Algorithm::LowRisk) {
+        const std::string fifty = value(fields, "fiftyFifty");
+        if (fifty == "oldjava") config.fiftyAlgorithm = MovePolicy::FiftyFifty::Algorithm::OldJava;
+        else if (fifty == "templates") config.fiftyAlgorithm = MovePolicy::FiftyFifty::Algorithm::Templates;
+        else if (!fifty.empty()) { response = error("50-50 算法无效"); return false; }
+        if (config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates && (!parseInteger(value(fields, "templatePrefix"), config.templates.prefix) || config.templates.prefix < 1 || config.templates.prefix > FiftyFifty::templateCount())) { response = error("模板前缀超出目录"); return false; }
     }
     return true;
 }
@@ -256,58 +260,26 @@ void Session::writeProbabilities(std::ostream &result, GameControl::Position &po
     result << ']';
 }
 
-void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const JavaBrute::Config &config, MonteCarlo::PlayoutAlgo strategy) {
-    GameControl::Position &position = analysis.position;
-    span<const ObservedBoard::CellId> suggested = position.safeMoves();
-    const ObservedBoard::CellId lowRisk = suggested.size == 0 ? position.lowRiskMove() : -1;
-    const bool safe = suggested.size != 0 || lowRisk < 0;
-    if (safe || strategy == MonteCarlo::PlayoutAlgo::LowRisk) {
-        if (!safe) suggested = span<const ObservedBoard::CellId>(&lowRisk, 1);
-        result << ",\"engine\":" << jsonString(safe ? "Safe" : "LowRisk") << ",\"recommended\":";
-        writeCells(result, suggested);
-        result << ",\"candidates\":";
-        writeCells(result, suggested);
-        return;
+void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config) {
+    const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyAlgorithm, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::OldJava ? &config.oldJava : nullptr, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
+
+    SuggestResult evaluated;
+    analysis.position.suggest(policy, analysis.fiftyPool, analysis.searchPool, analysis.anytimeSearch, analysis.bruteForce, evaluated);
+    const bool safe = evaluated.engine == SuggestResult::Engine::Safe;
+    const bool exact = evaluated.engine == SuggestResult::Engine::BruteForce;
+    const char *engine = evaluated.engine == SuggestResult::Engine::None ? "Finished" : safe ? "Safe" : exact ? "BruteForce" : evaluated.engine == SuggestResult::Engine::LowRisk ? "LowRisk" : evaluated.engine == SuggestResult::Engine::JavaEval ? "JavaEval" : "Anytime";
+    vector<ObservedBoard::CellId> candidates;
+    for (int i = 0; i < (int)evaluated.candidates.size; ++i) candidates.push_back(evaluated.candidates.data[i].cell);
+    result << ",\"engine\":" << jsonString(engine) << ",\"reason\":" << jsonString(evaluated.reason == Selection::Reason::Forced ? "forced5050" : evaluated.reason == Selection::Reason::Semi ? "5050OrSafe" : "score") << ",\"nodes\":" << evaluated.nodes << ",\"recommended\":";
+    writeCells(result, span<const ObservedBoard::CellId>(evaluated.suggest.data, (int)evaluated.suggest.size));
+    result << ",\"candidates\":";
+    writeCells(result, span<const ObservedBoard::CellId>(candidates.data, (int)candidates.size));
+    result << ",\"moves\":[";
+    for (int i = 0; i < (int)evaluated.candidates.size; ++i) {
+        if (i != 0) result << ',';
+        result << "{\"cell\":" << evaluated.candidates.data[i].cell << ",\"value\":" << evaluated.candidates.data[i].value << '}';
     }
-    PositionState &state = position.state();
-    if (strategy == MonteCarlo::PlayoutAlgo::JavaBrute && state.probability.candidates < config.candidateThreshold) {
-        BruteForce::Result evaluated;
-        BruteForce::solve(state.board, state.basic, state.structure, state.shapes, config.bruteForce, evaluated, analysis.javaBrute.bruteForce);
-        vector<ObservedBoard::CellId> candidates;
-        const BruteForce::Result::Move *best = nullptr;
-        for (int i = 0; i < (int)evaluated.moves.size; ++i) {
-            const BruteForce::Result::Move &move = evaluated.moves.data[i];
-            candidates.push_back(move.cell);
-            if (!best || move.wins > best->wins)
-                best = &move;
-        }
-        result << ",\"engine\":\"BruteForce\",\"configurationCount\":" << (int)state.probability.candidates << ",\"nodes\":" << evaluated.nodes << ",\"recommended\":";
-        writeCells(result, best ? span<const ObservedBoard::CellId>(&best->cell, 1) : span<const ObservedBoard::CellId>());
-        result << ",\"candidates\":";
-        writeCells(result, span<const ObservedBoard::CellId>(candidates.data, (int)candidates.size));
-        result << ",\"moves\":[";
-        for (int i = 0; i < (int)evaluated.moves.size; ++i) {
-            if (i != 0)
-                result << ',';
-            result << "{\"cell\":" << evaluated.moves.data[i].cell << ",\"wins\":" << evaluated.moves.data[i].wins << '}';
-        }
-        result << ']';
-    } else {
-        Selection::Reason selectionReason;
-        const JavaEval::Result evaluated = JavaEval::analyze(state, analysis.config.shapeSolver, config.javaEval, analysis.javaEval, &selectionReason);
-        vector<ObservedBoard::CellId> candidates;
-        const JavaEval::Candidate *best = nullptr;
-        for (int i = 0; i < (int)evaluated.candidates.size; ++i) {
-            const JavaEval::Candidate &move = evaluated.candidates.data[i];
-            candidates.push_back(move.cell);
-            if (!best || move.value > best->value) best = &move;
-        }
-        const std::string reason = selectionReason == Selection::Reason::Forced ? "forced5050" : selectionReason == Selection::Reason::Semi ? "5050OrSafe" : "score";
-        result << ",\"engine\":\"JavaEval\",\"reason\":" << jsonString(reason) << ",\"recommended\":";
-        writeCells(result, best ? span<const ObservedBoard::CellId>(&best->cell, 1) : span<const ObservedBoard::CellId>());
-        result << ",\"candidates\":";
-        writeCells(result, span<const ObservedBoard::CellId>(candidates.data, (int)candidates.size));
-    }
+    result << ']';
 }
 
 std::string Session::analyze(const std::vector<FormField> &fields) {
@@ -331,11 +303,10 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
     if (value(fields, "includeProbabilities") == "true")
         writeProbabilities(result, position);
     if (value(fields, "suggest") == "true") {
-        JavaBrute::Config config = config_.javaBrute;
-        MonteCarlo::PlayoutAlgo strategy;
-        if (!parseConfig(fields, config, strategy, response))
+        Config config = config_;
+        if (!parseConfig(fields, config, response))
             return response;
-        writeSuggestion(result, *analysis_, config, strategy);
+        writeSuggestion(result, *analysis_, config);
     }
     const std::string cellText = value(fields, "cell");
     if (!cellText.empty()) {
@@ -365,7 +336,10 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
                 // 详情只完整评估所选格，不使用候选筛选、剪枝或支配快路径。
                 vector<ObservedBoard::CellId> cells;
                 cells.push_back(cell);
-                const JavaEval::Result evaluated = JavaEval::analyze(position.state(), analysis_->config.shapeSolver, config_.javaBrute.javaEval, analysis_->javaEval, nullptr, &cells);
+                Config config = config_;
+                if (!value(fields, "strategy").empty() && !parseConfig(fields, config, response)) return response;
+                const FiftyFifty::Config fifty(config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::OldJava ? &config.oldJava : nullptr, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk);
+                const SuggestResult evaluated = JavaEval::analyze(position.state(), analysis_->config.shapeSolver, config.javaEval, fifty, analysis_->fiftyPool, analysis_->anytimeSearch.javaEval, &cells);
                 result << ",\"javaScore\":" << jsonString(fixedProbability(evaluated.candidates.data[0].value));
             }
         }
@@ -424,17 +398,28 @@ std::string Session::playUntilNoSafe(const std::vector<FormField> &fields) {
 
 std::string Session::mctsResult(const MonteCarlo::Result &snapshot, bool complete) {
     const ObservedBoard::CellId recommended = snapshot.recommended();
+    const bool exact = snapshot.exact.engine == SuggestResult::Engine::BruteForce;
     long double winrate = snapshot.samples == 0 ? 0 : (long double)snapshot.wins / snapshot.samples;
-    if (!snapshot.winrate)
+    if (exact) {
+        for (int i = 0; i < (int)snapshot.exact.candidates.size; ++i)
+            if (snapshot.exact.candidates.data[i].cell == recommended) winrate = snapshot.exact.candidates.data[i].value;
+    } else if (!snapshot.winrate)
         for (int i = 0; i < (int)snapshot.candidates.size; ++i) {
             const MonteCarlo::Candidate &candidate = snapshot.candidates.data[i];
             if (candidate.cell == recommended)
                 winrate = candidate.samples == 0 ? 0 : (long double)candidate.wins / candidate.samples;
         }
     std::ostringstream result;
-    result << std::setprecision(12) << "{\"ok\":true,\"simulations\":" << snapshot.samples << ",\"value\":" << winrate << ",\"recommended\":" << recommended << ",\"winrate\":" << (snapshot.winrate ? "true" : "false") << ",\"complete\":" << (complete ? "true" : "false") << ",\"moves\":[";
+    result << std::setprecision(12) << "{\"ok\":true,\"simulations\":" << snapshot.samples << ",\"value\":" << winrate << ",\"recommended\":" << recommended << ",\"winrate\":" << (snapshot.winrate ? "true" : "false") << ",\"exact\":" << (exact ? "true" : "false") << ",\"complete\":" << (complete ? "true" : "false") << ",\"moves\":[";
     bool first = true;
-    for (int i = 0; i < (int)snapshot.candidates.size; ++i) {
+    if (exact) {
+        for (int i = 0; i < (int)snapshot.exact.candidates.size; ++i) {
+            const SuggestResult::Candidate &candidate = snapshot.exact.candidates.data[i];
+            if (!first) result << ',';
+            first = false;
+            result << "{\"cell\":" << candidate.cell << ",\"winrate\":" << candidate.value << '}';
+        }
+    } else for (int i = 0; i < (int)snapshot.candidates.size; ++i) {
         const MonteCarlo::Candidate &candidate = snapshot.candidates.data[i];
         if (candidate.samples == 0)
             continue;
@@ -452,13 +437,8 @@ bool Session::startMcts(const std::string &body, std::string &response) {
     if (mctsWorker_.joinable())
         mctsWorker_.join();
     const std::vector<FormField> fields = parseForm(body);
-    JavaBrute::Config bruteForce = config_.javaBrute;
-    MonteCarlo::PlayoutAlgo strategy;
-    if (!parseConfig(fields, bruteForce, strategy, response))
-        return false;
-    MonteCarlo::Config config = config_.monteCarlo;
-    config.javaBrute = bruteForce;
-    config.playout = strategy;
+    Config config = config_;
+    if (!parseConfig(fields, config, response)) return false;
     std::unique_ptr<Analysis> analysis;
     if (!createAnalysis(fields, analysis, response))
         return false;
@@ -490,23 +470,25 @@ bool Session::startMcts(const std::string &body, std::string &response) {
     }
     {
         const std::lock_guard<std::mutex> lock(mctsMutex_);
-        mctsUpdate_ = "{\"ok\":true,\"simulations\":0,\"value\":0,\"recommended\":-1,\"winrate\":false,\"complete\":false,\"moves\":[]}";
+        mctsUpdate_ = "{\"ok\":true,\"simulations\":0,\"value\":0,\"recommended\":-1,\"winrate\":false,\"exact\":false,\"complete\":false,\"moves\":[]}";
     }
     // 根输入及池随独立任务存活；普通分析的下一份快照不会覆盖 MC 正在使用的数据。
     Analysis *task = analysis.release();
     mctsWorker_ = std::jthread([this, task, config, targets, complete](std::stop_token stop) {
         const std::unique_ptr<Analysis> analysis(task);
         PositionState &state = analysis->position.state();
-        MonteCarlo::Result result = MonteCarlo::analyze(state, analysis->config.shapeSolver, config, analysis->monteCarlo, targets.size == 0 ? nullptr : &targets);
+        const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyAlgorithm, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::OldJava ? &config.oldJava : nullptr, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
+        MonteCarlo::Result result = MonteCarlo::analyze(analysis->position, config.monteCarlo, policy, analysis->fiftyPool, analysis->searchPool, analysis->monteCarlo, targets.size == 0 ? nullptr : &targets);
         auto publish = [&]() {
             const std::string update = mctsResult(result, complete);
             const std::lock_guard<std::mutex> lock(mctsMutex_);
             mctsUpdate_ = update;
         };
         publish();
+        if (result.exact.engine == SuggestResult::Engine::BruteForce) return;
         std::chrono::steady_clock::time_point next = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
         while (!stop.stop_requested()) {
-            MonteCarlo::update(result, state, analysis->config.shapeSolver, config, analysis->monteCarlo);
+            MonteCarlo::update(result, state, analysis->config.shapeSolver, config.monteCarlo, policy, analysis->fiftyPool, analysis->searchPool, analysis->monteCarlo);
             if (complete)
                 break;
             if (std::chrono::steady_clock::now() >= next) {
@@ -548,9 +530,12 @@ bool Session::startSearch(const std::string &body, std::string &response) {
     if (safe.size == 0)
         for (int i = 0; i < (int)targets.size; ++i)
             if (analysis->position.mineProbability(targets.data[i]) == 1.0L) { response = error("Search 目标格已确定为雷"); return false; }
-    AnytimeSearch::Config config = config_.anytimeSearch;
-    for (int i = 0; i < 3; ++i) config.width[i] = width[i];
-    config.fullAnalysis = targets.size != 0;
+    Config config = config_;
+    if (!parseConfig(fields, config, response)) return false;
+    config.algorithm = MovePolicy::Basic::Algorithm::Anytime;
+    config.anytime.nodeLimit = 0;
+    for (int i = 0; i < 3; ++i) config.anytime.width[i] = width[i];
+    config.anytime.fullAnalysis = targets.size != 0;
     {
         const std::lock_guard<std::mutex> lock(searchMutex_);
         searchBudget_ = 0;
@@ -562,19 +547,30 @@ bool Session::startSearch(const std::string &body, std::string &response) {
         const std::unique_ptr<Analysis> analysis(task);
         PositionState &state = analysis->position.state();
         AnytimeSearch::Pool &pool = analysis->searchPool;
+        const FiftyFifty::Config fifty(config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::OldJava ? &config.oldJava : nullptr, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk);
+        const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyAlgorithm, fifty.oldJava, fifty.templates, fifty.risk}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
+        SuggestResult initialized;
         AnytimeSearch::Result result;
         if (safe.size == 0) {
             // 先算完第零层；用户停止或预算为零都不会留下空推荐。
-            result = AnytimeSearch::analyze(state, pool, analysis->config.shapeSolver, config, analysis->anytimeSearch, 0, targets.size == 0 ? nullptr : &targets);
+            analysis->position.suggest(policy, analysis->fiftyPool, pool, analysis->anytimeSearch, analysis->bruteForce, initialized, targets.size == 0 ? nullptr : &targets, &result);
         }
+        if (initialized.engine == SuggestResult::Engine::BruteForce) result.node = initialized.nodes;
         auto publish = [&]() {
+            const bool exact = initialized.engine == SuggestResult::Engine::BruteForce;
+            const ObservedBoard::CellId recommended = safe.size != 0 ? safe.data[0] : exact ? (initialized.suggest.size != 0 ? initialized.suggest.data[0] : -1) : result.recommended(pool);
             std::ostringstream json;
-            json << std::setprecision(18) << "{\"ok\":true,\"nodes\":" << result.node << ",\"completedDepth\":" << result.completedDepth << ",\"finished\":" << (result.finished ? "true" : "false") << ",\"safe\":" << (safe.size != 0 ? "true" : "false") << ",\"recommended\":" << (safe.size != 0 ? safe.data[0] : result.recommended(pool)) << ",\"moves\":[";
-            const int count = safe.size != 0 ? (int)safe.size : (int)result.roots.count;
+            json << std::setprecision(18) << "{\"ok\":true,\"engine\":" << jsonString(exact ? "BruteForce" : safe.size != 0 ? "Safe" : "Anytime") << ",\"nodes\":" << result.node << ",\"completedDepth\":" << result.completedDepth << ",\"finished\":" << (result.finished ? "true" : "false") << ",\"safe\":" << (safe.size != 0 ? "true" : "false") << ",\"recommended\":" << recommended << ",\"moves\":[";
+            const int count = safe.size != 0 ? (int)safe.size : exact ? (int)initialized.candidates.size : (int)result.roots.count;
             for (int i = 0; i < count; ++i) {
                 if (i != 0) json << ',';
                 if (safe.size != 0) {
                     json << "{\"cell\":" << safe.data[i] << ",\"multiplier\":1,\"depth\":0,\"value\":1,\"branches\":[]}";
+                    continue;
+                }
+                if (exact) {
+                    const SuggestResult::Candidate &move = initialized.candidates.data[i];
+                    json << "{\"cell\":" << move.cell << ",\"multiplier\":1,\"depth\":0,\"value\":" << move.value << ",\"branches\":[]}";
                     continue;
                 }
                 const AnytimeSearch::Pool::Node &candidate = pool.nodes.data.data[result.roots.offset + i];
@@ -609,7 +605,9 @@ bool Session::startSearch(const std::string &body, std::string &response) {
                 budget = searchRunning_ ? 100 : (std::min)(searchBudget_, 100LL);
                 if (!searchRunning_) searchBudget_ -= budget;
             }
-            AnytimeSearch::update(result, state, pool, analysis->config.shapeSolver, config, analysis->anytimeSearch, budget);
+            AnytimeSearch::Config stepConfig = config.anytime;
+            stepConfig.nodeLimit = budget;
+            AnytimeSearch::update(result, state, pool, analysis->config.shapeSolver, stepConfig, fifty, analysis->fiftyPool, analysis->anytimeSearch);
             publish();
         }
     });

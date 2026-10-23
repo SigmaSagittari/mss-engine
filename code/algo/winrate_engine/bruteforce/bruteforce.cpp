@@ -192,12 +192,25 @@ static void runBackend(const BruteForceType::Session &session, const BruteForceT
         BruteForceMultimask::solve(session, config, result, workspace.multimask);
 }
 
+void BruteForce::writeResult(const BruteForceType::Result &raw, int count, Result &result) {
+    result.suggest.resize(0); result.candidates.resize(0);
+    result.engine = SuggestResult::Engine::BruteForce; result.reason = SuggestResult::Reason::ScoreWins; result.nodes = raw.nodes;
+    for (int i = 0; i < (int)raw.moves.size; ++i) {
+        const BruteForceType::Result::Move &move = raw.moves.data[i];
+        if (move.cell >= 0) result.candidates.push_back(SuggestResult::Candidate(move.cell, (long double)move.wins / count));
+    }
+    if (result.candidates.size == 0) result.reason = SuggestResult::Reason::Finished;
+    result.recommend();
+}
+
 void BruteForce::solve(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes, const Config &config, Result &result, Workspace &workspace) {
     BruteForceSessionBuild &build = workspace.buildStorage;
     BruteForceType::Session session;
     workspace.swapSessionStorage(session);
     buildSession(session, build, workspace.shapeSolver, board, basic, structure, shapes);
-    runBackend(session, config, result, workspace);
+    BruteForceType::Result raw;
+    runBackend(session, config, raw, workspace);
+    writeResult(raw, session.possibilityCount, result);
     workspace.swapSessionStorage(session);
 }
 
@@ -206,7 +219,9 @@ void BruteForce::solveComponent(const ObservedBoard::Result &board, const Basic:
     BruteForceType::Session session;
     workspace.swapSessionStorage(session);
     buildComponentSession(session, build, workspace.shapeSolver, board, basic, components, offFrontierCells, shapes, mines);
-    runBackend(session, config, result, workspace);
+    BruteForceType::Result raw;
+    runBackend(session, config, raw, workspace);
+    writeResult(raw, session.possibilityCount, result);
     workspace.swapSessionStorage(session);
 }
 

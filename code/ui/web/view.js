@@ -200,8 +200,8 @@ function updateCell(button, cell, state) {
         if (cell === mctsResult.recommended)
             className += " mcts-best";
         button.dataset.mctsWinrate = `${(Number(move.winrate) * 100).toFixed(1).replace(/\.0$/, "")}%`;
-        button.dataset.mctsVisits = mctsCountFormat.format(BigInt(move.visits));
-        button.title = `采样 ${move.visits} 次，胜出 ${move.wins} 次，胜率 ${Number(move.winrate).toFixed(6)}`;
+        button.dataset.mctsVisits = mctsResult.exact ? "精确" : mctsCountFormat.format(BigInt(move.visits));
+        button.title = mctsResult.exact ? `精确胜率 ${Number(move.winrate).toFixed(6)}` : `采样 ${move.visits} 次，胜出 ${move.wins} 次，胜率 ${Number(move.winrate).toFixed(6)}`;
         button.setAttribute("aria-label", `第 ${Math.floor(cell / state.cols) + 1} 行，第 ${cell % state.cols + 1} 列，${button.title}`);
     } else if (isHidden && probabilityDisplay.checked && (probabilities || probabilityPending)) {
         className += " probability-cell";
@@ -305,12 +305,12 @@ function render() {
 
 function showSuggestion(result, elapsedMs) {
     const bruteForce = result.engine === "BruteForce";
-    endgameSummary.textContent = `分析耗时（前端）：${elapsedMs.toFixed(1)} ms；候选方案 ${formatCount(result.candidateCount)}；` + (result.engine === "Safe" ? "确定安全格" : bruteForce ? `搜索节点 ${formatCount(result.nodes)}` : `${result.engine} 推荐`);
+    endgameSummary.textContent = `分析耗时（前端）：${elapsedMs.toFixed(1)} ms；候选方案 ${formatCount(result.candidateCount)}；` + (result.engine === "Finished" ? "棋盘已完成" : result.engine === "Safe" ? "确定安全格" : bruteForce ? `搜索节点 ${formatCount(result.nodes)}` : `${result.engine} 推荐`);
     endgameMoves.replaceChildren();
     endgameCandidateCells = new Set(result.candidates);
     endgameBestCells = new Set(result.recommended);
     const reasons = { forced5050: "这是一个强制的 50-50", "5050OrSafe": "这是一个 50-50 或安全", score: "此格分数优胜", blindGuess: "所有候选格均无法提供信息，进入盲猜残局" };
-    const moves = bruteForce ? result.moves.slice().sort((left, right) => right.wins - left.wins || left.cell - right.cell) : result.recommended.map((cell) => ({ cell }));
+    const moves = bruteForce ? result.moves.slice().sort((left, right) => right.value - left.value || left.cell - right.cell) : result.recommended.map((cell) => ({ cell }));
     if (moves.length === 0) {
         const item = document.createElement("li");
         item.textContent = "没有可推荐的隐藏格。";
@@ -323,7 +323,7 @@ function showSuggestion(result, elapsedMs) {
         const item = document.createElement("li");
         const row = Math.floor(move.cell / state.cols) + 1;
         const col = move.cell % state.cols + 1;
-        item.textContent = `第 ${row} 行，第 ${col} 列：` + (result.engine === "Safe" ? "确定安全" : bruteForce ? `最终获胜 ${formatCount(move.wins)} / ${formatCount(result.configurationCount)}（${(move.wins / result.configurationCount * 100).toFixed(3)}%）` : result.engine === "JavaEval" ? reasons[result.reason] : `${result.engine} 推荐`);
+        item.textContent = `第 ${row} 行，第 ${col} 列：` + (result.engine === "Safe" ? "确定安全" : bruteForce ? `最终胜率 ${(move.value * 100).toFixed(3)}%` : result.engine === "JavaEval" ? reasons[result.reason] : `${result.engine} 推荐`);
         endgameMoves.append(item);
     }
     endgameResultAvailable = true;

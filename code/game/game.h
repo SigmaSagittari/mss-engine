@@ -9,8 +9,6 @@ namespace GameControl {
 struct Game {
     enum class State { Running, Won, Lost };
 
-    using SuggestResult = Position::SuggestResult;
-
     // 观测只含数字、Hidden、ForcedMine，且与 mineBoard 一致。
     // suggestions 由调用方持有，必须覆盖 Game 生命周期，可跨 Game 串行复用。
     Game(const MineBoard &mineBoard, const ObservedBoard::Result &observedBoard, Workspace &workspace, const Config &config, SuggestPool &suggestions);
@@ -26,11 +24,7 @@ struct Game {
     const Position &position() const;
     // 查询会填缓存，需要非 const 引用。
     Position &position();
-    // 安全格已全部揭开时返回空列表；目前只有 LowRisk，策略参数见 Position::suggest。
-    void suggest(SuggestResult &result);
-    // 带调用方持有的建议缓存。
-    void suggestJavaEval(const JavaEval::Config &config, JavaEval::Workspace &workspace, SuggestResult &result);
-    void suggestJavaBrute(const JavaBrute::Config &config, JavaBrute::Workspace &workspace, SuggestResult &result);
+    void suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &pool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, vector<ObservedBoard::CellId> &result);
     // 只揭开 Hidden，其余格跳过；本局必须处于 Running；随机局按首个实际揭开格布雷。
     void play(span<const ObservedBoard::CellId> cells);
     // 当前局必须已布雷，坐标必须在盘面内。

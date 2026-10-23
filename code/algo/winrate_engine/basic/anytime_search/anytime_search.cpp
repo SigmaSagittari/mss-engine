@@ -1,4 +1,4 @@
-#include "algo/winrate_engine/anytime_search/anytime_search.h"
+#include "algo/winrate_engine/basic/anytime_search/anytime_search.h"
 
 #include <algorithm>
 #include <utility>
@@ -35,6 +35,18 @@ ObservedBoard::CellId AnytimeSearch::Result::recommended(const Pool &pool) const
             best = &candidate;
     }
     return best != nullptr ? best->cell : -1;
+}
+
+SuggestResult AnytimeSearch::Result::snapshot(const Pool &pool) const {
+    SuggestResult result(SuggestResult::Engine::Anytime);
+    result.reason = reason; result.nodes = node;
+    for (int i = 0; i < (int)roots.count; ++i) {
+        const Pool::Node &candidate = pool.nodes.data.data[roots.offset + i];
+        result.candidates.push_back(SuggestResult::Candidate(candidate.cell, candidate.value));
+    }
+    const ObservedBoard::CellId cell = recommended(pool);
+    if (cell >= 0) result.suggest.push_back(cell);
+    return result;
 }
 
 bool AnytimeSearch::interchangeable(const PositionState &state, ObservedBoard::CellId lhs, ObservedBoard::CellId rhs) {
@@ -95,9 +107,9 @@ void AnytimeSearch::pruneRoot(vector<JavaEval::Analysis> &analyses, const Positi
         analyses.size = width;
 }
 
-long long AnytimeSearch::selectRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, const vector<ObservedBoard::CellId> *cells) {
+long long AnytimeSearch::selectRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells) {
     Selection::Result &selected = pool.selected;
-    Selection::find(state, shapeConfig, config.javaEval.selection, selected, workspace.javaEval.selection, true, cells);
+    Selection::find(state, shapeConfig, config.javaEval.selection, fiftyConfig, fiftyPool, selected, workspace.javaEval.selection, true, cells);
     Selection::removeDead(selected, state, shapeConfig, workspace.javaEval.probability);
     int remaining = 0, forced = 0;
     countSafe(state, remaining, forced);
@@ -115,7 +127,7 @@ long long AnytimeSearch::selectRoot(PositionState &state, Pool &pool, const Shap
         const Observe::Result &observation = selected.observations.data[i];
         const bool safe = observation.probability[9] == 0.0L;
         const bool pseudo = selected.reason == Selection::Reason::Forced || selected.reason == Selection::Reason::Semi;
-        const JavaEval::Analysis analysis = safe || pseudo ? JavaEval::javaLite(state, shapeConfig, config.javaEval.progressContribution, workspace.javaEval, pool.branches, cell, observation, remaining, forced, safe, peerSpan, -1.0L) : JavaEval::evaluate(state, shapeConfig, config.javaEval, workspace.javaEval, pool.branches, selected.risk, cell, observation, remaining, forced, peerSpan, true);
+        const JavaEval::Analysis analysis = safe || pseudo ? JavaEval::javaLite(state, shapeConfig, config.javaEval.progressContribution, workspace.javaEval, pool.branches, cell, observation, remaining, forced, safe, peerSpan, -1.0L) : JavaEval::evaluate(state, shapeConfig, config.javaEval, workspace.javaEval, pool.branches, selected.fiftyFifty, fiftyConfig, cell, observation, remaining, forced, peerSpan, true);
         nodeCount += analysis.node;
         if (config.fullAnalysis || cells != nullptr || !analysis.hasAlternative)
             analyses.push_back(analysis);
@@ -158,12 +170,12 @@ void AnytimeSearch::selectCandidates(vector<JavaEval::Analysis> &analyses, int l
     analyses.size = selectedCount;
 }
 
-bool AnytimeSearch::prepareNode(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, int width, long long &budget, long long &nodeCount) {
+bool AnytimeSearch::prepareNode(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, int width, long long &budget, long long &nodeCount) {
     Selection::Result &selected = pool.selected;
     vector<JavaEval::Analysis> &analyses = pool.analyses;
     vector<JavaEval::Peer> &peers = pool.peers;
     if (!pool.preparing) {
-        Selection::find(state, shapeConfig, config.javaEval.selection, selected, workspace.javaEval.selection, false);
+        Selection::find(state, shapeConfig, config.javaEval.selection, fiftyConfig, fiftyPool, selected, workspace.javaEval.selection, false);
         Selection::removeDead(selected, state, shapeConfig, workspace.javaEval.probability);
         pool.safe = false;
         for (int i = 0; i < (int)selected.cells.size; ++i)
@@ -241,7 +253,7 @@ void AnytimeSearch::appendBranches(Pool &pool, int index, const JavaEval::Analys
     candidate.child = branches;
 }
 
-AnytimeSearch::Result AnytimeSearch::buildRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, const vector<ObservedBoard::CellId> *cells) {
+AnytimeSearch::Result AnytimeSearch::buildRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells) {
     Result result;
     pool.nodes.data.resize(0);
     pool.transitions.resize(0);
@@ -249,7 +261,8 @@ AnytimeSearch::Result AnytimeSearch::buildRoot(PositionState &state, Pool &pool,
     for (Pool::Frame &frame : pool.frames)
         frame.active = false;
     vector<JavaEval::Analysis> &analyses = pool.analyses;
-    const long long nodeCount = selectRoot(state, pool, shapeConfig, config, workspace, cells);
+    const long long nodeCount = selectRoot(state, pool, shapeConfig, config, fiftyConfig, fiftyPool, workspace, cells);
+    result.reason = pool.selected.reason;
     if (!config.fullAnalysis && cells == nullptr)
         pruneRoot(analyses, state, config.width[0], workspace);
     result.roots = pool.nodes.push_back();
@@ -270,7 +283,7 @@ AnytimeSearch::Result AnytimeSearch::buildRoot(PositionState &state, Pool &pool,
     return result;
 }
 
-long long AnytimeSearch::extend(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Evaluation &evaluation, long long nodeBudget, int maxDepth) {
+long long AnytimeSearch::extend(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, Evaluation &evaluation, long long nodeBudget, int maxDepth) {
     if (pool.frames.empty()) pool.frames.emplace_back();
     Pool::Frame &frame = pool.frames[0];
     if (!frame.active) orderMoves(pool, result.roots, frame);
@@ -279,7 +292,7 @@ long long AnytimeSearch::extend(Result &result, PositionState &state, Pool &pool
     bool complete = true;
     while (frame.next < (int)frame.order.size) {
         const int index = frame.order.data[frame.next];
-        extendCandidate(state, pool, index, maxDepth, shapeConfig, config, workspace, evaluation, budget, nodeCount, complete);
+        extendCandidate(state, pool, index, maxDepth, shapeConfig, config, fiftyConfig, fiftyPool, workspace, evaluation, budget, nodeCount, complete);
         if (!complete) break;
         ++frame.next;
     }
@@ -294,11 +307,11 @@ long long AnytimeSearch::extend(Result &result, PositionState &state, Pool &pool
     return budget;
 }
 
-void AnytimeSearch::extendPosition(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Evaluation &evaluation, long long &budget, long long &nodeCount, bool &complete) {
+void AnytimeSearch::extendPosition(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, Evaluation &evaluation, long long &budget, long long &nodeCount, bool &complete) {
     const int depth = pool.nodes.data.data[index].depth;
     if (!pool.nodes.data.data[index].prepared) {
         const int width = config.width[depth == 1 ? 1 : 2];
-        if (budget <= 0 || !prepareNode(state, pool, shapeConfig, config, workspace, width, budget, nodeCount)) {
+        if (budget <= 0 || !prepareNode(state, pool, shapeConfig, config, fiftyConfig, fiftyPool, workspace, width, budget, nodeCount)) {
             complete = false;
             return;
         }
@@ -331,7 +344,7 @@ void AnytimeSearch::extendPosition(PositionState &state, Pool &pool, int index, 
     Pool::Frame &frame = pool.frames[depth];
     if (!frame.active) orderMoves(pool, pool.nodes.data.data[index].child, frame);
     while (frame.next < (int)frame.order.size) {
-        extendCandidate(state, pool, frame.order.data[frame.next], maxDepth, shapeConfig, config, workspace, evaluation, budget, nodeCount, complete);
+        extendCandidate(state, pool, frame.order.data[frame.next], maxDepth, shapeConfig, config, fiftyConfig, fiftyPool, workspace, evaluation, budget, nodeCount, complete);
         if (!complete) return;
         ++frame.next;
     }
@@ -349,7 +362,7 @@ void AnytimeSearch::extendPosition(PositionState &state, Pool &pool, int index, 
     frame.active = false;
 }
 
-void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Evaluation &evaluation, long long &budget, long long &nodeCount, bool &complete) {
+void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, Evaluation &evaluation, long long &budget, long long &nodeCount, bool &complete) {
     if (pool.nodes.data.data[index].finished) {
         pool.nodes.data.data[index].expandedDepth = maxDepth;
         return;
@@ -392,7 +405,7 @@ void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index,
                 Probability::analyze(state.board, state.basic, state.structure, state.shapes, shapeConfig, state.distributions, nextProbability, workspace.javaEval.probability);
                 swapProbability(state.probability, nextProbability);
             }
-            extendPosition(state, pool, branchIndex, maxDepth, shapeConfig, config, workspace, evaluation, budget, nodeCount, complete);
+            extendPosition(state, pool, branchIndex, maxDepth, shapeConfig, config, fiftyConfig, fiftyPool, workspace, evaluation, budget, nodeCount, complete);
             value = pool.nodes.data.data[branchIndex].value;
             finished = pool.nodes.data.data[branchIndex].finished;
             if (needProbability) swapProbability(state.probability, evaluation.probabilities[depth]);
@@ -420,25 +433,18 @@ void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index,
     frame.settled = true;
 }
 
-AnytimeSearch::Result AnytimeSearch::analyze(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, long long nodeBudget, const vector<ObservedBoard::CellId> *cells) {
-    Evaluation evaluation;
-    Result result = buildRoot(state, pool, shapeConfig, config, workspace, cells);
-    long long budget = nodeBudget;
-    while (!result.finished) {
-        const int beforeDepth = result.completedDepth;
-        budget = extend(result, state, pool, shapeConfig, config, workspace, evaluation, budget, beforeDepth + 1);
-        if (result.completedDepth == beforeDepth)
-            break;
-    }
+AnytimeSearch::Result AnytimeSearch::analyze(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells) {
+    Result result = buildRoot(state, pool, shapeConfig, config, fiftyConfig, fiftyPool, workspace, cells);
+    update(result, state, pool, shapeConfig, config, fiftyConfig, fiftyPool, workspace);
     return result;
 }
 
-void AnytimeSearch::update(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, long long nodeBudget) {
+void AnytimeSearch::update(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace) {
     Evaluation evaluation;
-    long long budget = nodeBudget;
+    long long budget = config.nodeLimit;
     while (!result.finished) {
         const int beforeDepth = result.completedDepth;
-        budget = extend(result, state, pool, shapeConfig, config, workspace, evaluation, budget, beforeDepth + 1);
+        budget = extend(result, state, pool, shapeConfig, config, fiftyConfig, fiftyPool, workspace, evaluation, budget, beforeDepth + 1);
         if (result.completedDepth == beforeDepth)
             break;
     }

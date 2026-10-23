@@ -2,8 +2,7 @@
 
 #include <functional>
 
-#include "algo/winrate_engine/long_term_risk/long_term_risk.h"
-#include "algo/winrate_engine/selection/selection.h"
+#include "algo/winrate_engine/basic/selection.h"
 #include "core/datastructure/hash.h"
 #include "core/datastructure/vector.h"
 #include "game/position_state.h"
@@ -22,25 +21,12 @@ struct JavaEval {
         // 建议缓存身份：同一盘面下这些参数改变会改变招法。
         void hash(U128Hasher &hasher) const {
             auto mixReal = [&](long double value) { hasher.mix((std::uint64_t)std::hash<long double>{}(value)); };
-            mixReal(selection.risk.influenceThreshold);
-            mixReal(selection.risk.eqEps);
-            mixReal(selection.pseudo.eqEps);
             mixReal(selection.selectionThreshold1);
             mixReal(selection.selectionThreshold2);
             hasher.mix(selection.spaceThreshold);
             mixReal(progressContribution);
             mixReal(influenceScale);
         }
-    };
-
-    struct Candidate {
-        ObservedBoard::CellId cell;
-        long double value;
-        Candidate(ObservedBoard::CellId cell, long double value) : cell(cell), value(value) {}
-    };
-
-    struct Result {
-        vector<Candidate> candidates;
     };
 
     struct Branch {
@@ -91,15 +77,16 @@ struct JavaEval {
         vector<ObservedBoard::CellId> alternatives;
     };
 
-    // 返回按 Selection 候选顺序的评分；reason 可为空。state 必须已同步且概率有效。
-    // cells 非空时只评估指定格，保持输入顺序；格子互异且未揭开，空 vector 返回空结果。
-    static Result analyze(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Selection::Reason *reason, const vector<ObservedBoard::CellId> *cells = nullptr);
+    // 返回完整评分与推荐；候选保持 Selection 顺序，state 必须已同步且概率有效。
+    // cells=nullptr 要求入口已排除安全格；否则只评估指定格，保持输入顺序，格子互异且未揭开。
+    // 空 vector 返回空结果。
+    static SuggestResult analyze(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells = nullptr);
     // 只做单格后续分析，不读长期风险；multiplier 仅含进度奖励。树内有自己的候选生命周期，直接调它。
     // peers 用于强制安全后的必安子集和更安全替代格；safeSearch 时不计进度奖励。
     // floor 只在该候选已算一部分后生效；< 0 表示不剪。分支增量借用 state 的池，供树续搜。
     static Analysis javaLite(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, vectorPool<Branch> &branches, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int forcedSafes, bool safeSearch, span<const Peer> peers, long double floor);
     // JavaLite 之后再乘长期风险 influence；retainDeltas 仅供搜索根层保留 state 池中的增量。
-    static Analysis evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, vectorPool<Branch> &branches, LongTermRisk::Result &risk, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int forcedSafes, span<const Peer> peers, bool retainDeltas);
+    static Analysis evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, vectorPool<Branch> &branches, FiftyFifty::Result &risk, const FiftyFifty::Config &fiftyConfig, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int forcedSafes, span<const Peer> peers, bool retainDeltas);
 
   private:
     template <bool Prune, bool RetainDeltas>

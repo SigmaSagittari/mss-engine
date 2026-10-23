@@ -27,7 +27,7 @@
             <button id="play-mode" class="mode active" role="tab">游玩</button>
             <button id="analysis-mode" class="mode" role="tab">分析</button>
         </div>
-        <button id="endgame-analysis" class="secondary">JavaEval</button>
+        <button id="endgame-analysis" class="secondary">招法分析</button>
         <button id="mcts-analysis" class="secondary" aria-pressed="false" hidden>蒙特卡洛</button>
         <button id="anytime-search" class="secondary" hidden>开始搜索</button>
         <div id="play-actions" class="play-actions">
@@ -103,9 +103,12 @@
             <div class="settings-panels">
                 <section id="settings-analysis" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-analysis">
                     <label class="settings-row"><span>显示分析概率</span><input id="probability-display" type="checkbox" checked></label>
-                    <label class="settings-row"><span>蒙特卡洛对局策略</span><select id="suggest-strategy"><option value="lowrisk">LowRisk</option><option value="java">JavaEval</option><option value="javaBrute" selected>JavaBrute</option></select></label>
+                    <label class="settings-row"><span>基础算法</span><select id="suggest-strategy"><option value="lowrisk" __MSS_POLICY_LOWRISK__>LowRisk</option><option value="java" __MSS_POLICY_JAVA__>JavaEval</option><option value="anytime" __MSS_POLICY_ANYTIME__>Anytime</option></select></label>
+                    <label class="settings-row" id="fifty-fifty-row"><span>50-50 算法</span><select id="fifty-fifty"><option value="oldjava" __MSS_FIFTY_OLDJAVA__>OldJava</option><option value="templates" __MSS_FIFTY_TEMPLATES__>Templates</option></select></label>
+                    <label class="settings-row" id="template-prefix-row"><span>模板前缀</span><input id="template-prefix" type="number" min="1" max="__MSS_TEMPLATE_COUNT__" value="__MSS_TEMPLATE_PREFIX__"></label>
+                    <label class="settings-row" id="policy-nodes-row"><span>Anytime 每步节点数</span><input id="policy-node-budget" type="number" min="1" max="2147483647" value="__MSS_POLICY_NODES__"></label>
                     <h3>BruteForce</h3>
-                    <label class="settings-row"><span>少于此方案数尝试暴力</span><input id="endgame-candidate-limit" type="number" min="1" step="1" value="__MSS_BRUTE_FORCE_THRESHOLD__"></label>
+                    <label class="settings-row"><span>少于此方案数尝试暴力（0 关闭）</span><input id="endgame-candidate-limit" type="number" min="0" step="1" value="__MSS_BRUTE_FORCE_THRESHOLD__"></label>
                     <label class="settings-row"><span>BruteForce 分析所有候选格</span><input id="endgame-check-all-moves" type="checkbox" __MSS_BRUTE_FORCE_CHECK_ALL__></label>
                     <label class="settings-row"><span>BruteForce 多线程</span><input id="endgame-multithread" type="checkbox" __MSS_BRUTE_FORCE_MULTITHREAD__></label>
                     <label class="settings-row"><span>核心数</span><input id="endgame-max-threads" type="number" min="1" max="2147483647" step="1" value="__MSS_THREAD_LIMIT__"></label>

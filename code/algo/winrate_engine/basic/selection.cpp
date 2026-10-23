@@ -1,4 +1,4 @@
-#include "algo/winrate_engine/selection/selection.h"
+#include "algo/winrate_engine/basic/selection.h"
 
 #include <algorithm>
 
@@ -9,7 +9,7 @@ namespace mss {
 void Selection::Result::swapStorage(Workspace &workspace) {
     cells.swap(workspace.cellStorage);
     observations.swap(workspace.observationStorage);
-    risk.swapStorage(workspace.risk);
+    fiftyFifty.swapStorage(workspace.fiftyFifty);
 }
 
 bool Selection::contains(span<const ObservedBoard::CellId> cells, ObservedBoard::CellId cell) {
@@ -194,7 +194,7 @@ void Selection::window(vector<ObservedBoard::CellId> &result, const PositionStat
     }
 }
 
-void Selection::find(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Result &result, Workspace &workspace, bool useRisk, const vector<ObservedBoard::CellId> *cells) {
+void Selection::find(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, Workspace &workspace, bool useRisk, const vector<ObservedBoard::CellId> *cells) {
     result.cells.resize(0);
     result.observations.resize(0);
     result.reason = Reason::ScoreWins;
@@ -202,7 +202,7 @@ void Selection::find(PositionState &state, const ShapeSolverConfig &shapeConfig,
         result.cells = *cells;
         result.reason = Reason::Specified;
         if (useRisk && cells->size != 0)
-            LongTermRisk::update(result.risk, state, span<const ObservedBoard::CellId>(), shapeConfig, config.risk, workspace.risk, nullptr);
+            FiftyFifty::prepareRisk(result.fiftyFifty, state, shapeConfig, fiftyConfig, workspace.fiftyFifty, false);
         return;
     }
     workspace.offEdge.resize(0);
@@ -214,7 +214,7 @@ void Selection::find(PositionState &state, const ShapeSolverConfig &shapeConfig,
             if (state.board.cells[row][col] <= ObservedBoard::CellState::Num8)
                 workspace.witnesses.push_back(cell);
             else if (state.board.cells[row][col] != ObservedBoard::CellState::ForcedMine) {
-                if (Probability::mineProbability(state.probability, cell, state.board, state.basic, state.structure) == 0.0L) {
+                if (!useRisk && Probability::mineProbability(state.probability, cell, state.board, state.basic, state.structure) == 0.0L) {
                     result.cells.push_back(cell);
                     return;
                 }
@@ -227,17 +227,17 @@ void Selection::find(PositionState &state, const ShapeSolverConfig &shapeConfig,
             }
         }
 
-    Pseudo::Result pseudo;
+    Pseudo::Result &pseudo = result.fiftyFifty.pseudo;
     pseudo.cells.swap(result.cells);
-    Pseudo::update(pseudo, state, span<const ObservedBoard::CellId>(), config.pseudo, workspace.pseudo);
+    FiftyFifty::detect(pseudo, state, fiftyConfig, fiftyPool, workspace.fiftyFifty);
     if (pseudo.kind == Pseudo::Kind::None && useRisk)
-        LongTermRisk::update(result.risk, state, span<const ObservedBoard::CellId>(), shapeConfig, config.risk, workspace.risk, &pseudo);
+        FiftyFifty::prepareRisk(result.fiftyFifty, state, shapeConfig, fiftyConfig, workspace.fiftyFifty, true);
     result.cells.swap(pseudo.cells);
     if (pseudo.kind != Pseudo::Kind::None) {
         result.reason = pseudo.kind == Pseudo::Kind::Forced ? Reason::Forced : Reason::Semi;
         return;
     }
-    window(result.cells, state, useRisk ? &result.risk : nullptr, span<const ObservedBoard::CellId>(workspace.offEdge.data, (int)workspace.offEdge.size), span<const ObservedBoard::CellId>(workspace.witnesses.data, (int)workspace.witnesses.size), firstOffEdge, config, workspace);
+    window(result.cells, state, useRisk ? &result.fiftyFifty.risk : nullptr, span<const ObservedBoard::CellId>(workspace.offEdge.data, (int)workspace.offEdge.size), span<const ObservedBoard::CellId>(workspace.witnesses.data, (int)workspace.witnesses.size), firstOffEdge, config, workspace);
     std::sort(result.cells.data, result.cells.data + result.cells.size, [&](ObservedBoard::CellId left, ObservedBoard::CellId right) {
         const long double leftProbability = Probability::mineProbability(state.probability, left, state.board, state.basic, state.structure);
         const long double rightProbability = Probability::mineProbability(state.probability, right, state.board, state.basic, state.structure);

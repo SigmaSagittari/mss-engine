@@ -1,4 +1,4 @@
-#include "algo/winrate_engine/java_eval/java_eval.h"
+#include "algo/winrate_engine/basic/java_eval/java_eval.h"
 
 namespace mss {
 
@@ -136,19 +136,18 @@ JavaEval::Analysis JavaEval::javaLite(PositionState &state, const ShapeSolverCon
     return javaLiteImpl<true, true>(state, shapeConfig, progressContribution, workspace, branches, cell, observation, remainingSafe, forcedSafes, safeSearch, peers, floor, 1.0L);
 }
 
-JavaEval::Analysis JavaEval::evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, vectorPool<Branch> &branches, LongTermRisk::Result &risk, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int forcedSafes, span<const Peer> peers, bool retainDeltas) {
+JavaEval::Analysis JavaEval::evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, vectorPool<Branch> &branches, FiftyFifty::Result &risk, const FiftyFifty::Config &fiftyConfig, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int forcedSafes, span<const Peer> peers, bool retainDeltas) {
     const long double candidates = state.probability.candidates;
     const long double safetyTally = candidates - observation.probability[9] * candidates;
-    const long double tally = LongTermRisk::influence(cell, state, risk, shapeConfig, config.selection.risk, workspace.selection.risk);
+    const long double tally = FiftyFifty::influence(cell, state, risk, shapeConfig, fiftyConfig, workspace.selection.fiftyFifty);
     const long double influence = safetyTally == 0.0L ? 1.0L : (safetyTally + config.influenceScale * tally) / safetyTally;
     return retainDeltas ? javaLiteImpl<false, true>(state, shapeConfig, config.progressContribution, workspace, branches, cell, observation, remainingSafe, forcedSafes, false, peers, -1.0L, influence) : javaLiteImpl<false, false>(state, shapeConfig, config.progressContribution, workspace, branches, cell, observation, remainingSafe, forcedSafes, false, peers, -1.0L, influence);
 }
 
-JavaEval::Result JavaEval::analyze(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Selection::Reason *reason, const vector<ObservedBoard::CellId> *cells) {
+SuggestResult JavaEval::analyze(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells) {
     Selection::Result selected;
     selected.swapStorage(workspace.selection);
-    Selection::find(state, shapeConfig, config.selection, selected, workspace.selection, true, cells);
-    if (reason != nullptr) *reason = selected.reason;
+    Selection::find(state, shapeConfig, config.selection, fiftyConfig, fiftyPool, selected, workspace.selection, true, cells);
     const bool pseudo = selected.reason == Selection::Reason::Forced || selected.reason == Selection::Reason::Semi;
     // 仅两格 Forced 不展开；Semi 和较长的 Forced 链需要比较数字结局。
     const bool skipEvaluation = selected.reason == Selection::Reason::Forced && selected.cells.size < 4;
@@ -160,13 +159,20 @@ JavaEval::Result JavaEval::analyze(PositionState &state, const ShapeSolverConfig
             if (state.board.cells[row][col] <= ObservedBoard::CellState::Num8) --remainingSafe;
             else if (state.board.cells[row][col] == ObservedBoard::CellState::ForcedSafe) ++forcedSafes;
         }
-    Result result;
+    SuggestResult result(SuggestResult::Engine::JavaEval);
+    result.reason = selected.reason;
     vectorPool<Branch> branches;
     for (int i = 0; i < (int)selected.cells.size; ++i) {
         const ObservedBoard::CellId cell = selected.cells.data[i];
-        const long double value = skipEvaluation || selected.observations.data[i].probability[9] == 0.0L ? 1.0L : pseudo ? javaLiteImpl<false, false>(state, shapeConfig, config.progressContribution, workspace, branches, cell, selected.observations.data[i], remainingSafe, forcedSafes, false, span<const Peer>(), -1.0L, 1.0L).value : evaluate(state, shapeConfig, config, workspace, branches, selected.risk, cell, selected.observations.data[i], remainingSafe, forcedSafes, span<const Peer>(), false).value;
-        result.candidates.push_back(Candidate(cell, value));
+        if (skipEvaluation || selected.observations.data[i].probability[9] == 0.0L) {
+            result.candidates.push_back(SuggestResult::Candidate(cell, 1));
+            continue;
+        }
+        const Analysis analysis = pseudo ? javaLiteImpl<false, false>(state, shapeConfig, config.progressContribution, workspace, branches, cell, selected.observations.data[i], remainingSafe, forcedSafes, false, span<const Peer>(), -1.0L, 1.0L) : evaluate(state, shapeConfig, config, workspace, branches, selected.fiftyFifty, fiftyConfig, cell, selected.observations.data[i], remainingSafe, forcedSafes, span<const Peer>(), false);
+        result.nodes += analysis.node;
+        result.candidates.push_back(SuggestResult::Candidate(cell, analysis.value));
     }
+    result.recommend();
     selected.swapStorage(workspace.selection);
     return result;
 }

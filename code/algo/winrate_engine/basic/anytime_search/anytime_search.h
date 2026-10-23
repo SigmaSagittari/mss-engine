@@ -2,7 +2,7 @@
 
 #include <deque>
 
-#include "algo/winrate_engine/java_eval/java_eval.h"
+#include "algo/winrate_engine/basic/java_eval/java_eval.h"
 #include "core/datastructure/vector_pool.h"
 #include "game/position_state.h"
 
@@ -12,10 +12,11 @@ namespace mss {
 struct AnytimeSearch {
     struct Config {
         JavaEval::Config javaEval;
+        long long nodeLimit;
         int width[3];
         bool fullAnalysis;
 
-        Config(JavaEval::Config javaEval, int width0, int width1, int width2, bool fullAnalysis) : javaEval(javaEval), fullAnalysis(fullAnalysis) {
+        Config(JavaEval::Config javaEval, long long nodeLimit, int width0, int width1, int width2, bool fullAnalysis) : javaEval(javaEval), nodeLimit(nodeLimit), fullAnalysis(fullAnalysis) {
             width[0] = width0;
             width[1] = width1;
             width[2] = width2;
@@ -77,12 +78,14 @@ struct AnytimeSearch {
         // 各根以 expandedDepth 发布最新完整评分，completedDepth 是所有根均已完成的层。
         vectorPool<Pool::Node>::vector roots;
         long long node;
+        Selection::Reason reason;
         int completedDepth;
         bool finished;
 
-        Result() : roots{}, node(0), completedDepth(0), finished(true) {}
+        Result() : roots{}, node(0), reason(Selection::Reason::ScoreWins), completedDepth(0), finished(true) {}
         // 先比较各根已发布深度，再比较该层评分；相同时保留原顺序。
         ObservedBoard::CellId recommended(const Pool &pool) const;
+        SuggestResult snapshot(const Pool &pool) const;
     };
 
     struct Workspace {
@@ -94,9 +97,10 @@ struct AnytimeSearch {
     };
 
     // analyze/update 期间及续搜前不得改变根盘面或清空 state 的池；Workspace 可顺序复用。
-    // cells=nullptr 自动选根；否则按给定 vector 的顺序保留全部根，内层仍自动选点；输入只在本次调用读取。
-    static Result analyze(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, long long nodeBudget, const vector<ObservedBoard::CellId> *cells = nullptr);
-    static void update(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, long long nodeBudget);
+    // cells=nullptr 要求入口已排除安全格，自动选根；否则按给定顺序保留全部根，内层仍自动选点。
+    // 每次 analyze/update 从 config.nodeLimit 读取本次预算，续搜只允许调整预算。
+    static Result analyze(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells = nullptr);
+    static void update(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace);
 
   private:
     // 一次 analyze/update 持有的中间结果；各节点显式覆写并消费，容量在本次遍历复用。
@@ -110,14 +114,14 @@ struct AnytimeSearch {
     static bool interchangeable(const PositionState &state, ObservedBoard::CellId lhs, ObservedBoard::CellId rhs);
     static void pruneRoot(vector<JavaEval::Analysis> &analyses, const PositionState &state, int width, Workspace &workspace);
     static void selectCandidates(vector<JavaEval::Analysis> &analyses, int limit);
-    static long long selectRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, const vector<ObservedBoard::CellId> *cells);
-    static bool prepareNode(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, int width, long long &budget, long long &nodeCount);
+    static long long selectRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells);
+    static bool prepareNode(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, int width, long long &budget, long long &nodeCount);
     static void orderMoves(Pool &pool, vectorPool<Pool::Node>::vector children, Pool::Frame &frame);
     static void appendBranches(Pool &pool, int index, const JavaEval::Analysis &analysis, const vectorPool<JavaEval::Branch> &branches);
-    static Result buildRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, const vector<ObservedBoard::CellId> *cells);
-    static long long extend(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Evaluation &evaluation, long long nodeBudget, int maxDepth);
-    static void extendPosition(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Evaluation &evaluation, long long &budget, long long &nodeCount, bool &complete);
-    static void extendCandidate(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Evaluation &evaluation, long long &budget, long long &nodeCount, bool &complete);
+    static Result buildRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells);
+    static long long extend(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, Evaluation &evaluation, long long nodeBudget, int maxDepth);
+    static void extendPosition(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, Evaluation &evaluation, long long &budget, long long &nodeCount, bool &complete);
+    static void extendCandidate(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, Evaluation &evaluation, long long &budget, long long &nodeCount, bool &complete);
 };
 
 } // 命名空间 mss

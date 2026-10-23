@@ -1,7 +1,11 @@
 #include "game/position.h"
 
+#include "algo/winrate_engine/basic/lowrisk/lowrisk.h"
+
 #include <algorithm>
 #include <utility>
+
+#include "core/assert.h"
 
 namespace mss {
 
@@ -91,41 +95,11 @@ GameControl::Position GameControl::Position::fromUserInput(const ObservedBoard::
     return Position(board, workspace, config, Check::User);
 }
 
-U128 GameControl::Position::suggestionKey(const ObservedBoard::Result &board, int algorithm) {
+U128 GameControl::Position::suggestionKey(const ObservedBoard::Result &board, const MovePolicy &policy) {
     U128Hasher hasher;
-    hasher.mix(board.cells.rows());
-    hasher.mix(board.cells.cols());
-    hasher.mix(board.totalMines);
-    for (int row = 0; row < board.cells.rows(); ++row)
-        for (int col = 0; col < board.cells.cols(); ++col)
-            hasher.mix((int)board.cells[row][col]);
-    hasher.mix(algorithm);
-    return hasher.finalize();
-}
-
-U128 GameControl::Position::suggestionKey(const ObservedBoard::Result &board, int algorithm, const JavaEval::Config &config) {
-    U128Hasher hasher;
-    hasher.mix(board.cells.rows());
-    hasher.mix(board.cells.cols());
-    hasher.mix(board.totalMines);
-    for (int row = 0; row < board.cells.rows(); ++row)
-        for (int col = 0; col < board.cells.cols(); ++col)
-            hasher.mix((int)board.cells[row][col]);
-    hasher.mix(algorithm);
-    config.hash(hasher);
-    return hasher.finalize();
-}
-
-U128 GameControl::Position::suggestionKey(const ObservedBoard::Result &board, int algorithm, const JavaBrute::Config &config) {
-    U128Hasher hasher;
-    hasher.mix(board.cells.rows());
-    hasher.mix(board.cells.cols());
-    hasher.mix(board.totalMines);
-    for (int row = 0; row < board.cells.rows(); ++row)
-        for (int col = 0; col < board.cells.cols(); ++col)
-            hasher.mix((int)board.cells[row][col]);
-    hasher.mix(algorithm);
-    config.hash(hasher);
+    hasher.mix(board.cells.rows()); hasher.mix(board.cells.cols()); hasher.mix(board.totalMines);
+    for (int row = 0; row < board.cells.rows(); ++row) for (int col = 0; col < board.cells.cols(); ++col) hasher.mix((int)board.cells[row][col]);
+    policy.hash(hasher);
     return hasher.finalize();
 }
 
@@ -189,37 +163,9 @@ span<const ObservedBoard::CellId> GameControl::Position::safeMoves() {
         if ((observed == ObservedBoard::CellState::Hidden || observed == ObservedBoard::CellState::ForcedSafe) && state_.basic.marks[location.first][location.second] == Basic::Mark::S)
             safeCells_.push_back(cell);
     }
-    // Basic 已经给出安全格时不再算概率；和 1.5 一样提前返回。
+    // Basic 已给出安全格时直接返回；其余统一检查全盘概率。
     if (safeCells_.size != 0)
         return span<const ObservedBoard::CellId>(safeCells_.data, (int)safeCells_.size);
-
-    updateStructure();
-    for (int component = 0; component < (int)state_.structure.components.size; ++component) {
-        const Structure::Instance &instance = state_.shapes.instances.list.data[state_.structure.components.data[component]];
-        const Structure::Shape &shape = state_.shapes.shapes.list.data[instance.shape];
-        const int boxCount = (int)shape.boxSizes.count;
-        const int *offsets = state_.shapes.instances.boxOf.data.data + instance.boxOf.offset;
-        const Structure::CellId *cells = state_.shapes.instances.cells.data.data + instance.cells.offset;
-        const ShapeSolver::DistributionId id = ShapeSolver::analyze(shape, state_.shapes, config_.shapeSolver, state_.distributions, workspace_.probability.shapeSolver);
-        const ShapeSolver::Distribution &distribution = state_.distributions.list.data[id];
-        const long double *ways = state_.distributions.values.data.data + distribution.ways.offset;
-        const long double *expectations = state_.distributions.values.data.data + distribution.expectations.offset;
-        for (int box = 0; box < boxCount; ++box) {
-            bool alwaysZero = true;
-            for (int i = 0; i < (int)distribution.ways.count; ++i)
-                if (ways[i] != 0.0L && expectations[i * boxCount + box] != 0.0L) {
-                    alwaysZero = false;
-                    break;
-                }
-            if (!alwaysZero)
-                continue;
-            for (int i = offsets[box]; i < offsets[box + 1]; ++i)
-                safeCells_.push_back(cells[i]);
-        }
-        // 找到一个有零雷 Box 的连通块就返回；和 1.5 一样不再扫后面的连通块。
-        if (safeCells_.size != 0)
-            return span<const ObservedBoard::CellId>(safeCells_.data, (int)safeCells_.size);
-    }
 
     const Probability::Result &currentProbability = probability();
     currentProbability.frontierCells(state_.structure, state_.shapes, [&](ObservedBoard::CellId cell, long double risk) {
@@ -234,110 +180,60 @@ span<const ObservedBoard::CellId> GameControl::Position::safeMoves() {
     return span<const ObservedBoard::CellId>(safeCells_.data, (int)safeCells_.size);
 }
 
-ObservedBoard::CellId GameControl::Position::lowRiskMove() {
-    const Probability::Result &currentProbability = probability();
-    ObservedBoard::CellId safest = -1;
-    int safestRow = state_.board.cells.rows();
-    int safestCol = -1;
-    long double lowestRisk = 2.0L;
-    auto consider = [&](ObservedBoard::CellId cell, long double risk) {
-        if (risk >= 1.0L)
-            return;
-        const std::pair<int, int> location = state_.board.pos(cell);
-        if (risk < lowestRisk || (risk == lowestRisk && (location.first < safestRow || (location.first == safestRow && location.second > safestCol)))) {
-            lowestRisk = risk;
-            safestRow = location.first;
-            safestCol = location.second;
-            safest = cell;
+void GameControl::Position::suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search) {
+    result = SuggestResult();
+    if (search) *search = AnytimeSearch::Result();
+    const span<const ObservedBoard::CellId> safe = safeMoves();
+    if (safe.size != 0) {
+        result.engine = SuggestResult::Engine::Safe; result.reason = SuggestResult::Reason::Safe;
+        for (int i = 0; i < safe.size; ++i) { result.suggest.push_back(safe.data[i]); result.candidates.push_back(SuggestResult::Candidate(safe.data[i], 1)); }
+        return;
+    }
+    suggest(state(), policy, fiftyPool, searchPool, workspace, bruteForce, result, cells, search);
+}
+
+void GameControl::Position::suggest(PositionState &current, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search) {
+    int remaining = current.board.cells.rows() * current.board.cells.cols() - current.board.totalMines;
+    for (int row = 0; row < current.board.cells.rows(); ++row) for (int col = 0; col < current.board.cells.cols(); ++col)
+        if (current.board.cells[row][col] <= ObservedBoard::CellState::Num8) --remaining;
+    if (remaining == 0) return;
+    if (policy.brute.limit != 0 && current.probability.candidates < policy.brute.limit) {
+        BruteForce::Config config = *policy.brute.config;
+        if (cells) config.checkAllMoves = true;
+        BruteForce::solve(current.board, current.basic, current.structure, current.shapes, config, result, bruteForce);
+        if (cells) {
+            int count = 0;
+            for (int i = 0; i < (int)result.candidates.size; ++i)
+                if (std::find(cells->data, cells->data + cells->size, result.candidates.data[i].cell) != cells->data + cells->size) result.candidates.data[count++] = result.candidates.data[i];
+            result.candidates.size = count; result.reason = SuggestResult::Reason::Specified; result.recommend();
         }
-    };
-    currentProbability.frontierCells(state_.structure, state_.shapes, consider);
-    if (state_.basic.unknownSum != 0)
-        for (int row = 0; row < state_.board.cells.rows(); ++row)
-            for (int col = 0; col < state_.board.cells.cols(); ++col)
-                if (state_.board.cells[row][col] == ObservedBoard::CellState::Hidden && state_.basic.marks[row][col] == Basic::Mark::T)
-                    consider(state_.board.id(row, col), currentProbability.tCellProbability);
-    // 合法局面只剩确定雷格时，没有可揭开的格，正常返回 -1。
-    return safest;
+    } else if (policy.basic.algorithm == MovePolicy::Basic::Algorithm::LowRisk) {
+        SuggestResult evaluated = LowRisk::analyze(current, cells);
+        result.swap(evaluated);
+    } else {
+        const FiftyFifty::Config fifty(policy.fiftyFifty.algorithm == MovePolicy::FiftyFifty::Algorithm::OldJava ? policy.fiftyFifty.oldJava : nullptr, policy.fiftyFifty.algorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? policy.fiftyFifty.templates : nullptr, policy.fiftyFifty.risk);
+        if (policy.basic.algorithm == MovePolicy::Basic::Algorithm::JavaEval) {
+            SuggestResult evaluated = JavaEval::analyze(current, config_.shapeSolver, *policy.basic.javaEval, fifty, fiftyPool, workspace.javaEval, cells);
+            result.swap(evaluated);
+        } else {
+            const AnytimeSearch::Result searched = AnytimeSearch::analyze(current, searchPool, config_.shapeSolver, *policy.basic.anytime, fifty, fiftyPool, workspace, cells);
+            SuggestResult evaluated = searched.snapshot(searchPool);
+            result.swap(evaluated);
+            if (search) *search = searched;
+        }
+    }
 }
 
-void GameControl::Position::suggest(SuggestResult &result, SuggestPool &pool) {
+void GameControl::Position::suggest(const MovePolicy &policy, SuggestPool &pool, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, vector<ObservedBoard::CellId> &result) {
+    result.resize(0);
     const span<const ObservedBoard::CellId> safe = safeMoves();
-    result.suggest.resize(0);
-    if (safe.size > 0) {
-        for (int i = 0; i < safe.size; ++i)
-            result.suggest.push_back(safe.data[i]);
-        result.safeResult = true;
-        return;
-    }
-    const U128 key = suggestionKey(state_.board, 0);
-    if (ObservedBoard::CellId *cached = pool.find(key)) {
-        result.suggest.push_back(*cached);
-        result.safeResult = false;
-        return;
-    }
-    const ObservedBoard::CellId cell = lowRiskMove();
-    if (cell >= 0) {
-        result.suggest.push_back(cell);
-        pool.emplace(key, cell);
-    }
-    result.safeResult = false;
+    if (safe.size != 0) { for (int i = 0; i < safe.size; ++i) result.push_back(safe.data[i]); return; }
+    const U128 key = suggestionKey(state_.board, policy);
+    if (ObservedBoard::CellId *cached = pool.cache.find(key)) { result.push_back(*cached); return; }
+    SuggestResult evaluated;
+    suggest(state(), policy, fiftyPool, searchPool, workspace, bruteForce, evaluated, nullptr, nullptr);
+    result.swap(evaluated.suggest);
+    if (result.size != 0) pool.cache.emplace(key, result.data[0]);
 }
-
-void GameControl::Position::suggestJavaBrute(const JavaBrute::Config &config, JavaBrute::Workspace &workspace, SuggestResult &result, SuggestPool &pool) {
-    const span<const ObservedBoard::CellId> safe = safeMoves();
-    result.suggest.resize(0);
-    if (safe.size > 0) {
-        for (int i = 0; i < safe.size; ++i)
-            result.suggest.push_back(safe.data[i]);
-        result.safeResult = true;
-        return;
-    }
-    const U128 key = suggestionKey(state_.board, 2, config);
-    if (ObservedBoard::CellId *cached = pool.find(key)) {
-        result.suggest.push_back(*cached);
-        result.safeResult = false;
-        return;
-    }
-    probability();
-    const JavaBrute::Result choice = JavaBrute::solve(state(), config_.shapeSolver, config, workspace);
-    if (choice.cell >= 0) {
-        result.suggest.push_back(choice.cell);
-        pool.emplace(key, choice.cell);
-    }
-    result.safeResult = false;
-}
-
-void GameControl::Position::suggestJavaEval(const JavaEval::Config &config, JavaEval::Workspace &workspace, SuggestResult &result, SuggestPool &pool) {
-    const span<const ObservedBoard::CellId> safe = safeMoves();
-    result.suggest.resize(0);
-    if (safe.size > 0) {
-        for (int i = 0; i < safe.size; ++i)
-            result.suggest.push_back(safe.data[i]);
-        result.safeResult = true;
-        return;
-    }
-    const U128 key = suggestionKey(state_.board, 1, config);
-    if (ObservedBoard::CellId *cached = pool.find(key)) {
-        result.suggest.push_back(*cached);
-        result.safeResult = false;
-        return;
-    }
-    probability();
-    const JavaEval::Result evaluated = JavaEval::analyze(state(), config_.shapeSolver, config, workspace, nullptr);
-    if (evaluated.candidates.size == 0) {
-        result.safeResult = false;
-        return;
-    }
-    int best = 0;
-    for (int i = 1; i < (int)evaluated.candidates.size; ++i)
-        if (evaluated.candidates.data[i].value > evaluated.candidates.data[best].value)
-            best = i;
-    result.suggest.push_back(evaluated.candidates.data[best].cell);
-    pool.emplace(key, evaluated.candidates.data[best].cell);
-    result.safeResult = false;
-}
-
 
 } // 命名空间 mss
-

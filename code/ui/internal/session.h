@@ -36,13 +36,13 @@ struct Session {
         int id;
         GameControl::Config config;
         GameControl::Workspace game;
-        JavaEval::Workspace javaEval;
-        JavaBrute::Workspace javaBrute;
+        BruteForce::Workspace bruteForce;
         AnytimeSearch::Workspace anytimeSearch;
         AnytimeSearch::Pool searchPool;
         MonteCarlo::Workspace monteCarlo;
+        FiftyFifty::Pool fiftyPool;
         GameControl::Position position;
-        Analysis(int id, const GameControl::Config &config, const ObservedBoard::Result &board) : id(id), config(config), javaEval(game.basic, game.structure, game.probability), javaBrute(game.basic, game.structure, game.probability, game.probability.shapeSolver), anytimeSearch(game.basic, game.structure, game.probability), position(GameControl::Position::fromUserInput(board, game, config)) {}
+        Analysis(int id, const GameControl::Config &config, const ObservedBoard::Result &board) : id(id), config(config), bruteForce(game.probability.shapeSolver), anytimeSearch(game.basic, game.structure, game.probability), position(GameControl::Position::fromUserInput(board, game, config)) {}
     };
 
     static std::vector<FormField> parseForm(const std::string &body);
@@ -57,13 +57,13 @@ struct Session {
     std::string value(const std::vector<FormField> &fields, const std::string &key) const;
     std::string error(const std::string &message) const;
     bool parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolverConfig::Order &algo);
-    bool parseConfig(const std::vector<FormField> &fields, JavaBrute::Config &config, MonteCarlo::PlayoutAlgo &strategy, std::string &response);
+    bool parseConfig(const std::vector<FormField> &fields, Config &config, std::string &response);
     bool parseBoard(const std::vector<FormField> &fields, int &rows, int &cols, int &mines, std::string &cells, std::string &response);
     static ObservedBoard::Result makeBoard(int rows, int cols, int mines, const std::string &cells);
     bool createAnalysis(const std::vector<FormField> &fields, std::unique_ptr<Analysis> &analysis, std::string &response);
     std::string analyze(const std::vector<FormField> &fields);
     std::string playUntilNoSafe(const std::vector<FormField> &fields);
-    void writeSuggestion(std::ostream &result, Analysis &analysis, const JavaBrute::Config &config, MonteCarlo::PlayoutAlgo strategy);
+    void writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config);
 
     // 普通计算由 HTTP 请求串行访问；仅保留最近一次计算，前端负责串行引用其 id。
     std::unique_ptr<Analysis> analysis_;
