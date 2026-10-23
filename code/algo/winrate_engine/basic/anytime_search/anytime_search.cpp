@@ -107,7 +107,7 @@ void AnytimeSearch::pruneRoot(vector<JavaEval::Analysis> &analyses, const Positi
         analyses.size = width;
 }
 
-long long AnytimeSearch::selectRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells) {
+long long AnytimeSearch::selectRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details) {
     Selection::Result &selected = pool.selected;
     Selection::find(state, shapeConfig, config.javaEval.selection, fiftyConfig, fiftyPool, selected, workspace.javaEval.selection, true, cells);
     Selection::removeDead(selected, state, shapeConfig, workspace.javaEval.probability);
@@ -127,7 +127,7 @@ long long AnytimeSearch::selectRoot(PositionState &state, Pool &pool, const Shap
         const Observe::Result &observation = selected.observations.data[i];
         const bool safe = observation.probability[9] == 0.0L;
         const bool pseudo = selected.reason == Selection::Reason::Forced || selected.reason == Selection::Reason::Semi;
-        const JavaEval::Analysis analysis = safe || pseudo ? JavaEval::javaLite(state, shapeConfig, config.javaEval.progressContribution, workspace.javaEval, pool.branches, cell, observation, remaining, forced, safe, peerSpan, -1.0L) : JavaEval::evaluate(state, shapeConfig, config.javaEval, workspace.javaEval, pool.branches, selected.fiftyFifty, fiftyConfig, cell, observation, remaining, forced, peerSpan, true);
+        const JavaEval::Analysis analysis = safe || pseudo ? JavaEval::javaLite(state, shapeConfig, config.javaEval.progressContribution, workspace.javaEval, pool.branches, cell, observation, remaining, forced, safe, peerSpan, -1.0L, details) : JavaEval::evaluate(state, shapeConfig, config.javaEval, workspace.javaEval, pool.branches, selected.fiftyFifty, fiftyConfig, cell, observation, remaining, forced, peerSpan, true, details);
         nodeCount += analysis.node;
         if (config.fullAnalysis || cells != nullptr || !analysis.hasAlternative)
             analyses.push_back(analysis);
@@ -253,7 +253,7 @@ void AnytimeSearch::appendBranches(Pool &pool, int index, const JavaEval::Analys
     candidate.child = branches;
 }
 
-AnytimeSearch::Result AnytimeSearch::buildRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells) {
+AnytimeSearch::Result AnytimeSearch::buildRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details) {
     Result result;
     pool.nodes.data.resize(0);
     pool.transitions.resize(0);
@@ -261,7 +261,7 @@ AnytimeSearch::Result AnytimeSearch::buildRoot(PositionState &state, Pool &pool,
     for (Pool::Frame &frame : pool.frames)
         frame.active = false;
     vector<JavaEval::Analysis> &analyses = pool.analyses;
-    const long long nodeCount = selectRoot(state, pool, shapeConfig, config, fiftyConfig, fiftyPool, workspace, cells);
+    const long long nodeCount = selectRoot(state, pool, shapeConfig, config, fiftyConfig, fiftyPool, workspace, cells, details);
     result.reason = pool.selected.reason;
     if (!config.fullAnalysis && cells == nullptr)
         pruneRoot(analyses, state, config.width[0], workspace);
@@ -283,7 +283,7 @@ AnytimeSearch::Result AnytimeSearch::buildRoot(PositionState &state, Pool &pool,
     return result;
 }
 
-long long AnytimeSearch::extend(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, Evaluation &evaluation, long long nodeBudget, int maxDepth) {
+long long AnytimeSearch::extend(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, Evaluation &evaluation, long long nodeBudget, int maxDepth, SuggestResult::Details *details) {
     if (pool.frames.empty()) pool.frames.emplace_back();
     Pool::Frame &frame = pool.frames[0];
     if (!frame.active) orderMoves(pool, result.roots, frame);
@@ -294,6 +294,14 @@ long long AnytimeSearch::extend(Result &result, PositionState &state, Pool &pool
         const int index = frame.order.data[frame.next];
         extendCandidate(state, pool, index, maxDepth, shapeConfig, config, fiftyConfig, fiftyPool, workspace, evaluation, budget, nodeCount, complete);
         if (!complete) break;
+        if (details) {
+            const Pool::Node &candidate = pool.nodes.data.data[index];
+            // 数字顺序与根分支顺序一致；只在整格完成后发布，保留上一完整层的子评分。
+            int branch = 0;
+            for (int i = 0; i < (int)details->branches.size; ++i)
+                if (details->branches.data[i].cell == candidate.cell) details->branches.data[i].value = pool.nodes.data.data[candidate.child.offset + branch++].value;
+            details->history.push_back(SuggestResult::Details::Layer(candidate.cell, maxDepth, candidate.value));
+        }
         ++frame.next;
     }
     if (complete) {
@@ -433,18 +441,24 @@ void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index,
     frame.settled = true;
 }
 
-AnytimeSearch::Result AnytimeSearch::analyze(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells) {
-    Result result = buildRoot(state, pool, shapeConfig, config, fiftyConfig, fiftyPool, workspace, cells);
-    update(result, state, pool, shapeConfig, config, fiftyConfig, fiftyPool, workspace);
+AnytimeSearch::Result AnytimeSearch::analyze(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details) {
+    if (details) details->clear();
+    Result result = buildRoot(state, pool, shapeConfig, config, fiftyConfig, fiftyPool, workspace, cells, details);
+    if (details)
+        for (int i = 0; i < (int)result.roots.count; ++i) {
+            const Pool::Node &candidate = pool.nodes.data.data[result.roots.offset + i];
+            details->history.push_back(SuggestResult::Details::Layer(candidate.cell, 0, candidate.value));
+        }
+    update(result, state, pool, shapeConfig, config, fiftyConfig, fiftyPool, workspace, details);
     return result;
 }
 
-void AnytimeSearch::update(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace) {
+void AnytimeSearch::update(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, SuggestResult::Details *details) {
     Evaluation evaluation;
     long long budget = config.nodeLimit;
     while (!result.finished) {
         const int beforeDepth = result.completedDepth;
-        budget = extend(result, state, pool, shapeConfig, config, fiftyConfig, fiftyPool, workspace, evaluation, budget, beforeDepth + 1);
+        budget = extend(result, state, pool, shapeConfig, config, fiftyConfig, fiftyPool, workspace, evaluation, budget, beforeDepth + 1, details);
         if (result.completedDepth == beforeDepth)
             break;
     }

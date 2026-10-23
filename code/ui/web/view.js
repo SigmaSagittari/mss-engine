@@ -55,77 +55,161 @@ function formatCount(value) {
     return (unit <= 1 ? Number(digits).toString() : digits) + ["", "K", "M", "B", "T"][unit];
 }
 
-function showDetail(data, cell) {
-    detailEmpty.hidden = true;
-    detailContent.hidden = false;
+function formatPercent(value) {
+    const percent = Number(value) * 100;
+    return `${percent > 0 && percent < 0.0001 ? percent.toExponential(3) : percent.toFixed(4)}%`;
+}
+
+function renderAnalysisResult() {
+    const now = performance.now();
+    let summary = "";
+    let recommended = [];
+    let safe = false;
+    if (mctsResult || mctsController) {
+        const result = mctsResult;
+        const samples = result?.simulations || 0;
+        let speed = 0;
+        if (mctsController && mctsHistory.length > 1) {
+            const first = mctsHistory[0];
+            const next = mctsHistory[1];
+            const start = Math.max(first.time, now - 1000);
+            const baseline = first.simulations + (next.simulations - first.simulations) * (start - first.time) / (next.time - first.time);
+            speed = (samples - baseline) * 1000 / (now - start);
+        }
+        summary = result?.exact ? "精确枚举 · 已完成" : `蒙特卡洛 · ${formatCount(samples)} 次模拟 · ${formatCount(Math.round(speed))} 局/s · ${mctsController ? "运行中" : "已停止"}`;
+        if (result?.winrate && samples > 0) summary += ` · 整局胜率 ${formatPercent(result.value)}`;
+        if (result && result.recommended >= 0) recommended = [result.recommended];
+    } else if (searchResult || searchController) {
+        const result = searchResult;
+        const speed = searchController && result && !result.paused && !result.finished ? (result.nodes - searchSamples[0].nodes) * 1000 / Math.max(1, now - searchSamples[0].time) : 0;
+        const engine = result?.engine === "BruteForce" ? "精确枚举" : result?.safe ? "确定安全" : "Anytime";
+        summary = result ? `${engine} · ${formatCount(result.nodes)} 节点 · ${formatCount(Math.round(speed))} 节点/s · ${result.finished ? "已完成" : result.paused ? "已暂停" : "运行中"}` : "Anytime · 正在开始";
+        if (result?.engine === "Anytime") summary += ` · 全部候选完成第 ${result.completedDepth} 层`;
+        safe = result?.safe === true;
+        if (safe) recommended = result.moves.map((move) => move.cell);
+        else if (result && result.recommended >= 0) recommended = [result.recommended];
+    } else if (suggestionResult) {
+        const result = suggestionResult;
+        const names = { Finished: "棋盘已完成", Safe: "确定安全", LowRisk: "LowRisk", JavaEval: "JavaE", Anytime: "Anytime", BruteForce: "精确枚举" };
+        summary = `${names[result.engine]} · 分析耗时 ${result.elapsedMs.toFixed(1)} ms`;
+        if (result.engine === "Anytime" || result.engine === "BruteForce") summary += ` · ${formatCount(result.nodes)} 节点`;
+        recommended = result.recommended;
+        safe = result.engine === "Safe";
+    }
+    analysisSummary.hidden = !summary;
+    analysisSummary.textContent = summary;
+    analysisCountRow.hidden = !candidateCount;
+    analysisCount.textContent = candidateCount ? formatCount(candidateCount) : "";
+    analysisRecommendation.hidden = recommended.length === 0;
     const state = activeState();
-    const row = Math.floor(cell / state.cols) + 1;
-    const col = cell % state.cols + 1;
-    detailPosition.textContent = `${row} 行，${col} 列`;
-    detailRisk.textContent = data.probability;
-    const count = data.candidateCount || candidateCount;
-    detailCandidates.textContent = count ? formatCount(count) : "—";
-    observeResult.replaceChildren();
-    if (!data.observe) {
-        const item = document.createElement("div");
-        item.className = "muted";
-        item.textContent = state.cells[cell] === "M" ? "该格确定为雷，没有安全的观察分布。" : "该格已揭开，没有新的观察分布。";
-        observeResult.append(item);
-        return;
+    analysisRecommendation.textContent = safe ? `全部安全格（${recommended.length} 个）` : recommended.length ? `推荐：${recommended.map((cell) => `第 ${Math.floor(cell / state.cols) + 1} 行，第 ${cell % state.cols + 1} 列`).join("；")}` : "";
+}
+
+function renderObserve(branches) {
+    const observation = detailData?.observe;
+    observeResult.hidden = !observation;
+    if (!observation) return;
+    const hasScores = branches.length > 0;
+    document.getElementById("observe-score-heading").hidden = !hasScores;
+    const body = observeResult.tBodies[0];
+    let index = 0;
+    for (let digit = 0; digit <= 9; ++digit) {
+        if (Number(observation[digit]) === 0) continue;
+        let row = body.rows[index];
+        if (!row) {
+            row = body.insertRow();
+            row.insertCell(); row.insertCell(); row.insertCell();
+        }
+        row.cells[0].textContent = digit === 9 ? "爆炸" : `数字 ${digit}`;
+        row.cells[1].textContent = formatPercent(observation[digit]);
+        row.cells[2].hidden = !hasScores;
+        if (hasScores) {
+            const branch = branches.find((item) => item.digit === digit);
+            row.cells[2].textContent = digit === 9 ? "0%" : formatPercent(branch.value);
+        }
+        ++index;
     }
-    const score = document.createElement("div");
-    score.className = "observe-item java-score";
-    score.style.gridColumn = "1 / -1";
-    const scoreLabel = document.createElement("span");
-    scoreLabel.textContent = "Java 评分";
-    const scoreValue = document.createElement("strong");
-    scoreValue.textContent = data.javaScore;
-    scoreValue.dataset.javaScore = data.javaScore;
-    score.append(scoreLabel, scoreValue);
-    observeResult.append(score);
-    const heading = document.createElement("div");
-    heading.className = "observe-item search-branch-heading";
-    for (const text of ["结局", "概率", "子评分"]) {
-        const label = document.createElement("span");
-        label.textContent = text;
-        heading.append(label);
+    while (body.rows.length > index) body.deleteRow(index);
+}
+
+function renderDetail() {
+    detailPanel.hidden = mode !== "analysis" || selectedCell < 0;
+    if (detailPanel.hidden) return;
+    const state = activeState();
+    detailPosition.textContent = `第 ${Math.floor(selectedCell / state.cols) + 1} 行，第 ${selectedCell % state.cols + 1} 列`;
+    detailStatus.hidden = !detailStatus.textContent;
+    detailContent.hidden = !detailData;
+    if (detailData) detailRisk.textContent = formatPercent(detailData.probability);
+    const risk = detailData?.longTermRisk;
+    document.getElementById("detail-long-term-risk").hidden = !risk;
+    if (risk) {
+        document.getElementById("detail-body-risk").textContent = formatPercent(risk.body);
+        document.getElementById("detail-restriction-risk").textContent = formatPercent(risk.restriction);
     }
-    observeResult.append(heading);
-    for (let number = 0; number <= 9; ++number) {
-        if (/^0(?:\.0+)?(?:e[+-]?\d+)?$/i.test(data.observe[number])) continue;
-        const item = document.createElement("div");
-        item.className = "observe-item";
-        const label = document.createElement("span");
-        label.textContent = number === 9 ? "爆炸" : `数字 ${number}`;
-        const value = document.createElement("span");
-        value.textContent = Number(data.observe[number]).toFixed(6);
-        const branch = document.createElement("strong");
-        branch.className = "search-branch-score";
-        branch.dataset.digit = number;
-        if (number === 9) branch.dataset.javaScore = 0;
-        item.append(label, value, branch);
-        observeResult.append(item);
+    let engine = null;
+    let move = null;
+    if (searchResult) {
+        engine = searchResult.engine;
+        move = searchMoves.get(selectedCell);
+    } else if (mctsResult) {
+        engine = mctsResult.exact ? "BruteForce" : "MonteCarlo";
+        move = mctsMoves.get(selectedCell);
+    } else if (suggestionResult) {
+        engine = suggestionResult.engine;
+        move = suggestionMoves.get(selectedCell);
     }
-    renderSearch();
+    detailScoreRow.hidden = !move;
+    const names = { Safe: "确定安全", LowRisk: "LowRisk", JavaEval: "JavaE", Anytime: "Anytime", BruteForce: "精确枚举", MonteCarlo: "蒙特卡洛" };
+    detailEngine.textContent = move ? names[engine] : "";
+    if (move) {
+        const labels = { Safe: "安全率", LowRisk: "安全率", JavaEval: "评分", Anytime: "当前评分", BruteForce: "精确胜率", MonteCarlo: "胜率" };
+        detailScoreLabel.textContent = labels[engine];
+        const score = engine === "MonteCarlo" || (mctsResult && engine === "BruteForce") ? move.winrate : move.value;
+        detailScore.textContent = score === null ? "—" : formatPercent(score);
+    }
+    mctsDetail.hidden = engine !== "MonteCarlo" || !move;
+    if (!mctsDetail.hidden) {
+        mctsVisits.textContent = move.visits;
+        mctsWins.textContent = move.wins;
+    }
+    renderObserve((engine === "JavaEval" || engine === "Anytime") && move ? move.branches : []);
+    const history = engine === "Anytime" && move ? move.history : [];
+    searchHistory.hidden = history.length === 0;
+    detailSide.hidden = mctsDetail.hidden && searchHistory.hidden;
+    detailColumns.classList.toggle("split", !detailSide.hidden);
+    const body = searchHistory.tBodies[0];
+    for (let index = 0; index < history.length; ++index) {
+        let row = body.rows[index];
+        if (!row) { row = body.insertRow(); row.insertCell(); row.insertCell(); }
+        row.cells[0].textContent = history[index].depth;
+        row.cells[1].textContent = formatPercent(history[index].value);
+        row.classList.toggle("latest", index === history.length - 1);
+    }
+    while (body.rows.length > history.length) body.deleteRow(history.length);
+}
+
+function showDetail(data) {
+    detailData = data;
+    detailStatus.textContent = "";
+    renderDetail();
 }
 
 function clearDetail() {
     ++detailRequest;
-    detailEmpty.hidden = false;
-    detailEmpty.textContent = "点击格子查看详情。";
-    detailEmpty.className = "muted";
-    detailContent.hidden = true;
+    selectedCell = -1;
+    detailData = null;
+    detailStatus.textContent = "";
+    detailPanel.hidden = true;
 }
 
-function clearEndgameResult() {
-    endgameResultAvailable = false;
-    endgameCandidateCells.clear();
+function clearSuggestion() {
+    suggestionResult = null;
+    for (const cell of suggestionMoves.keys())
+        boardElement.children[cell].classList.remove("analysis-candidate", "analysis-best");
+    suggestionMoves.clear();
     endgameBestCells.clear();
-    for (let cell = 0; cell < boardElement.children.length; ++cell)
-        boardElement.children[cell].classList.remove("endgame-candidate", "endgame-best");
-    endgameResult.hidden = true;
-    endgameSummary.textContent = "";
-    endgameMoves.replaceChildren();
+    renderAnalysisResult();
+    renderDetail();
 }
 
 function clearPressedCells() {
@@ -159,17 +243,14 @@ function updateCell(button, cell, state) {
     const showMcts = (isHidden || value === "S") && move;
     const searchMove = mode === "analysis" ? searchMoves.get(cell) : null;
     const showSearch = (isHidden || value === "S") && searchMove;
-    const wasMcts = button.classList.contains("mcts-cell");
+    const suggested = suggestionMoves.get(cell);
+    const showSuggestion = (isHidden || value === "S") && suggested;
     // 先算出最终样式和文字；概率刷新时只写变化项，不清空再恢复整格。
     let className = "cell";
-    let text = showMcts && wasMcts ? button.textContent : "";
+    let text = "";
     if (value === "G")
         className += " mcts-goal";
-    if (wasMcts && !showMcts) {
-        button.removeAttribute("data-mcts-winrate");
-        button.removeAttribute("data-mcts-visits");
-    }
-    if (!showSearch) button.removeAttribute("data-search-depth");
+    if (!showSearch && !showMcts && !showSuggestion) button.removeAttribute("data-analysis-detail");
     button.removeAttribute("title");
     button.setAttribute("aria-label", `第 ${Math.floor(cell / state.cols) + 1} 行，第 ${cell % state.cols + 1} 列`);
     if (value >= "0" && value <= "8")
@@ -188,21 +269,31 @@ function updateCell(button, cell, state) {
         if (cell === playState.lostCell)
             className += " hit-mine";
         text = "✹";
-    } else if (showSearch) {
-        className += " search-cell";
-        if (searchResult.safe || cell === searchResult.recommended) className += " search-best";
-        text = `${(Number(searchMove.value) * 100).toFixed(1)}%`;
-        button.dataset.searchDepth = `${searchMove.depth} 层`;
-        button.title = `完成第 ${searchMove.depth} 层，评分 ${Number(searchMove.value).toFixed(6)}`;
+    } else if (showSearch || showMcts || showSuggestion) {
+        className += " analysis-candidate";
+        let score;
+        let detail;
+        let best;
+        if (showSearch) {
+            score = searchMove.value;
+            detail = searchResult.engine === "BruteForce" ? "精确" : `${searchMove.depth} 层`;
+            best = searchResult.safe || cell === searchResult.recommended;
+            button.title = `评分 ${(Number(score) * 100).toFixed(4)}%，${detail}`;
+        } else if (showMcts) {
+            score = move.winrate;
+            detail = mctsResult.exact ? "精确" : mctsCountFormat.format(BigInt(move.visits));
+            best = cell === mctsResult.recommended;
+            button.title = mctsResult.exact ? `精确胜率 ${(Number(score) * 100).toFixed(4)}%` : `采样 ${move.visits} 次，胜出 ${move.wins} 次，胜率 ${score === null ? "尚未采样" : `${(Number(score) * 100).toFixed(4)}%`}`;
+        } else {
+            score = suggested.value;
+            detail = suggested.depth === undefined ? `${(Number(suggested.probability) * 100).toFixed(1)}%` : `${suggested.depth} 层`;
+            best = endgameBestCells.has(cell);
+            button.title = `评分 ${(Number(score) * 100).toFixed(4)}%，${suggested.depth === undefined ? "雷率 " : ""}${detail}`;
+        }
+        if (best) className += " analysis-best";
+        text = score === null ? "—" : `${(Number(score) * 100).toFixed(1)}%`;
+        button.dataset.analysisDetail = detail;
         button.setAttribute("aria-label", `${button.getAttribute("aria-label")}，${button.title}`);
-    } else if (showMcts) {
-        className += " mcts-cell";
-        if (cell === mctsResult.recommended)
-            className += " mcts-best";
-        button.dataset.mctsWinrate = `${(Number(move.winrate) * 100).toFixed(1).replace(/\.0$/, "")}%`;
-        button.dataset.mctsVisits = mctsResult.exact ? "精确" : mctsCountFormat.format(BigInt(move.visits));
-        button.title = mctsResult.exact ? `精确胜率 ${Number(move.winrate).toFixed(6)}` : `采样 ${move.visits} 次，胜出 ${move.wins} 次，胜率 ${Number(move.winrate).toFixed(6)}`;
-        button.setAttribute("aria-label", `第 ${Math.floor(cell / state.cols) + 1} 行，第 ${cell % state.cols + 1} 列，${button.title}`);
     } else if (isHidden && probabilityDisplay.checked && (probabilities || probabilityPending)) {
         className += " probability-cell";
         if (probabilities) {
@@ -227,10 +318,6 @@ function updateCell(button, cell, state) {
         className += " selected";
     if (mode === "analysis" && hoveredCell === cell)
         className += " hovered";
-    if (endgameResultAvailable && endgameCandidateCells.has(cell))
-        className += " endgame-candidate";
-    if (endgameResultAvailable && endgameBestCells.has(cell))
-        className += " endgame-best";
     if (button.className !== className)
         button.className = className;
     if (button.textContent !== text)
@@ -253,10 +340,8 @@ function makeCell(cell, state) {
     button.addEventListener("click", (event) => {
         if (mode === "analysis") {
             selectedCell = cell;
-            cellState.value = analysisState.cells[cell];
-            analysisEditor.hidden = false;
-            render();
             requestDetail(cell);
+            render();
         } else if (event.detail === 0) {
             activatePlayCell(cell);
         }
@@ -270,11 +355,6 @@ function render() {
     const state = activeState();
     if (!state)
         return;
-    if (mode === "play") {
-        detailEmpty.hidden = false;
-        detailEmpty.textContent = "左键揭格，右键标旗。";
-        detailContent.hidden = true;
-    }
     clearPressedCells();
     boardElement.style.gridTemplateColumns = `repeat(${state.cols}, var(--cell-size, 34px))`;
     const cellSize = cellSizeSetting.value === "auto" ? Math.max(25, Math.min(38, Math.floor((boardElement.closest(".game-area").clientWidth - 60) / state.cols))) : Number(cellSizeSetting.value);
@@ -291,11 +371,9 @@ function render() {
     document.getElementById("play-actions").hidden = mode !== "play";
     document.getElementById("play-until-no-safe").disabled = operationBusy || playState.lost || playState.won;
     document.getElementById("endgame-analysis").disabled = operationBusy || (mode === "play" && (playState.lost || playState.won));
-    endgameResult.hidden = !endgameResultAvailable;
     rngSeedInput.disabled = mode !== "play";
     regenerateSeedButton.disabled = mode !== "play";
     importBoardStringButton.disabled = mode !== "analysis";
-    analysisEditor.hidden = mode !== "analysis" || selectedCell < 0;
     document.getElementById("board-status").textContent = mode === "play" ? playState.lost ? "本局结束" : playState.won ? "已获胜" : "游玩模式" : "分析模式";
     const marked = mode === "play" ? flags.size : 0;
     document.getElementById("mine-counter").textContent = `${state.mines - marked} 雷`;
@@ -304,28 +382,10 @@ function render() {
 }
 
 function showSuggestion(result, elapsedMs) {
-    const bruteForce = result.engine === "BruteForce";
-    endgameSummary.textContent = `分析耗时（前端）：${elapsedMs.toFixed(1)} ms；候选方案 ${formatCount(result.candidateCount)}；` + (result.engine === "Finished" ? "棋盘已完成" : result.engine === "Safe" ? "确定安全格" : bruteForce ? `搜索节点 ${formatCount(result.nodes)}` : `${result.engine} 推荐`);
-    endgameMoves.replaceChildren();
-    endgameCandidateCells = new Set(result.candidates);
+    suggestionResult = { ...result, elapsedMs };
+    suggestionMoves = new Map(result.moves.map((move) => [move.cell, move]));
     endgameBestCells = new Set(result.recommended);
-    const reasons = { forced5050: "这是一个强制的 50-50", "5050OrSafe": "这是一个 50-50 或安全", score: "此格分数优胜", blindGuess: "所有候选格均无法提供信息，进入盲猜残局" };
-    const moves = bruteForce ? result.moves.slice().sort((left, right) => right.value - left.value || left.cell - right.cell) : result.recommended.map((cell) => ({ cell }));
-    if (moves.length === 0) {
-        const item = document.createElement("li");
-        item.textContent = "没有可推荐的隐藏格。";
-        endgameMoves.append(item);
-    }
-    const state = activeState();
-    for (let i = 0; i < moves.length; ++i) {
-        const move = moves[i];
-        endgameCandidateCells.add(move.cell);
-        const item = document.createElement("li");
-        const row = Math.floor(move.cell / state.cols) + 1;
-        const col = move.cell % state.cols + 1;
-        item.textContent = `第 ${row} 行，第 ${col} 列：` + (result.engine === "Safe" ? "确定安全" : bruteForce ? `最终胜率 ${(move.value * 100).toFixed(3)}%` : result.engine === "JavaEval" ? reasons[result.reason] : `${result.engine} 推荐`);
-        endgameMoves.append(item);
-    }
-    endgameResultAvailable = true;
-    endgameResult.hidden = false;
+    candidateCount = result.candidateCount;
+    renderAnalysisResult();
+    renderDetail();
 }

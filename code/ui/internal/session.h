@@ -47,13 +47,13 @@ struct Session {
 
     static std::vector<FormField> parseForm(const std::string &body);
     static std::string jsonString(const std::string &value);
-    static std::string fixedProbability(long double value);
     static bool parseInteger(const std::string &value, int &result);
     static std::string makeToken();
     static std::string cellString(const ObservedBoard::Result &board);
     static void writeProbabilities(std::ostream &result, GameControl::Position &position);
     static void writeCells(std::ostream &result, span<const ObservedBoard::CellId> cells);
-    static std::string mctsResult(const MonteCarlo::Result &result, bool complete);
+    static std::string mctsResult(const MonteCarlo::Result &result, bool complete, long double candidates);
+    static void writeMoveDetails(std::ostream &result, const SuggestResult::Details &details, ObservedBoard::CellId cell);
     std::string value(const std::vector<FormField> &fields, const std::string &key) const;
     std::string error(const std::string &message) const;
     bool parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolverConfig::Order &algo);

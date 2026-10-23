@@ -83,7 +83,7 @@ long double LongTermRisk::candidateTally(PositionState &state, span<const Observ
     return value;
 }
 
-void LongTermRisk::update(Result &result, PositionState &state, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Pseudo::Result *pseudo) {
+void LongTermRisk::update(Result &result, PositionState &state, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Pseudo::Result *pseudo, Details *details) {
     const int rows = state.board.cells.rows();
     const int cols = state.board.cells.cols();
     const int size = rows * cols;
@@ -132,6 +132,8 @@ void LongTermRisk::update(Result &result, PositionState &state, span<const Obser
         const long double ratio = tally / state.probability.candidates;
         if (ratio <= config.influenceThreshold)
             return false;
+        // 限制格在两个交换方向中都是雷，命中量是单方向计数的两倍。
+        if (details && contains(missing.span(), details->cell)) details->restriction = (std::max)(details->restriction, 2.0L * tally);
         for (int i = 0; i < tiles.size; ++i) {
             const std::pair<int, int> position = state.board.pos(tiles.data[i]);
             result.influences[position.first][position.second] += tally;
@@ -174,7 +176,7 @@ void LongTermRisk::update(Result &result, PositionState &state, span<const Obser
         }
 }
 
-long double LongTermRisk::influence(ObservedBoard::CellId cell, PositionState &state, Result &full, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace) {
+long double LongTermRisk::influence(ObservedBoard::CellId cell, PositionState &state, Result &full, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Details *details) {
     const int rows = state.board.cells.rows();
     const int cols = state.board.cells.cols();
     const int minesLeft = state.board.totalMines - state.basic.mineSum;
@@ -211,14 +213,31 @@ long double LongTermRisk::influence(ObservedBoard::CellId cell, PositionState &s
     };
 
     long double value = 0.0L;
-    value += (std::max)(horizontal(row, col), horizontal(row, col - 1));
-    value += (std::max)(vertical(row, col), vertical(row - 1, col));
+    const long double horizontalValue = (std::max)(horizontal(row, col), horizontal(row, col - 1));
+    const long double verticalValue = (std::max)(vertical(row, col), vertical(row - 1, col));
+    value += horizontalValue;
+    value += verticalValue;
     const long double boxes[4] = {box(row, col), box(row - 1, col), box(row, col - 1), box(row - 1, col - 1)};
-    value += (std::max)((std::max)(boxes[0], boxes[1]), (std::max)(boxes[2], boxes[3]));
+    const long double boxValue = (std::max)((std::max)(boxes[0], boxes[1]), (std::max)(boxes[2], boxes[3]));
+    value += boxValue;
+    if (details) details->body = (std::max)((std::max)(horizontalValue, verticalValue), boxValue);
     value += full.enablers.data[cell];
     long double maxInfluence = boxTally(cell, state);
     maxInfluence = (std::min)(maxInfluence, state.probability.candidates - maxInfluence);
     return (std::min)(value, maxInfluence);
+}
+
+LongTermRisk::Details LongTermRisk::describe(ObservedBoard::CellId cell, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace) {
+    Details details(cell);
+    Result result;
+    result.swapStorage(workspace);
+    update(result, state, span<const ObservedBoard::CellId>(), shapeConfig, config, workspace, nullptr, &details);
+    influence(cell, state, result, shapeConfig, config, workspace, &details);
+    const long double mineTally = boxTally(cell, state);
+    details.body /= mineTally;
+    details.restriction /= mineTally;
+    result.swapStorage(workspace);
+    return details;
 }
 
 LongTermRisk::Result LongTermRisk::analyze(PositionState &state, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Pseudo::Result *pseudo) {

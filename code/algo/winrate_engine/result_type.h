@@ -15,6 +15,24 @@ struct SuggestResult {
         long double value;
         Candidate(ObservedBoard::CellId cell, long double value) : cell(cell), value(value) {}
     };
+    // 调用方按需接收明细；普通选招不分配这些记录。
+    struct Details {
+        struct Branch {
+            ObservedBoard::CellId cell;
+            int digit;
+            long double value;
+            Branch(ObservedBoard::CellId cell, int digit, long double value) : cell(cell), digit(digit), value(value) {}
+        };
+        struct Layer {
+            ObservedBoard::CellId cell;
+            int depth;
+            long double value;
+            Layer(ObservedBoard::CellId cell, int depth, long double value) : cell(cell), depth(depth), value(value) {}
+        };
+        vector<Branch> branches;
+        vector<Layer> history;
+        void clear() { branches.resize(0); history.resize(0); }
+    };
 
     vector<ObservedBoard::CellId> suggest;
     vector<Candidate> candidates;

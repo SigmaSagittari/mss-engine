@@ -180,7 +180,7 @@ span<const ObservedBoard::CellId> GameControl::Position::safeMoves() {
     return span<const ObservedBoard::CellId>(safeCells_.data, (int)safeCells_.size);
 }
 
-void GameControl::Position::suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search) {
+void GameControl::Position::suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search, SuggestResult::Details *details) {
     result = SuggestResult();
     if (search) *search = AnytimeSearch::Result();
     const span<const ObservedBoard::CellId> safe = safeMoves();
@@ -189,10 +189,10 @@ void GameControl::Position::suggest(const MovePolicy &policy, FiftyFifty::Pool &
         for (int i = 0; i < safe.size; ++i) { result.suggest.push_back(safe.data[i]); result.candidates.push_back(SuggestResult::Candidate(safe.data[i], 1)); }
         return;
     }
-    suggest(state(), policy, fiftyPool, searchPool, workspace, bruteForce, result, cells, search);
+    suggest(state(), policy, fiftyPool, searchPool, workspace, bruteForce, result, cells, search, details);
 }
 
-void GameControl::Position::suggest(PositionState &current, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search) {
+void GameControl::Position::suggest(PositionState &current, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search, SuggestResult::Details *details) {
     int remaining = current.board.cells.rows() * current.board.cells.cols() - current.board.totalMines;
     for (int row = 0; row < current.board.cells.rows(); ++row) for (int col = 0; col < current.board.cells.cols(); ++col)
         if (current.board.cells[row][col] <= ObservedBoard::CellState::Num8) --remaining;
@@ -213,10 +213,10 @@ void GameControl::Position::suggest(PositionState &current, const MovePolicy &po
     } else {
         const FiftyFifty::Config fifty(policy.fiftyFifty.algorithm == MovePolicy::FiftyFifty::Algorithm::OldJava ? policy.fiftyFifty.oldJava : nullptr, policy.fiftyFifty.algorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? policy.fiftyFifty.templates : nullptr, policy.fiftyFifty.risk);
         if (policy.basic.algorithm == MovePolicy::Basic::Algorithm::JavaEval) {
-            SuggestResult evaluated = JavaEval::analyze(current, config_.shapeSolver, *policy.basic.javaEval, fifty, fiftyPool, workspace.javaEval, cells);
+            SuggestResult evaluated = JavaEval::analyze(current, config_.shapeSolver, *policy.basic.javaEval, fifty, fiftyPool, workspace.javaEval, cells, details);
             result.swap(evaluated);
         } else {
-            const AnytimeSearch::Result searched = AnytimeSearch::analyze(current, searchPool, config_.shapeSolver, *policy.basic.anytime, fifty, fiftyPool, workspace, cells);
+            const AnytimeSearch::Result searched = AnytimeSearch::analyze(current, searchPool, config_.shapeSolver, *policy.basic.anytime, fifty, fiftyPool, workspace, cells, details);
             SuggestResult evaluated = searched.snapshot(searchPool);
             result.swap(evaluated);
             if (search) *search = searched;
@@ -231,7 +231,7 @@ void GameControl::Position::suggest(const MovePolicy &policy, SuggestPool &pool,
     const U128 key = suggestionKey(state_.board, policy);
     if (ObservedBoard::CellId *cached = pool.cache.find(key)) { result.push_back(*cached); return; }
     SuggestResult evaluated;
-    suggest(state(), policy, fiftyPool, searchPool, workspace, bruteForce, evaluated, nullptr, nullptr);
+    suggest(state(), policy, fiftyPool, searchPool, workspace, bruteForce, evaluated, nullptr, nullptr, nullptr);
     result.swap(evaluated.suggest);
     if (result.size != 0) pool.cache.emplace(key, result.data[0]);
 }

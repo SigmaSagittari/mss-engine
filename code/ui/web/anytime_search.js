@@ -2,41 +2,10 @@ function renderSearch() {
     searchButton.hidden = mode !== "analysis";
     searchButton.disabled = operationBusy;
     searchButton.textContent = searchController && searchResult?.paused !== true ? "结束搜索" : Number(searchNodeBudget.value) === -1 ? "开始搜索" : `搜索 ${Number(searchNodeBudget.value)} 节点`;
-    searchSummary.hidden = mode !== "analysis" || (!searchController && !searchResult);
     const now = performance.now();
     while (searchSamples.length > 1 && searchSamples[1].time <= now - 1000) searchSamples.shift();
-    const speed = searchController && searchResult && !searchResult.paused && !searchResult.finished ? (searchResult.nodes - searchSamples[0].nodes) * 1000 / Math.max(1, now - searchSamples[0].time) : 0;
-    const engine = searchResult?.engine === "BruteForce" ? "精确枚举" : "逐层搜索";
-    searchSummary.textContent = searchResult?.moves.length ? `${engine} · ${formatCount(searchResult.nodes)} 节点 · ${formatCount(Math.round(speed))} 节点/s · 完成第 ${searchResult.completedDepth} 层 · ${searchResult.safe ? "全部安全格" : searchResult.finished ? "已完成" : searchResult.paused ? "已暂停" : "搜索中"}` : searchResult?.finished ? "逐层搜索 · 棋盘已完成，没有待分析招法" : "正在完成第零层…";
-    const move = searchMoves.get(selectedCell);
-    searchHistory.hidden = mode !== "analysis" || !move;
-    observeResult.classList.add("search-observe");
-    for (const item of observeResult.querySelectorAll(".java-score")) {
-        item.firstElementChild.textContent = move ? "根层修正" : "Java 评分";
-        item.lastElementChild.textContent = move ? `×${Number(move.multiplier).toFixed(4)}` : item.lastElementChild.dataset.javaScore;
-        item.title = move ? "本招固定的 influence 与进度修正；精确解出的分支不乘，全部解出后显示 1" : "";
-    }
-    for (const item of observeResult.querySelectorAll(".search-branch-heading")) item.lastElementChild.textContent = "搜索子评分";
-    for (const item of observeResult.querySelectorAll(".search-branch-score")) {
-        const digit = Number(item.dataset.digit);
-        const branch = move?.branches.find((branch) => branch.digit === digit);
-        const value = move ? branch?.value : item.dataset.javaScore;
-        item.textContent = digit === 9 ? "0%" : value === undefined ? "—" : `${(Number(value) * 100).toFixed(4)}%`;
-        item.title = digit === 9 ? "爆炸结局评分为 0" : branch ? `第 ${branch.depth} 层子评分` : "该结局尚无搜索评分";
-    }
-    if (!move) return;
-    const body = searchHistory.querySelector("tbody");
-    // 引擎发布当前已完成评分；保留表格节点和页面滚动位置。
-    let row = body.rows[0];
-    if (!row) {
-        row = body.insertRow();
-        const label = document.createElement("th");
-        label.scope = "row";
-        row.append(label);
-        row.insertCell();
-    }
-    row.cells[0].textContent = searchResult.engine === "BruteForce" ? "精确结果" : `${move.depth} 层`;
-    row.cells[1].textContent = Number(move.value).toFixed(6);
+    renderAnalysisResult();
+    renderDetail();
 }
 
 function stopSearch(clear = false) {
@@ -55,6 +24,7 @@ function updateSearch(result) {
     searchSamples.push({ time: performance.now(), nodes: result.nodes });
     const changed = new Set(searchMoves.keys());
     searchResult = result;
+    if (result.candidateCount !== undefined) candidateCount = result.candidateCount;
     searchMoves = new Map(result.moves.map((move) => [move.cell, move]));
     for (const cell of searchMoves.keys()) changed.add(cell);
     const state = activeState();
@@ -79,8 +49,9 @@ async function requestSearch() {
             return;
         }
         const config = analysisConfig("anytime");
+        setMessage("");
         stopMcts(true);
-        clearEndgameResult();
+        clearSuggestion();
         searchResult = null;
         searchMoves.clear();
         searchSamples = [{ time: performance.now(), nodes: 0 }];

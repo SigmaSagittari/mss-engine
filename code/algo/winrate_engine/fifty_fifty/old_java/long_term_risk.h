@@ -19,6 +19,12 @@ struct LongTermRisk {
     };
 
     struct Workspace;
+    // 单模板明细：本体和限制各取命中量最大的一个，不计算多模板联合分布。
+    struct Details {
+        ObservedBoard::CellId cell;
+        long double body, restriction;
+        explicit Details(ObservedBoard::CellId cell) : cell(cell), body(0.0L), restriction(0.0L) {}
+    };
     struct Result {
         Grid<long double> influences;
         // 交换闲置存储；交换后必须 update 再查询，工作区不保留有效结果。
@@ -50,9 +56,11 @@ struct LongTermRisk {
     // dead 使用同盘面编号；临时强制标记在返回前恢复。
     static Result analyze(PositionState &state, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Pseudo::Result *pseudo);
     // 全盘覆写 Result；同一 Workspace 串行复用。
-    static void update(Result &result, PositionState &state, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Pseudo::Result *pseudo);
+    static void update(Result &result, PositionState &state, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Pseudo::Result *pseudo, Details *details = nullptr);
     // 单格查询；full 必须来自同一 state/config，工作区可替换或复用。
-    static long double influence(ObservedBoard::CellId cell, PositionState &state, Result &full, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace);
+    static long double influence(ObservedBoard::CellId cell, PositionState &state, Result &full, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Details *details = nullptr);
+    // 仅详情查询调用；cell 的雷率必须大于 0，返回假设该格为雷后的单模板命中概率。
+    static Details describe(ObservedBoard::CellId cell, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace);
 
   private:
     struct CellPosition {

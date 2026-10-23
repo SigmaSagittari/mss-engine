@@ -55,6 +55,7 @@ function numberCells(minefield, state) {
 }
 
 function createPlayState(rows, cols, mines) {
+    const seed = formatRngSeed(rng);
     const cells = new Array(rows * cols);
     for (let cell = 0; cell < cells.length; ++cell)
         cells[cell] = cell;
@@ -68,7 +69,7 @@ function createPlayState(rows, cols, mines) {
     const minefield = new Array(cells.length).fill("0");
     for (let mine = 0; mine < mines; ++mine)
         minefield[cells[mine]] = "1";
-    const state = { rows, cols, mines, minefield: minefield.join(""), cells: "?".repeat(rows * cols), firstMove: true, lost: false, won: false, lostCell: -1 };
+    const state = { rows, cols, mines, seed, minefield: minefield.join(""), cells: "?".repeat(rows * cols), firstMove: true, lost: false, won: false, lostCell: -1 };
     state.numbers = numberCells(state.minefield, state);
     return state;
 }
@@ -79,7 +80,6 @@ function moveFirstMine(cell) {
         if (playState.minefield[target] === "0")
             safeCells.push(target);
     const safeCell = safeCells[Number(nextRandom() % BigInt(safeCells.length))];
-    rngSeedInput.value = formatRngSeed(rng);
     const minefield = playState.minefield.split("");
     minefield[cell] = "0";
     minefield[safeCell] = "1";
@@ -127,7 +127,7 @@ function revealLocallyBatch(seedCells) {
 }
 
 function revealCell(cell) {
-    clearEndgameResult();
+    clearSuggestion();
     playState = { ...playState };
     if (playState.firstMove && playState.minefield[cell] === "1")
         moveFirstMine(cell);
@@ -152,7 +152,7 @@ function chord(cell) {
     const targets = around.filter((next) => playState.cells[next] === "?" && !flags.has(next));
     if (targets.length === 0)
         return;
-    clearEndgameResult();
+    clearSuggestion();
     playState = { ...playState };
     for (const target of targets) {
         if (playState.cells[target] !== "?" || flags.has(target))
@@ -211,12 +211,15 @@ function startNewGame(seed = null) {
     }
     if (seed)
         rng = { lo: seed.lo, hi: seed.hi };
+    if (boardElement.contains(document.activeElement))
+        document.activeElement.blur();
     playState = createPlayState(rows, cols, mines);
-    rngSeedInput.value = formatRngSeed(rng);
+    rngSeedInput.value = playState.seed;
     mode = "play";
     clearDetail();
-    clearEndgameResult();
+    clearSuggestion();
     flags = new Set();
+    leftMouseDown = false;
     hoveredCell = -1;
     selectedCell = -1;
     scheduleProbabilityUpdate();
@@ -232,7 +235,7 @@ async function playUntilNoSafe() {
     operationBusy = true;
     ++probabilityRevision;
     probabilityPending = false;
-    clearEndgameResult();
+    clearSuggestion();
     clearDetail();
     probabilities = null;
     candidateCount = "";

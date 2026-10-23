@@ -44,7 +44,8 @@ struct Position {
     // 完整评分快照，不读写推荐缓存；fiftyPool 由调用方持有并跨查询复用。
     // cells 非空时至少一格，只比较指定首招；安全格始终优先。
     // search 非空时接收 Anytime 续搜句柄，借用 searchPool 和当前根状态。
-    void suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells = nullptr, AnytimeSearch::Result *search = nullptr);
+    // details 只转交 JavaEval/Anytime，由对应算法重置；其他分派不写明细。
+    void suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells = nullptr, AnytimeSearch::Result *search = nullptr, SuggestResult::Details *details = nullptr);
     // 只查询推荐格，使用盘面及有效配置缓存；安全时返回全部安全格。
     void suggest(const MovePolicy &policy, SuggestPool &pool, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, vector<ObservedBoard::CellId> &result);
 
@@ -57,7 +58,7 @@ struct Position {
     static Position assumeLegal(const ObservedBoard::Result &board, Workspace &workspace, const Config &config);
     static U128 suggestionKey(const ObservedBoard::Result &board, const MovePolicy &policy);
     // 两个查询入口排除安全格后共用分派；缓存未命中时不再重复安全检查。
-    void suggest(PositionState &current, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search);
+    void suggest(PositionState &current, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search, SuggestResult::Details *details);
 
     void initialize();
     void reset(const ObservedBoard::Result &board);

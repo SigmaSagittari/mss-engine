@@ -1,17 +1,16 @@
 document.addEventListener("mousedown", (event) => {
-    if (operationBusy || mode !== "play" || !playState || playState.lost || playState.won)
-        return;
     const cell = cellFromTarget(event.target);
-    if (event.button === 2) {
-        if (cell >= 0 && playState.cells[cell] === "?") {
-            event.preventDefault();
-            toggleFlag(cell);
-        }
-        return;
-    }
-    if (event.button !== 0 || cell < 0)
+    if ((event.button !== 0 && event.button !== 2) || cell < 0)
         return;
     event.preventDefault();
+    document.activeElement.blur();
+    if (operationBusy || mode !== "play" || !playState || playState.lost || playState.won)
+        return;
+    if (event.button === 2) {
+        if (playState.cells[cell] === "?")
+            toggleFlag(cell);
+        return;
+    }
     leftMouseDown = true;
     updatePressedCells(cell);
 });
@@ -45,21 +44,17 @@ document.getElementById("open-settings").addEventListener("click", () => {
     settingsDialog.showModal();
 });
 document.getElementById("close-settings").addEventListener("click", () => settingsDialog.close());
+document.getElementById("export-json").addEventListener("click", () => {
+    boardStringInput.value = currentBoardString();
+    boardExportStatus.textContent = "已导出 JSON。";
+});
 document.getElementById("export-davidnhill").addEventListener("click", () => {
-    try {
-        const board = JSON.parse(boardStringInput.value);
-        if (!board || !Number.isInteger(board.rows) || !Number.isInteger(board.cols) || !Number.isInteger(board.mines) || board.rows < 1 || board.cols < 1 || board.rows > 100 || board.cols > 100 || board.mines < 0 || board.mines >= board.rows * board.cols)
-            throw new Error("盘面参数无效");
-        if (typeof board.cells !== "string" || board.cells.length !== board.rows * board.cols || /[^0-8?MSG]/.test(board.cells))
-            throw new Error("盘面数据无效");
-        const lines = [`${board.cols}x${board.rows}x${board.mines}`];
-        for (let row = 0; row < board.rows; ++row)
-            lines.push(board.cells.slice(row * board.cols, (row + 1) * board.cols).replace(/[?MSG]/g, "H"));
-        boardStringInput.value = lines.join("\n");
-        boardExportStatus.textContent = "已转换为 davidNhill 格式。";
-    } catch (error) {
-        boardExportStatus.textContent = `导出失败：${error.message}`;
-    }
+    const board = JSON.parse(currentBoardString());
+    const lines = [`${board.cols}x${board.rows}x${board.mines}`];
+    for (let row = 0; row < board.rows; ++row)
+        lines.push(board.cells.slice(row * board.cols, (row + 1) * board.cols).replace(/[?MSG]/g, "H"));
+    boardStringInput.value = lines.join("\n");
+    boardExportStatus.textContent = "已导出 davidNhill。";
 });
 importBoardStringButton.addEventListener("click", () => {
     if (mode !== "analysis")
@@ -91,7 +86,7 @@ importBoardStringButton.addEventListener("click", () => {
             if (value !== "?" && value !== "M" && value !== "S" && value !== "G" && !(value >= "0" && value <= "8"))
                 throw new Error("盘面状态无效");
         }
-        clearEndgameResult();
+        clearSuggestion();
         analysisState = { rows: board.rows, cols: board.cols, mines: board.mines, cells: board.cells };
         difficulty.value = "custom";
         setDifficultyValues("custom");
@@ -109,49 +104,46 @@ importBoardStringButton.addEventListener("click", () => {
         boardExportStatus.textContent = `导入失败：${error.message}`;
     }
 });
-cellSizeSetting.addEventListener("change", render);
 window.addEventListener("resize", render);
 probabilityDisplay.addEventListener("change", () => {
-    scheduleProbabilityUpdate();
+    clearSuggestion();
+    scheduleProbabilityUpdate(true);
     render();
 });
 shapeAlgo.addEventListener("change", () => {
-    stopSearch(true);
-    stopMcts(true);
-    if (probabilityDisplay.checked) {
-        scheduleProbabilityUpdate();
-        render();
-    }
+    clearSuggestion();
+    scheduleProbabilityUpdate(true);
+    if (!probabilityDisplay.checked && mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
+    render();
 });
 function updatePolicySettings() {
-    document.getElementById("policy-nodes-row").hidden = suggestStrategy.value !== "anytime";
-    document.getElementById("fifty-fifty-row").hidden = suggestStrategy.value === "lowrisk";
-    document.getElementById("template-prefix-row").hidden = suggestStrategy.value === "lowrisk" || fiftyFifty.value !== "templates";
-    for (const input of [endgameCheckAllMoves, endgameMultithread, endgameMaxThreads]) input.disabled = !(Number(endgameCandidateLimit.value) > 0);
+    document.getElementById("anytime-settings").hidden = suggestStrategy.value !== "anytime";
+    document.getElementById("template-prefix-row").hidden = fiftyFifty.value !== "templates";
+    document.getElementById("brute-settings").hidden = !bruteEnabled.checked;
+    for (const input of [endgameCandidateLimit, endgameCheckAllMoves, endgameMultithread]) input.disabled = !bruteEnabled.checked;
+    endgameMaxThreads.disabled = !bruteEnabled.checked || !endgameMultithread.checked;
 }
-for (const input of [suggestStrategy, fiftyFifty, templatePrefix, policyNodeBudget, endgameCandidateLimit, endgameCheckAllMoves, endgameMultithread, endgameMaxThreads, ...searchWidths]) input.addEventListener("change", () => {
+for (const input of [suggestStrategy, fiftyFifty, templatePrefix, policyNodeBudget, bruteEnabled, endgameCandidateLimit, endgameCheckAllMoves, endgameMultithread, endgameMaxThreads, cellSizeSetting, ...searchWidths]) input.addEventListener("change", () => {
     stopMcts(true);
     stopSearch(true);
-    clearEndgameResult();
+    clearSuggestion();
     updatePolicySettings();
     render();
 });
+bruteEnabled.checked = Number(endgameCandidateLimit.value) > 0;
+endgameCheckAllMoves.value = endgameCheckAllMoves.dataset.all === "checked" ? "all" : "best";
 updatePolicySettings();
 regenerateSeedButton.addEventListener("click", () => {
     const seed = parseRngSeed(rngSeedInput.value.trim());
     if (!seed) {
-        setMessage("RNG seed 必须是 32 位十六进制数。", "error");
-        return;
-    }
-    if (seed.hi === rng.hi && seed.lo === rng.lo) {
-        rngSeedInput.value = formatRngSeed(rng);
+        setMessage("开局种子必须是 32 位十六进制数。", "error");
         return;
     }
     startNewGame(seed);
 });
 document.getElementById("play-mode").addEventListener("click", () => {
     if (mode !== "play") {
-        clearEndgameResult();
+        clearSuggestion();
         mode = "play";
         scheduleProbabilityUpdate();
     }
@@ -165,7 +157,6 @@ document.getElementById("endgame-analysis").addEventListener("click", requestSug
 mctsButton.addEventListener("click", requestMcts);
 searchButton.addEventListener("click", requestSearch);
 searchNodeBudget.addEventListener("input", renderSearch);
-cellState.addEventListener("change", () => editAnalysisCell(selectedCell, cellState.value));
 
 document.addEventListener("click", (event) => {
     if (operationBusy) {
@@ -210,6 +201,6 @@ document.addEventListener("keydown", (event) => {
 
 setDifficultyValues(difficulty.value);
 playState = createPlayState(Number(document.getElementById("rows").value), Number(document.getElementById("cols").value), Number(document.getElementById("mines").value));
-rngSeedInput.value = formatRngSeed(rng);
+rngSeedInput.value = playState.seed;
 scheduleProbabilityUpdate();
 render();

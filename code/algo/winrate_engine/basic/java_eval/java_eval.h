@@ -79,18 +79,18 @@ struct JavaEval {
 
     // 返回完整评分与推荐；候选保持 Selection 顺序，state 必须已同步且概率有效。
     // cells=nullptr 要求入口已排除安全格；否则只评估指定格，保持输入顺序，格子互异且未揭开。
-    // 空 vector 返回空结果。
-    static SuggestResult analyze(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells = nullptr);
+    // 空 vector 返回空结果；details 非空时重置并写入本次逐数字评分。
+    static SuggestResult analyze(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells = nullptr, SuggestResult::Details *details = nullptr);
     // 只做单格后续分析，不读长期风险；multiplier 仅含进度奖励。树内有自己的候选生命周期，直接调它。
     // peers 用于强制安全后的必安子集和更安全替代格；safeSearch 时不计进度奖励。
     // floor 只在该候选已算一部分后生效；< 0 表示不剪。分支增量借用 state 的池，供树续搜。
-    static Analysis javaLite(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, vectorPool<Branch> &branches, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int forcedSafes, bool safeSearch, span<const Peer> peers, long double floor);
+    static Analysis javaLite(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, vectorPool<Branch> &branches, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int forcedSafes, bool safeSearch, span<const Peer> peers, long double floor, SuggestResult::Details *details = nullptr);
     // JavaLite 之后再乘长期风险 influence；retainDeltas 仅供搜索根层保留 state 池中的增量。
-    static Analysis evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, vectorPool<Branch> &branches, FiftyFifty::Result &risk, const FiftyFifty::Config &fiftyConfig, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int forcedSafes, span<const Peer> peers, bool retainDeltas);
+    static Analysis evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, vectorPool<Branch> &branches, FiftyFifty::Result &risk, const FiftyFifty::Config &fiftyConfig, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int forcedSafes, span<const Peer> peers, bool retainDeltas, SuggestResult::Details *details = nullptr);
 
   private:
     template <bool Prune, bool RetainDeltas>
-    static Analysis javaLiteImpl(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, vectorPool<Branch> &branches, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int forcedSafes, bool safeSearch, span<const Peer> peers, long double floor, long double influence);
+    static Analysis javaLiteImpl(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, vectorPool<Branch> &branches, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int forcedSafes, bool safeSearch, span<const Peer> peers, long double floor, long double influence, SuggestResult::Details *details = nullptr);
 
     struct Summary {
         long double blendedSafety;

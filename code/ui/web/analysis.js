@@ -1,6 +1,6 @@
 // 普通分析串行引用同一个计算 ID；候选标记 G 不改变观测约束。
 function calculate(state, options = {}) {
-    const config = options.suggest || options.cell !== undefined ? analysisConfig() : { algo: shapeAlgo.value };
+    const config = options.suggest ? analysisConfig() : { algo: shapeAlgo.value };
     const snapshot = { rows: state.rows, cols: state.cols, mines: state.mines, cells: state.cells.replace(/[G*]/g, "?"), algo: config.algo };
     const key = JSON.stringify(snapshot);
     const includeProbabilities = options.includeProbabilities ?? true;
@@ -19,10 +19,10 @@ function calculate(state, options = {}) {
 }
 
 function analysisConfig(strategy = suggestStrategy.value) {
-    const limit = Number(endgameCandidateLimit.value);
-    if (!Number.isInteger(limit) || limit < 0 || limit > 2147483647) throw new Error("暴力接管阈值必须是非负整数。");
-    const maxThreads = Number(endgameMaxThreads.value);
-    if (limit > 0 && (!Number.isInteger(maxThreads) || maxThreads < 1 || maxThreads > 2147483647)) throw new Error("BruteForce 核心数必须是正整数。");
+    const limit = bruteEnabled.checked ? Number(endgameCandidateLimit.value) : 0;
+    if (bruteEnabled.checked && (!Number.isInteger(limit) || limit < 1 || limit > 2147483647)) throw new Error("暴力接管阈值必须是正整数。");
+    const maxThreads = limit > 0 && endgameMultithread.checked ? Number(endgameMaxThreads.value) : 1;
+    if (!Number.isInteger(maxThreads) || maxThreads < 1 || maxThreads > 2147483647) throw new Error("线程上限必须是正整数。");
     const nodes = Number(policyNodeBudget.value);
     const width = searchWidths.map((input) => Number(input.value));
     if (strategy === "anytime") {
@@ -31,30 +31,31 @@ function analysisConfig(strategy = suggestStrategy.value) {
     }
     const prefix = Number(templatePrefix.value);
     if (strategy !== "lowrisk" && fiftyFifty.value === "templates" && (!Number.isInteger(prefix) || prefix < 1 || prefix > Number(templatePrefix.max))) throw new Error("模板前缀超出目录。");
-    return { strategy, fiftyFifty: fiftyFifty.value, templatePrefix: prefix, limit, maxThreads, nodeBudget: nodes, rootWidth: width[0], middleWidth: width[1], deepWidth: width[2], algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, checkAllMoves: endgameCheckAllMoves.checked, multiThread: endgameMultithread.checked };
+    return { strategy, fiftyFifty: fiftyFifty.value, templatePrefix: prefix, limit, maxThreads, nodeBudget: nodes, rootWidth: width[0], middleWidth: width[1], deepWidth: width[2], algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, checkAllMoves: endgameCheckAllMoves.value === "all", multiThread: endgameMultithread.checked };
 }
 
 async function requestDetail(cell) {
-    if (mode !== "analysis")
-        return;
+    if (mode !== "analysis") return;
     const request = ++detailRequest;
     const state = analysisState;
+    detailData = null;
+    detailStatus.textContent = "正在读取…";
+    renderDetail();
     if (state.cells[cell] >= "0" && state.cells[cell] <= "8") {
-        showDetail({ probability: "0.000000", candidateCount, observe: null }, cell);
+        showDetail({ probability: 0, observe: null });
         return;
     }
-    detailEmpty.hidden = false;
-    detailEmpty.textContent = "正在读取所选格…";
-    detailContent.hidden = true;
     try {
-        const data = await calculate(state, { cell, includeProbabilities: false });
-        if (request === detailRequest && mode === "analysis" && analysisState === state)
-            showDetail(data, cell);
+        const data = await calculate(state, { cell, includeProbabilities: false, risk: true });
+        if (request === detailRequest && mode === "analysis" && analysisState === state) {
+            candidateCount = data.candidateCount;
+            showDetail(data);
+            renderAnalysisResult();
+        }
     } catch (error) {
         if (request === detailRequest) {
-            detailEmpty.hidden = false;
-            detailContent.hidden = true;
-            detailEmpty.textContent = error.message;
+            detailStatus.textContent = error.message;
+            renderDetail();
         }
     }
 }
@@ -72,11 +73,11 @@ function openAnalysis() {
     setMessage("已复制可见棋盘。", "success");
 }
 
-function scheduleProbabilityUpdate() {
+function scheduleProbabilityUpdate(preserveSelection = false) {
     stopMcts(true);
     stopSearch(true);
     const revision = ++probabilityRevision;
-    clearDetail();
+    if (!preserveSelection) clearDetail();
     probabilities = null;
     candidateCount = "";
     probabilityPending = probabilityDisplay.checked;
@@ -114,13 +115,11 @@ function scheduleProbabilityUpdate() {
 function editAnalysisCell(cell, state) {
     if (cell < 0 || analysisState.cells[cell] === state)
         return;
-    clearEndgameResult();
+    clearSuggestion();
     const previous = analysisState.cells[cell];
     const cells = analysisState.cells.split("");
     cells[cell] = state;
     analysisState = { ...analysisState, cells: cells.join("") };
-    if (selectedCell >= 0)
-        cellState.value = analysisState.cells[selectedCell];
     if ((previous === "?" || previous === "G") && (state === "?" || state === "G")) {
         stopMcts(true);
         stopSearch(true);
@@ -136,13 +135,14 @@ async function requestSuggestion() {
     stopMcts(true);
     stopSearch(true);
     operationBusy = true;
+    setMessage("正在分析…");
     renderMcts();
     renderSearch();
     document.getElementById("play-until-no-safe").disabled = true;
     document.getElementById("endgame-analysis").disabled = true;
     ++probabilityRevision;
     probabilityPending = false;
-    clearEndgameResult();
+    clearSuggestion();
     const blockerTimer = setTimeout(() => { analysisBlocker.hidden = false; }, 250);
     try {
         const state = activeState();

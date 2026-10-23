@@ -3,28 +3,10 @@ function renderMcts() {
     mctsButton.setAttribute("aria-pressed", String(mctsController !== null));
     mctsButton.hidden = mode !== "analysis";
     mctsButton.disabled = operationBusy || (mode === "play" && (playState.lost || playState.won));
-    mctsSummary.hidden = mode !== "analysis" || (!mctsController && !mctsResult);
     const now = performance.now();
-    while (mctsHistory.length > 1 && mctsHistory[1].time <= now - 1000)
-        mctsHistory.shift();
-    let speed = 0;
-    if (mctsController && mctsHistory.length > 1) {
-        const first = mctsHistory[0];
-        const next = mctsHistory[1];
-        const start = Math.max(first.time, now - 1000);
-        const baseline = first.simulations + (next.simulations - first.simulations) * (start - first.time) / (next.time - first.time);
-        speed = (mctsResult.simulations - baseline) * 1000 / (now - start);
-    }
-    mctsSummary.textContent = mctsResult?.exact ? `暴力精确胜率 · ${(mctsResult.value * 100).toFixed(2)}%` : mctsResult && mctsResult.simulations > 0 ? `蒙特卡洛 · ${formatCount(mctsResult.simulations)} 次模拟 · ${mctsCountFormat.format(Math.round(speed))} 局/s · ${mctsResult.winrate ? "整局胜率" : "最佳胜率"} ${(mctsResult.value * 100).toFixed(2)}% · ${mctsController ? "搜索中" : "已停止"}` : "正在开始模拟…";
-    const move = mode === "analysis" ? mctsMoves.get(selectedCell) : null;
-    mctsDetail.hidden = !move;
-    if (move) {
-        mctsVisits.parentElement.hidden = mctsResult.exact;
-        mctsWins.parentElement.hidden = mctsResult.exact;
-        mctsVisits.textContent = mctsResult.exact ? "" : move.visits;
-        mctsWins.textContent = mctsResult.exact ? "" : move.wins;
-        mctsWinrate.textContent = Number(move.winrate).toFixed(6);
-    }
+    while (mctsHistory.length > 1 && mctsHistory[1].time <= now - 1000) mctsHistory.shift();
+    renderAnalysisResult();
+    renderDetail();
 }
 
 function stopMcts(clear = false) {
@@ -50,7 +32,8 @@ function updateMcts(result) {
         mctsHistory.push({ time, simulations: result.simulations });
     const changed = new Set(mctsMoves.keys());
     mctsResult = result;
-    mctsMoves = new Map(result.moves.filter((move) => result.exact || BigInt(move.visits) > 0n).map((move) => [move.cell, move]));
+    if (result.candidateCount !== undefined) candidateCount = result.candidateCount;
+    mctsMoves = new Map(result.moves.map((move) => [move.cell, move]));
     for (const cell of mctsMoves.keys())
         changed.add(cell);
     const state = activeState();
@@ -74,7 +57,8 @@ async function requestMcts() {
     if (mode !== "analysis" || operationBusy)
         return;
     stopSearch(true);
-    clearEndgameResult();
+    setMessage("");
+    clearSuggestion();
     mctsResult = null;
     mctsMoves.clear();
     const controller = new AbortController();
