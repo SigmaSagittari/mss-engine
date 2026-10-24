@@ -40,7 +40,9 @@ struct SuggestResult {
     Reason reason;
     long long nodes;
 
-    explicit SuggestResult(Engine engine = Engine::None) : engine(engine), reason(engine == Engine::None ? Reason::Finished : Reason::ScoreWins), nodes(0) {}
+    // 空结果没有推荐格；算法结果同时提供实际引擎和原因。
+    SuggestResult() : SuggestResult(Engine::None, Reason::Finished) {}
+    SuggestResult(Engine engine, Reason reason) : engine(engine), reason(reason), nodes(0) {}
     void swap(SuggestResult &other) {
         suggest.swap(other.suggest);
         candidates.swap(other.candidates);

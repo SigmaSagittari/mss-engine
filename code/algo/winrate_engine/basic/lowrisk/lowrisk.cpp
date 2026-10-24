@@ -3,8 +3,7 @@
 namespace mss {
 
 SuggestResult LowRisk::analyze(const PositionState &state, const vector<ObservedBoard::CellId> *cells) {
-    SuggestResult result(SuggestResult::Engine::LowRisk);
-    result.reason = cells ? SuggestResult::Reason::Specified : SuggestResult::Reason::ScoreWins;
+    SuggestResult result(SuggestResult::Engine::LowRisk, cells ? SuggestResult::Reason::Specified : SuggestResult::Reason::ScoreWins);
     if (cells) {
         for (int i = 0; i < (int)cells->size; ++i) {
             const ObservedBoard::CellId cell = cells->data[i];

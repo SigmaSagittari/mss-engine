@@ -128,6 +128,7 @@ for (const input of [suggestStrategy, fiftyFifty, templatePrefix, policyNodeBudg
     stopSearch(true);
     clearSuggestion();
     updatePolicySettings();
+    if ((input === fiftyFifty || input === templatePrefix) && mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
     render();
 });
 bruteEnabled.checked = Number(endgameCandidateLimit.value) > 0;

@@ -38,8 +38,8 @@ ObservedBoard::CellId AnytimeSearch::Result::recommended(const Pool &pool) const
 }
 
 SuggestResult AnytimeSearch::Result::snapshot(const Pool &pool) const {
-    SuggestResult result(SuggestResult::Engine::Anytime);
-    result.reason = reason; result.nodes = node;
+    SuggestResult result(SuggestResult::Engine::Anytime, reason);
+    result.nodes = node;
     for (int i = 0; i < (int)roots.count; ++i) {
         const Pool::Node &candidate = pool.nodes.data.data[roots.offset + i];
         result.candidates.push_back(SuggestResult::Candidate(candidate.cell, candidate.value));

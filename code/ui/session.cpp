@@ -1,7 +1,6 @@
 #include "ui/internal/session.h"
 
 #include <algorithm>
-#include <array>
 #include <charconv>
 #include <chrono>
 #include <cstdint>
@@ -149,6 +148,15 @@ bool Session::parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolverCo
     return true;
 }
 
+bool Session::parseFiftyFifty(const std::vector<FormField> &fields, Config &config, std::string &response) {
+    const std::string fifty = value(fields, "fiftyFifty");
+    if (fifty == "oldjava") config.fiftyAlgorithm = MovePolicy::FiftyFifty::Algorithm::OldJava;
+    else if (fifty == "templates") config.fiftyAlgorithm = MovePolicy::FiftyFifty::Algorithm::Templates;
+    else { response = error("50-50 算法无效"); return false; }
+    if (config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates && (!parseInteger(value(fields, "templatePrefix"), config.templates.prefix) || config.templates.prefix < 1 || config.templates.prefix > FiftyFifty::templateCount())) { response = error("模板前缀超出目录"); return false; }
+    return true;
+}
+
 bool Session::parseConfig(const std::vector<FormField> &fields, Config &config, std::string &response) {
     const std::string name = value(fields, "strategy");
     if (name == "lowrisk") config.algorithm = MovePolicy::Basic::Algorithm::LowRisk;
@@ -168,13 +176,7 @@ bool Session::parseConfig(const std::vector<FormField> &fields, Config &config, 
         const char *names[] = {"rootWidth", "middleWidth", "deepWidth"};
         for (int i = 0; i < 3; ++i) if (!parseInteger(value(fields, names[i]), config.anytime.width[i]) || config.anytime.width[i] < 1) { response = error("搜索候选宽度必须是正整数"); return false; }
     }
-    if (config.algorithm != MovePolicy::Basic::Algorithm::LowRisk) {
-        const std::string fifty = value(fields, "fiftyFifty");
-        if (fifty == "oldjava") config.fiftyAlgorithm = MovePolicy::FiftyFifty::Algorithm::OldJava;
-        else if (fifty == "templates") config.fiftyAlgorithm = MovePolicy::FiftyFifty::Algorithm::Templates;
-        else if (!fifty.empty()) { response = error("50-50 算法无效"); return false; }
-        if (config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates && (!parseInteger(value(fields, "templatePrefix"), config.templates.prefix) || config.templates.prefix < 1 || config.templates.prefix > FiftyFifty::templateCount())) { response = error("模板前缀超出目录"); return false; }
-    }
+    if (config.algorithm != MovePolicy::Basic::Algorithm::LowRisk && !parseFiftyFifty(fields, config, response)) return false;
     return true;
 }
 
@@ -356,7 +358,10 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
         if (value(fields, "risk") == "true") {
             if (state != ObservedBoard::CellState::Hidden || position.mineProbability(cell) == 0.0L) result << ",\"longTermRisk\":null";
             else {
-                const LongTermRisk::Details risk = LongTermRisk::describe(cell, position.state(), analysis_->config.shapeSolver, config_.risk, analysis_->anytimeSearch.javaEval.selection.fiftyFifty.risk);
+                Config config = config_;
+                if (!parseFiftyFifty(fields, config, response)) return response;
+                const FiftyFifty::Config fifty(config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::OldJava ? &config.oldJava : nullptr, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk);
+                const LongTermRisk::Details risk = FiftyFifty::describe(cell, position.state(), analysis_->config.shapeSolver, fifty, analysis_->fiftyPool, analysis_->anytimeSearch.javaEval.selection.fiftyFifty);
                 result << ",\"longTermRisk\":{\"body\":" << risk.body << ",\"restriction\":" << risk.restriction << '}';
             }
         }
@@ -534,10 +539,6 @@ bool Session::startSearch(const std::string &body, std::string &response) {
     stopSearch();
     if (searchWorker_.joinable()) searchWorker_.join();
     const std::vector<FormField> fields = parseForm(body);
-    std::array<int, 3> width;
-    const std::array<const char *, 3> names{"rootWidth", "middleWidth", "deepWidth"};
-    for (int i = 0; i < 3; ++i)
-        if (!parseInteger(value(fields, names[i]), width[i]) || width[i] < 1) { response = error("搜索候选宽度必须是正整数"); return false; }
     std::unique_ptr<Analysis> analysis;
     if (!createAnalysis(fields, analysis, response)) return false;
     vector<ObservedBoard::CellId> targets;
@@ -552,9 +553,8 @@ bool Session::startSearch(const std::string &body, std::string &response) {
             if (analysis->position.mineProbability(targets.data[i]) == 1.0L) { response = error("Search 目标格已确定为雷"); return false; }
     Config config = config_;
     if (!parseConfig(fields, config, response)) return false;
-    config.algorithm = MovePolicy::Basic::Algorithm::Anytime;
+    if (config.algorithm != MovePolicy::Basic::Algorithm::Anytime) { response = error("搜索仅支持 Anytime"); return false; }
     config.anytime.nodeLimit = 0;
-    for (int i = 0; i < 3; ++i) config.anytime.width[i] = width[i];
     config.anytime.fullAnalysis = targets.size != 0;
     {
         const std::lock_guard<std::mutex> lock(searchMutex_);

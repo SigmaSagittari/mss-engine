@@ -190,7 +190,7 @@ void Pseudo::collectLinks(const PositionState &state, span<const CellId> dead, l
     }
 }
 
-static bool extendChain(const PositionState &state, span<Pseudo::Link> links, Pseudo::Chain &chain, std::deque<Pseudo::Chain> &chains, int &chainCount, bool (*noTrouble)(const ObservedBoard::Result &, span<const CellId>, span<const CellId>)) {
+static bool extendChain(const PositionState &state, span<Pseudo::Link> links, Pseudo::Chain &chain, std::deque<Pseudo::Chain> &chains, int &chainCount, bool (*noTrouble)(const ObservedBoard::Result &, span<const CellId>, span<const CellId>), CellId target) {
     bool extended = false;
     for (int index = 0; index < links.size; ++index) {
         Pseudo::Link &link = links.data[index];
@@ -211,7 +211,8 @@ static bool extendChain(const PositionState &state, span<Pseudo::Link> links, Ps
             chain.trouble.push_back(link.trouble[i]);
         // processed 只属于当前路径；失败后撤销，不能吃掉其它闭链分支。
         link.processed = true;
-        if (closed ? chain.whole5050.size % 2 == 0 && noTrouble(state.board, span<const CellId>(chain.trouble.data, (int)chain.trouble.size), span<const CellId>(chain.whole5050.data, (int)chain.whole5050.size)) : extendChain(state, links, chain, chains, chainCount, noTrouble))
+        const bool hit = !closed || target < 0 || (std::find(chain.whole5050.data, chain.whole5050.data + chain.whole5050.size, target) != chain.whole5050.data + chain.whole5050.size && (!chain.pseudo || Probability::mineProbability(state.probability, target, state.board, state.basic, state.structure) <= 0.5L));
+        if (closed ? hit && chain.whole5050.size % 2 == 0 && noTrouble(state.board, span<const CellId>(chain.trouble.data, (int)chain.trouble.size), span<const CellId>(chain.whole5050.data, (int)chain.whole5050.size)) : extendChain(state, links, chain, chains, chainCount, noTrouble, target))
             return true;
         link.processed = false;
         chain.openTile = previous;
@@ -227,7 +228,7 @@ static bool extendChain(const PositionState &state, span<Pseudo::Link> links, Ps
     return false;
 }
 
-Pseudo::Kind Pseudo::extendChains(Result &result, const PositionState &state, span<Link> links, std::deque<Chain> &chains, int &chainCount) {
+Pseudo::Kind Pseudo::extendChains(Result &result, const PositionState &state, span<Link> links, std::deque<Chain> &chains, int &chainCount, CellId target) {
     if (chains.empty())
         chains.emplace_back(-1, false);
     Chain &chain = chains[0];
@@ -244,7 +245,7 @@ Pseudo::Kind Pseudo::extendChains(Result &result, const PositionState &state, sp
         for (int i = 0; i < start.troubleCount; ++i)
             chain.trouble.push_back(start.trouble[i]);
         start.processed = true;
-        if (extendChain(state, links, chain, chains, chainCount, noTrouble)) {
+        if (extendChain(state, links, chain, chains, chainCount, noTrouble, target)) {
             result.cells.resize(0);
             for (int i = 0; i < (int)chain.whole5050.size; ++i) {
                 const CellId cell = chain.whole5050.data[i];
@@ -265,7 +266,7 @@ Pseudo::Kind Pseudo::extendChains(Result &result, const PositionState &state, sp
     return Kind::None;
 }
 
-Pseudo::Kind Pseudo::connectChains(Result &result, const PositionState &state, span<const CellId> dead, long double eqEps, std::deque<Chain> &chains, int chainCount, const std::deque<vector<CellId>> &witnesses, int witnessCount, Workspace &workspace) {
+Pseudo::Kind Pseudo::connectChains(Result &result, const PositionState &state, span<const CellId> dead, long double eqEps, std::deque<Chain> &chains, int chainCount, const std::deque<vector<CellId>> &witnesses, int witnessCount, Workspace &workspace, CellId target) {
     for (int witnessIndex = 0; witnessIndex < witnessCount; ++witnessIndex) {
         const vector<CellId> &witness = witnesses[witnessIndex];
         for (int first = 0; first < chainCount; ++first) {
@@ -318,6 +319,7 @@ Pseudo::Kind Pseudo::connectChains(Result &result, const PositionState &state, s
                         continue;
                 }
                 const int comparison = tally1 < tally2 ? -1 : (tally1 > tally2 ? 1 : 0);
+                if (target >= 0 && !((comparison <= 0 && chain1->openTile == target) || (comparison >= 0 && chain2->openTile == target))) continue;
                 result.cells.resize(0);
                 if (comparison == 0) {
                     result.cells.push_back(chain1->openTile);
@@ -332,7 +334,7 @@ Pseudo::Kind Pseudo::connectChains(Result &result, const PositionState &state, s
     return Kind::None;
 }
 
-Pseudo::Kind Pseudo::update(Result &result, const PositionState &state, span<const CellId> dead, const Config &config, Workspace &workspace) {
+Pseudo::Kind Pseudo::update(Result &result, const PositionState &state, span<const CellId> dead, const Config &config, Workspace &workspace, CellId target) {
     result.kind = Kind::None;
     result.cells.resize(0);
     int linkCount = 0;
@@ -345,6 +347,7 @@ Pseudo::Kind Pseudo::update(Result &result, const PositionState &state, span<con
     for (int i = 0; i < links.size; ++i) {
         if (!links.data[i].unavoidable)
             continue;
+        if (target >= 0 && links.data[i].first != target && links.data[i].second != target) continue;
         unavoidable = &links.data[i];
         if (!links.data[i].pseudo)
             break;
@@ -369,12 +372,12 @@ Pseudo::Kind Pseudo::update(Result &result, const PositionState &state, span<con
         result.kind = unavoidable->pseudo ? Kind::Semi : Kind::Forced;
         return result.kind;
     }
-    const Kind kind = extendChains(result, state, links, workspace.chains, chainCount);
+    const Kind kind = extendChains(result, state, links, workspace.chains, chainCount, target);
     if (kind != Kind::None) {
         result.kind = kind;
         return kind;
     }
-    const Kind connected = connectChains(result, state, dead, config.eqEps, workspace.chains, chainCount, workspace.witnesses, witnessCount, workspace);
+    const Kind connected = connectChains(result, state, dead, config.eqEps, workspace.chains, chainCount, workspace.witnesses, witnessCount, workspace, target);
     if (connected != Kind::None) {
         result.kind = connected;
         return connected;

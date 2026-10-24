@@ -57,6 +57,7 @@ struct Session {
     std::string value(const std::vector<FormField> &fields, const std::string &key) const;
     std::string error(const std::string &message) const;
     bool parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolverConfig::Order &algo);
+    bool parseFiftyFifty(const std::vector<FormField> &fields, Config &config, std::string &response);
     bool parseConfig(const std::vector<FormField> &fields, Config &config, std::string &response);
     bool parseBoard(const std::vector<FormField> &fields, int &rows, int &cols, int &mines, std::string &cells, std::string &response);
     static ObservedBoard::Result makeBoard(int rows, int cols, int mines, const std::string &cells);

@@ -1,6 +1,10 @@
 // 普通分析串行引用同一个计算 ID；候选标记 G 不改变观测约束。
 function calculate(state, options = {}) {
     const config = options.suggest ? analysisConfig() : { algo: shapeAlgo.value };
+    if (options.risk) {
+        config.fiftyFifty = fiftyFifty.value;
+        config.templatePrefix = Number(templatePrefix.value);
+    }
     const snapshot = { rows: state.rows, cols: state.cols, mines: state.mines, cells: state.cells.replace(/[G*]/g, "?"), algo: config.algo };
     const key = JSON.stringify(snapshot);
     const includeProbabilities = options.includeProbabilities ?? true;

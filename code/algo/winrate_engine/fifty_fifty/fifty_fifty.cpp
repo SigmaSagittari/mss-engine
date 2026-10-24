@@ -111,10 +111,9 @@ void FiftyFifty::Facts::swapStorage(Workspace &workspace) {
     active.swap(workspace.activeStorage); found.swap(workspace.foundStorage);
 }
 
-void FiftyFifty::Facts::build(const PositionState &state) {
-    rows = state.board.cells.rows(); cols = state.board.cells.cols();
+FiftyFifty::Facts::Facts(const PositionState &state, Workspace &workspace) : rows(state.board.cells.rows()), cols(state.board.cells.cols()), words((rows * cols + 63) / 64) {
+    swapStorage(workspace);
     const int cells = rows * cols;
-    words = (cells + 63) / 64;
     marks.resize(cells); adjacent.resize(cells); constraints.resize(0); active.resize(words); found.resize(words);
     mines.resize(cells, words, 0); safes.resize(cells, words, 0);
     for (int word = 0; word < words; ++word) { active.data[word] = 0; found.data[word] = 0; }
@@ -211,8 +210,8 @@ int FiftyFifty::matchPrefix(const Table &table, int node, const Facts &facts, in
 void FiftyFifty::detect(Pseudo::Result &result, const PositionState &state, const Config &config, Pool &pool, Workspace &workspace) {
     if (config.oldJava) { Pseudo::update(result, state, span<const ObservedBoard::CellId>(), *config.oldJava, workspace.oldJava); return; }
     const Table &table = pool.tables.try_emplace(config.templates->prefix, config.templates->prefix).first->second;
-    Facts facts;
-    facts.swapStorage(workspace); facts.build(state); facts.propagate(workspace);
+    Facts facts(state, workspace);
+    facts.propagate(workspace);
     for (int id = 0; id < facts.rows * facts.cols; ++id) if (facts.marks.data[id] == Basic::Mark::H)
         for (int word = 0; word < facts.words; ++word) for (std::uint64_t bits = facts.safes[id][word] & ~facts.found.data[word]; bits; bits &= bits - 1) {
             const int root = word * 64 + std::countr_zero(bits);
@@ -238,6 +237,21 @@ void FiftyFifty::prepareRisk(Result &result, PositionState &state, const ShapeSo
 
 long double FiftyFifty::influence(ObservedBoard::CellId cell, PositionState &state, Result &full, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace) {
     return LongTermRisk::influence(cell, state, full.risk, shapeConfig, *config.risk, workspace.risk);
+}
+
+LongTermRisk::Details FiftyFifty::describe(ObservedBoard::CellId cell, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Pool &pool, Workspace &workspace) {
+    LongTermRisk::Details details = LongTermRisk::describe(cell, state, shapeConfig, *config.risk, workspace.risk);
+    if (config.oldJava) {
+        Pseudo::Result pseudo;
+        if (Pseudo::update(pseudo, state, span<const ObservedBoard::CellId>(), *config.oldJava, workspace.oldJava, cell) != Pseudo::Kind::None) details.body = 1.0L;
+    } else {
+        const Table &table = pool.tables.try_emplace(config.templates->prefix, config.templates->prefix).first->second;
+        Facts facts(state, workspace);
+        facts.propagate(workspace);
+        if (matchPrefix(table, 0, facts, cell) >= 0) details.body = 1.0L;
+        facts.swapStorage(workspace);
+    }
+    return details;
 }
 
 } // 命名空间 mss

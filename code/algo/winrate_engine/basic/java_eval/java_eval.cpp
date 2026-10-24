@@ -161,8 +161,7 @@ SuggestResult JavaEval::analyze(PositionState &state, const ShapeSolverConfig &s
             if (state.board.cells[row][col] <= ObservedBoard::CellState::Num8) --remainingSafe;
             else if (state.board.cells[row][col] == ObservedBoard::CellState::ForcedSafe) ++forcedSafes;
         }
-    SuggestResult result(SuggestResult::Engine::JavaEval);
-    result.reason = selected.reason;
+    SuggestResult result(SuggestResult::Engine::JavaEval, selected.reason);
     vectorPool<Branch> branches;
     for (int i = 0; i < (int)selected.cells.size; ++i) {
         const ObservedBoard::CellId cell = selected.cells.data[i];

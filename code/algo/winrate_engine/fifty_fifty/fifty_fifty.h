@@ -87,9 +87,8 @@ struct FiftyFifty {
         vector<Constraint> constraints;
         vector<std::uint64_t> active, found;
         int rows, cols, words;
-        Facts() : rows(0), cols(0), words(0) {}
+        Facts(const PositionState &state, Workspace &workspace);
         void swapStorage(Workspace &workspace);
-        void build(const PositionState &state);
         void propagate(Workspace &workspace);
         bool matches(int id, int word, std::uint64_t bit, Table::Kind kind) const;
     };
@@ -110,6 +109,8 @@ struct FiftyFifty {
     static void detect(Pseudo::Result &result, const PositionState &state, const Config &config, Pool &pool, Workspace &workspace);
     static void prepareRisk(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, bool collectPseudo);
     static long double influence(ObservedBoard::CellId cell, PositionState &state, Result &full, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace);
+    // 仅详情查询：cell 是雷率大于 0 的隐藏格；按所选检测器确认本体，部分风险沿用旧 LTR。
+    static LongTermRisk::Details describe(ObservedBoard::CellId cell, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Pool &pool, Workspace &workspace);
 
   private:
     static int matchPrefix(const Table &table, int node, const Facts &facts, int root);
