@@ -84,8 +84,8 @@ struct Selection {
     // cells 非空指针表示显式候选，保持输入顺序；格子必须互异且未揭开，空 vector 表示不搜索。
     // 返回本次实际来源；这里只生成候选，removeDead 单独准备观测，显式候选不删减。
     static Result::Source find(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, Workspace &workspace, bool useRisk, const vector<ObservedBoard::CellId> *cells = nullptr);
-    // 计算每格的数字/爆炸分布；只从 Ordinary 中删除安全揭开后仍拿不到新信息的格子。
-    static void removeDead(Result &result, Result::Source source, PositionState &state, const ShapeSolverConfig &shapeConfig, Probability::Workspace &probabilityWorkspace);
+    // 计算每格的数字/爆炸分布；只从 Ordinary 中删除死格，返回实际 Observe 次数，包含被删掉的格子。
+    static int removeDead(Result &result, Result::Source source, PositionState &state, const ShapeSolverConfig &shapeConfig, Probability::Workspace &probabilityWorkspace);
     // removeDead 后从 index=0 顺序调用；根层和内层共用，返回 true 时末项是本格的评分输入。
     // isSafeMove 跳过假设安全；需猜格至多做一次，返回前恢复 state。必雷格没有安全分支。
     // nodes 累加实际的假设安全概率分析次数，被剪掉的候选也按实际计算计数。

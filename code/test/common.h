@@ -65,7 +65,7 @@ inline const mss::AnytimeSearch::Config anytimeConfig{
         /* progressContribution 推进加分 */ javaEvalConfig.progressContribution,
         /* influenceScale 长期风险系数 */ javaEvalConfig.influenceScale
     },
-    /* nodeLimit 全盘概率分析次数预算，按旧 256 评分的耗时换算 */ 900,
+    /* nodeLimit 全盘概率分析与 Observe 次数预算，约等于旧版 256 节点 */ 1280,
     /* width[0] 第一层宽度 */ 6,
     /* width[1] 第二层宽度 */ 3,
     /* width[2] 后续层宽度 */ 1

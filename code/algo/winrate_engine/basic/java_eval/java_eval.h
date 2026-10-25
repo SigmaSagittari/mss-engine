@@ -47,7 +47,7 @@ struct JavaEval {
         long double riskMultiplier; // 根层旧 LTR 乘数，树内固定为 1。
         // 各数字结局在调用方 Delta 池中的切片；池退尾或清空后失效。
         vectorPool<Delta>::vector deltas;
-        // 实际展开的数字结局数，每个结局调用一次全盘概率分析；安全假设由 Selection 另计。
+        // 实际展开的数字结局数，每个结局调用一次全盘概率分析；安全假设和 Observe 由 Selection 另计。
         int nodes;
         // false：算到一半已低于 floor，value 不是完整评分，调用方应丢弃此候选。
         bool valid;

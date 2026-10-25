@@ -51,7 +51,7 @@ SuggestResult AnytimeSearch::Result::snapshot(const Pool &pool) const {
 void AnytimeSearch::selectRoot(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details) {
     Selection::Result &selected = pool.selected;
     const Selection::Result::Source source = Selection::find(state, shapeConfig, config.javaEval.selection, fiftyConfig, fiftyPool, selected, workspace.javaEval.selection, true, cells);
-    Selection::removeDead(selected, source, state, shapeConfig, workspace.javaEval.probability);
+    result.nodes += Selection::removeDead(selected, source, state, shapeConfig, workspace.javaEval.probability);
     int remaining = 0, forced = 0;
     countSafe(state, remaining, forced);
     Selection::Config selectionConfig = config.javaEval.selection;
@@ -104,7 +104,9 @@ bool AnytimeSearch::prepareNode(PositionState &state, Pool &pool, const ShapeSol
     vector<JavaEval::Result> &evaluatedMoves = pool.evaluatedMoves;
     if (!pool.preparing) {
         const Selection::Result::Source source = Selection::find(state, shapeConfig, config.javaEval.selection, fiftyConfig, fiftyPool, selected, workspace.javaEval.selection, false);
-        Selection::removeDead(selected, source, state, shapeConfig, workspace.javaEval.probability);
+        const int observationNodes = Selection::removeDead(selected, source, state, shapeConfig, workspace.javaEval.probability);
+        budget -= observationNodes;
+        nodeCount += observationNodes;
         assert_(selected.cells.size != 0, "AnytimeSearch: 非终局没有内层候选");
         evaluatedMoves.resize(0);
         pool.pendingDeltas.data.resize(0);
@@ -336,7 +338,7 @@ void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index,
             value = pool.nodes.data.data[branchIndex].value;
             finished = pool.nodes.data.data[branchIndex].finished;
             if (needProbability) {
-                // 与首个候选一起结算，预算为 1 时也能完成一个候选，避免只重算局面而无法前进。
+                // 与后续准备一起结算，预算为 1 时仍能推进，避免只重算局面而无法前进。
                 --budget;
                 swapProbability(state.probability, evaluation.probabilities[depth]);
             }

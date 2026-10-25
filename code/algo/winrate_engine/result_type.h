@@ -42,7 +42,7 @@ struct SuggestResult {
     vector<Candidate> candidates; // 算法实际保留并给出评分的格子，不包含被剪掉的格子。
     Engine engine;
     Reason reason;
-    long long nodes; // JavaE/Anytime 为搜索的全盘概率分析次数，暴力为递归节点数；独立 LTR 不计入。
+    long long nodes; // JavaE/Anytime 为全盘概率分析与 Observe 次数之和，暴力为递归节点数；独立 LTR 不计入。
 
     // 空结果没有推荐格；算法结果同时提供实际引擎和原因。
     SuggestResult() : SuggestResult(Engine::None, Reason::Finished) {}

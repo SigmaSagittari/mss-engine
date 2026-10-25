@@ -320,13 +320,15 @@ Selection::Result::Source Selection::find(PositionState &state, const ShapeSolve
     return Result::Source::Ordinary;
 }
 
-void Selection::removeDead(Result &result, Result::Source source, PositionState &state, const ShapeSolverConfig &shapeConfig, Probability::Workspace &probabilityWorkspace) {
+int Selection::removeDead(Result &result, Result::Source source, PositionState &state, const ShapeSolverConfig &shapeConfig, Probability::Workspace &probabilityWorkspace) {
     result.observations.resize(0);
+    int nodes = 0;
     int count = 0;
     for (int i = 0; i < (int)result.cells.size; ++i) {
         const ObservedBoard::CellId cell = result.cells.data[i];
         Observe::Result observation;
         Observe::observe(state.board, state.basic, state.structure, state.shapes, state.probability, state.distributions, shapeConfig, cell, observation, probabilityWorkspace);
+        ++nodes;
         const bool safe = Probability::mineProbability(state.probability, cell, state.board, state.basic, state.structure) == 0.0L;
         if (source != Result::Source::Ordinary || safe || !isDead(observation)) {
             result.cells.data[count++] = cell;
@@ -335,17 +337,19 @@ void Selection::removeDead(Result &result, Result::Source source, PositionState 
     }
     result.cells.size = count;
     if (result.cells.size != 0 || source != Result::Source::Ordinary)
-        return;
+        return nodes;
     for (int row = 0; row < state.board.cells.rows(); ++row)
         for (int col = 0; col < state.board.cells.cols(); ++col)
             if (state.board.cells[row][col] == ObservedBoard::CellState::Hidden && Probability::mineProbability(state.probability, state.board.id(row, col), state.board, state.basic, state.structure) != 1.0L) {
                 const ObservedBoard::CellId cell = state.board.id(row, col);
                 Observe::Result observation;
                 Observe::observe(state.board, state.basic, state.structure, state.shapes, state.probability, state.distributions, shapeConfig, cell, observation, probabilityWorkspace);
+                ++nodes;
                 result.cells.push_back(cell);
                 result.observations.push_back(observation);
-                return;
+                return nodes;
             }
+    return nodes;
 }
 
 } // 命名空间 mss

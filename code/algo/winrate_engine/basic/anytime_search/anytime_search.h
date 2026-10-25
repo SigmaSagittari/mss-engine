@@ -13,8 +13,8 @@ namespace mss {
 struct AnytimeSearch {
     struct Config {
         JavaEval::Config javaEval;
-        // 续搜的全盘概率分析次数预算；0 不续搜，根层初始化另算。
-        // 已开始的候选会算完所有尚需数字结局，可超支，下一候选开始前才检查预算。
+        // 续搜的全盘概率分析与 Observe 次数预算；每次各计 1，0 不续搜，根层初始化另算。
+        // 候选观察批次和单格数字结局各自完整计算，可超支，下一阶段开始前检查预算。
         long long nodeLimit;
         // 根层、第二步、更深层分别保留多少个候选；指定首招时根层不截断。
         int width[3];
@@ -73,7 +73,7 @@ struct AnytimeSearch {
             Frame() : next(0), nextOutcome(0), value(0.0L), settled(true), active(false) {}
         };
         std::deque<Frame> frames;
-        // 同时最多准备一个新位置；安全假设与数字结局按实际概率分析次数扣节点。
+        // 同时最多准备一个新位置；安全假设、数字结局与 Observe 按实际调用次数扣节点。
         Selection::Result selected;
         vector<JavaEval::Result> evaluatedMoves;
         vectorPool<JavaEval::Delta> pendingDeltas; // 当前新局面的评分暂存，建好子节点后转存到 deltas。
@@ -86,7 +86,7 @@ struct AnytimeSearch {
     struct Result {
         // 各根以 expandedDepth 发布最新完整评分，completedDepth 是所有根均已完成的层。
         vectorPool<Pool::Node>::vector roots;
-        long long nodes; // 根层及续搜中安全假设、数字结局和新局面的概率分析总次数；不含独立 LTR。
+        long long nodes; // 根层及续搜的全盘概率分析与 Observe 总次数；不含独立 LTR。
         SuggestResult::Reason reason;
         int completedDepth; // 所有根都已完成的最深层；部分根可能已经更深。
         bool finished; // 所有根都已求完，或者这是没有根的空句柄。
@@ -106,7 +106,7 @@ struct AnytimeSearch {
 
     // analyze/update 期间及续搜前不得改变根盘面或清空 state 的池；Workspace 可顺序复用。
     // cells=nullptr 要求入口已排除安全格，自动选根；否则按给定顺序保留全部根，内层仍自动选点。
-    // 每次 update 从 config.nodeLimit 读取本次概率分析预算；analyze 先完成根层评分，再使用预算。
+    // 每次 update 从 config.nodeLimit 读取本次计算节点预算；analyze 先完成根层评分，再使用预算。
     // 续搜只允许调整预算；显式首招按输入顺序全部保留，内层照常剪枝和限制宽度。
     // details 由调用方持有；analyze 重置并记录第 0 层，update 追加完成层，同时发布该层子评分。
     static Result analyze(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells = nullptr, SuggestResult::Details *details = nullptr);

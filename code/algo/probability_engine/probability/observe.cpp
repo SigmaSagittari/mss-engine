@@ -92,8 +92,11 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
     // 两张表逐个组件交替累积；指针交换，避免整表复制。
     Grid<long double> *current = &ws.dp;
     Grid<long double> *next = &ws.nextDp;
-    current->resize(9, stride, 0.0L);
+    current->resize(1, stride, 0.0L);
     (*current)[0][0] = 1.0L;
+    // 只遍历已合并区域可能占用的行列，尚未加入的邻格和组件对应整片零值。
+    int neighborLimit = 0;
+    int capturedLimit = 0;
     for (int index = 0; index < (int)ws.captured.size; ++index) {
         const Structure::Instance &instance = pool.instances.list.data[structure.components.data[ws.captured.data[index]]];
         const Structure::Shape &shape = pool.shapes.list.data[instance.shape];
@@ -111,14 +114,16 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
                     ++ws.adjacentBoxCells.data[box];
             }
 
+        int addedLimit = 0;
+        for (int box = 0; box < boxCount; ++box) addedLimit += ws.adjacentBoxCells.data[box];
         const Structure::BoxId xBox = ws.captured.data[index] == clickedComponent ? clickedBox : -1;
         ShapeSolver::observe(shape, pool, span<const int>(ws.adjacentBoxCells.data, boxCount), xBox, config, ws.observed, workspace.shapeSolver);
-        next->resize(9, stride, 0.0L);
-        for (int currentNeighborMines = 0; currentNeighborMines <= 8; ++currentNeighborMines)
-            for (int addedNeighborMines = 0; currentNeighborMines + addedNeighborMines <= 8; ++addedNeighborMines) {
+        next->resize(neighborLimit + addedLimit + 1, stride, 0.0L);
+        for (int currentNeighborMines = 0; currentNeighborMines <= neighborLimit; ++currentNeighborMines)
+            for (int addedNeighborMines = 0; addedNeighborMines <= addedLimit; ++addedNeighborMines) {
                 const vectorPool<long double>::vector &segment = ws.observed.ways[addedNeighborMines];
                 const long double *segmentWays = ws.observed.values.data.data + segment.offset;
-                for (int capturedMines = 0; capturedMines <= maxCapturedMines; ++capturedMines) {
+                for (int capturedMines = 0; capturedMines <= capturedLimit; ++capturedMines) {
                     const long double base = (*current)[currentNeighborMines][capturedMines];
                     if (base == 0.0L)
                         continue;
@@ -126,20 +131,23 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
                         (*next)[currentNeighborMines + addedNeighborMines][capturedMines + ws.observed.start[addedNeighborMines] + i] += base * segmentWays[i];
                 }
             }
+        capturedLimit += boxOf[boxCount];
+        neighborLimit += addedLimit;
         std::swap(current, next);
     }
 
     // 邻接 T 格彼此独立，组合数同时增加邻居雷数和捕获区域雷数。
     if (tNeighbors > 0) {
-        next->resize(9, stride, 0.0L);
-        for (int neighborMines = 0; neighborMines <= 8; ++neighborMines)
-            for (int capturedMines = 0; capturedMines <= maxCapturedMines; ++capturedMines) {
+        next->resize(neighborLimit + tNeighbors + 1, stride, 0.0L);
+        for (int neighborMines = 0; neighborMines <= neighborLimit; ++neighborMines)
+            for (int capturedMines = 0; capturedMines <= capturedLimit; ++capturedMines) {
                 const long double base = (*current)[neighborMines][capturedMines];
                 if (base == 0.0L)
                     continue;
                 for (int tMines = 0; tMines <= tNeighbors && neighborMines + tMines <= 8; ++tMines)
                     (*next)[neighborMines + tMines][capturedMines + tMines] += base * Combination::chooseSmall(tNeighbors, tMines);
             }
+        neighborLimit += tNeighbors;
         std::swap(current, next);
     }
 
@@ -166,19 +174,21 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
     if (ws.restCoefficients.size == 0) {
         ws.restWays.resize(0);
     } else {
-        ws.restWays.resize(restStart + tPool + (int)ws.restCoefficients.size);
+        ws.restWays.resize((std::min)(totalMines + 1, restStart + tPool + (int)ws.restCoefficients.size));
         std::fill(ws.restWays.data, ws.restWays.data + ws.restWays.size, 0.0L);
+        // 合并时只会查询 totalMines - capturedMines，其余总雷数无需计算。
+        const int minRestMines = (std::max)(0, totalMines - maxCapturedMines);
         for (int i = 0; i < (int)ws.restCoefficients.size; ++i) {
             const long double ways = ws.restCoefficients.data[i];
             const int componentMines = restStart + i;
-            for (int tMines = 0; tMines <= tPool; ++tMines)
+            for (int tMines = (std::max)(0, minRestMines - componentMines); tMines <= (std::min)(tPool, totalMines - componentMines); ++tMines)
                 ws.restWays.data[componentMines + tMines] += ways * choose(tPool, tMines, workspace.combination);
         }
     }
 
     long double neighborWays[9] = {};
     // 分母沿用全盘 Probability 结果；分子只累计点击安全且邻居数字确定的布局。
-    for (int neighborMines = 0; neighborMines + fixedMines <= 8; ++neighborMines)
+    for (int neighborMines = 0; neighborMines <= neighborLimit; ++neighborMines)
         for (int capturedMines = 0; capturedMines <= maxCapturedMines; ++capturedMines) {
             const long double ways = (*current)[neighborMines][capturedMines];
             const int restMines = totalMines - capturedMines;

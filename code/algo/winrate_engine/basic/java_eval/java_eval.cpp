@@ -132,7 +132,7 @@ SuggestResult JavaEval::analyze(PositionState &state, const ShapeSolverConfig &s
     const bool pseudo = source == Selection::Result::Source::Forced || source == Selection::Result::Source::Semi;
     // 仅两格 Forced 不展开；Semi 和较长的 Forced 链需要比较数字结局。
     const bool skipEvaluation = source == Selection::Result::Source::Forced && selected.cells.size < 4;
-    if (!skipEvaluation) Selection::removeDead(selected, source, state, shapeConfig, workspace.probability);
+    const int observationNodes = skipEvaluation ? 0 : Selection::removeDead(selected, source, state, shapeConfig, workspace.probability);
     int remainingSafe = state.board.cells.rows() * state.board.cells.cols() - state.board.totalMines;
     int forcedSafes = 0;
     for (int row = 0; row < state.board.cells.rows(); ++row)
@@ -142,6 +142,7 @@ SuggestResult JavaEval::analyze(PositionState &state, const ShapeSolverConfig &s
         }
     const SuggestResult::Reason reason = source == Selection::Result::Source::Forced ? SuggestResult::Reason::Forced : source == Selection::Result::Source::Semi ? SuggestResult::Reason::Semi : SuggestResult::Reason::ScoreWins;
     SuggestResult result(SuggestResult::Engine::JavaEval, reason);
+    result.nodes = observationNodes;
     vectorPool<Delta> deltas;
     Selection::Config selectionConfig = config.selection;
     if (cells != nullptr) selectionConfig.interchangeable = selectionConfig.equivalence = selectionConfig.dominance = false;
