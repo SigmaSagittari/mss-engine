@@ -10,8 +10,8 @@ namespace mss {
 
 // bruteforce 各文件共用的根类型；后端直接读写这些类型，不做翻译。
 struct BruteForceType {
-    using ConfigId = std::uint32_t;
-    using CandidateId = std::uint32_t;
+    using ConfigId = std::uint32_t; // 一张完整雷盘的编号，与算法 Config 参数无关。
+    using CandidateId = std::uint32_t; // Session::candidates 下标，与棋盘 CellId 不同。
 
     struct Config {
         // true：返回每个 H/T 候选的第一步结果；false：只返回最佳一步。

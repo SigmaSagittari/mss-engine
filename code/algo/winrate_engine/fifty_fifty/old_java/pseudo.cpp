@@ -51,14 +51,7 @@ bool Pseudo::adjacent(const ObservedBoard::Result &board, CellId lhs, CellId rhs
     return lhs != rhs && std::abs(left.first - right.first) <= 1 && std::abs(left.second - right.second) <= 1;
 }
 
-bool Pseudo::isMine(const PositionState &state, CellId cell, long double eqEps) {
-    const std::pair<int, int> position = state.board.pos(cell);
-    if (state.basic.marks[position.first][position.second] == Basic::Mark::F)
-        return true;
-    return Probability::mineProbability(state.probability, cell, state.board, state.basic, state.structure) >= 1.0L - eqEps;
-}
-
-void Pseudo::assess(Link &link, const PositionState &state, long double eqEps) {
+void Pseudo::assess(Link &link, const PositionState &state) {
     const CellId tiles[2] = {link.first, link.second};
     for (int index = 0; index < 2; ++index) {
         const CellId tile = tiles[index];
@@ -67,7 +60,7 @@ void Pseudo::assess(Link &link, const PositionState &state, long double eqEps) {
             const CellId info = state.board.id(row, col);
             if (info == link.first || info == link.second)
                 return;
-            if (isMine(state, info, eqEps))
+            if (Probability::mineProbability(state.probability, info, state.board, state.basic, state.structure) == 1.0L)
                 return;
             const CellId other = tile == link.first ? link.second : link.first;
             if (!adjacent(state.board, info, other)) {
@@ -82,7 +75,7 @@ void Pseudo::assess(Link &link, const PositionState &state, long double eqEps) {
     }
 }
 
-void Pseudo::findRootedLinks(span<const CellId> cells, const PositionState &state, span<const CellId> dead, int witnessSize, long double eqEps, vector<Link> &links, int &linkCount) {
+void Pseudo::findRootedLinks(span<const CellId> cells, const PositionState &state, span<const CellId> dead, int witnessSize, vector<Link> &links, int &linkCount) {
     const int offsets[2][2] = {{-1, 0}, {0, 1}};
     for (int index = 0; index < cells.size; ++index) {
         const CellId tile1 = cells.data[index];
@@ -100,7 +93,7 @@ void Pseudo::findRootedLinks(span<const CellId> cells, const PositionState &stat
             else
                 links.data[linkCount].reset(tile1, tile2, pseudoContains(dead, tile1), pseudoContains(dead, tile2), true, witnessSize);
             Link &link = links.data[linkCount];
-            assess(link, state, eqEps);
+            assess(link, state);
             if ((link.closedFirst || link.closedSecond) && (!link.deadFirst || !link.deadSecond))
                 ++linkCount;
         }
@@ -128,7 +121,7 @@ bool Pseudo::linkLess(const Link &lhs, const Link &rhs) {
     return lhs.witnessSize < rhs.witnessSize;
 }
 
-void Pseudo::collectLinks(const PositionState &state, span<const CellId> dead, long double eqEps, vector<Link> &links, int &linkCount, std::deque<vector<CellId>> &witnesses, int &witnessCount, Workspace &workspace) {
+void Pseudo::collectLinks(const PositionState &state, span<const CellId> dead, vector<Link> &links, int &linkCount, std::deque<vector<CellId>> &witnesses, int &witnessCount, Workspace &workspace) {
     for (int component = 0; component < (int)state.structure.components.size; ++component) {
         const Structure::Instance &instance = state.shapes.instances.list.data[state.structure.components.data[component]];
         const Structure::Shape &shape = state.shapes.shapes.list.data[instance.shape];
@@ -172,11 +165,11 @@ void Pseudo::collectLinks(const PositionState &state, span<const CellId> dead, l
                     links.push_back(Link(first, second, pseudoContains(dead, first), pseudoContains(dead, second), false, 2));
                 else
                     links.data[linkCount].reset(first, second, pseudoContains(dead, first), pseudoContains(dead, second), false, 2);
-                assess(links.data[linkCount], state, eqEps);
+                assess(links.data[linkCount], state);
                 ++linkCount;
             } else {
                 const int previous = linkCount;
-                findRootedLinks(span<const CellId>(workspace.cells.data, (int)workspace.cells.size), state, dead, (int)workspace.cells.size, eqEps, links, linkCount);
+                findRootedLinks(span<const CellId>(workspace.cells.data, (int)workspace.cells.size), state, dead, (int)workspace.cells.size, links, linkCount);
                 if (linkCount == previous) {
                     if (witnessCount == (int)witnesses.size())
                         witnesses.emplace_back();
@@ -266,7 +259,7 @@ Pseudo::Kind Pseudo::extendChains(Result &result, const PositionState &state, sp
     return Kind::None;
 }
 
-Pseudo::Kind Pseudo::connectChains(Result &result, const PositionState &state, span<const CellId> dead, long double eqEps, std::deque<Chain> &chains, int chainCount, const std::deque<vector<CellId>> &witnesses, int witnessCount, Workspace &workspace, CellId target) {
+Pseudo::Kind Pseudo::connectChains(Result &result, const PositionState &state, span<const CellId> dead, std::deque<Chain> &chains, int chainCount, const std::deque<vector<CellId>> &witnesses, int witnessCount, Workspace &workspace, CellId target) {
     for (int witnessIndex = 0; witnessIndex < witnessCount; ++witnessIndex) {
         const vector<CellId> &witness = witnesses[witnessIndex];
         for (int first = 0; first < chainCount; ++first) {
@@ -287,7 +280,7 @@ Pseudo::Kind Pseudo::connectChains(Result &result, const PositionState &state, s
                 const long double tally2 = Probability::mineProbability(state.probability, chain2->openTile, state.board, state.basic, state.structure) * state.probability.candidates;
 
                 Link linker(chain1->openTile, chain2->openTile, pseudoContains(dead, chain1->openTile), pseudoContains(dead, chain2->openTile), false, (int)witness.size);
-                assess(linker, state, eqEps);
+                assess(linker, state);
 
                 workspace.combined.resize(0);
                 for (int i = 0; i < (int)chain1->whole5050.size; ++i)
@@ -334,13 +327,13 @@ Pseudo::Kind Pseudo::connectChains(Result &result, const PositionState &state, s
     return Kind::None;
 }
 
-Pseudo::Kind Pseudo::update(Result &result, const PositionState &state, span<const CellId> dead, const Config &config, Workspace &workspace, CellId target) {
+Pseudo::Kind Pseudo::update(Result &result, const PositionState &state, span<const CellId> dead, Workspace &workspace, CellId target) {
     result.kind = Kind::None;
     result.cells.resize(0);
     int linkCount = 0;
     int chainCount = 0;
     int witnessCount = 0;
-    collectLinks(state, dead, config.eqEps, workspace.links, linkCount, workspace.witnesses, witnessCount, workspace);
+    collectLinks(state, dead, workspace.links, linkCount, workspace.witnesses, witnessCount, workspace);
     const span<Link> links(workspace.links.data, linkCount);
     std::sort(links.begin(), links.end(), linkLess);
     const Link *unavoidable = nullptr;
@@ -377,7 +370,7 @@ Pseudo::Kind Pseudo::update(Result &result, const PositionState &state, span<con
         result.kind = kind;
         return kind;
     }
-    const Kind connected = connectChains(result, state, dead, config.eqEps, workspace.chains, chainCount, workspace.witnesses, witnessCount, workspace, target);
+    const Kind connected = connectChains(result, state, dead, workspace.chains, chainCount, workspace.witnesses, witnessCount, workspace, target);
     if (connected != Kind::None) {
         result.kind = connected;
         return connected;
@@ -385,9 +378,9 @@ Pseudo::Kind Pseudo::update(Result &result, const PositionState &state, span<con
     return result.kind;
 }
 
-Pseudo::Result Pseudo::analyze(const PositionState &state, span<const CellId> dead, const Config &config, Workspace &workspace) {
+Pseudo::Result Pseudo::analyze(const PositionState &state, span<const CellId> dead, Workspace &workspace) {
     Result result;
-    update(result, state, dead, config, workspace);
+    update(result, state, dead, workspace);
     return result;
 }
 

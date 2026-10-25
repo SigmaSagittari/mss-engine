@@ -25,6 +25,7 @@ struct BruteForceMultimask {
     };
 
     struct Layer {
+        // 当前候选的踩雷布局数、尝试顺序，以及按揭出数字分桶后的布局列表。
         vector<int> deaths;
         vector<int> order;
         vector<BruteForceType::ConfigId> groups[9];
@@ -37,6 +38,7 @@ struct BruteForceMultimask {
         vector<SafeGroup> safeGroupList;
     };
 
+    // 一个线程的递归临时内存；每个深度一份 Layer，缓存内容只在本次 solve 有效。
     struct Scratch {
         Scratch();
         Layer &layer(int depth);
@@ -56,6 +58,7 @@ struct BruteForceMultimask {
 
     struct ParallelCache;
 
+    // 本次 solve 的工作状态；借用 Scratch，独占本地缓存，可选接入根并行共享缓存。
     struct Worker {
         Scratch &scratch;
         FlatHashTable<U128, int, U128Hash> cache;
@@ -99,6 +102,7 @@ struct BruteForceMultimask {
         vector<long long> nodes;
     };
 
+    // 与普通后端输入输出相同；根据候选格数选择可容纳它们的固定掩码位宽。
     static void solve(const BruteForceType::Session &session, const BruteForceType::Config &config, BruteForceType::Result &result, Workspace &workspace);
 };
 

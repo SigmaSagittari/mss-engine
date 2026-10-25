@@ -44,27 +44,37 @@ inline const mss::JavaEval::Config javaEvalConfig{
     /* selection 候选筛选 */ {
         /* selectionThreshold1 第一筛选阈值 */ 0.10L,
         /* selectionThreshold2 第二筛选阈值 */ 0.20L,
-        /* spaceThreshold 空间阈值 */ 8
+        /* spaceThreshold 空间阈值 */ 8,
+        /* interchangeable 对换去重 */ false,
+        /* equivalence 等价类去重 */ false,
+        /* dominance 支配去重 */ true
     },
     /* progressContribution 推进加分 */ 0.001L,
     /* influenceScale 长期风险系数 */ 0.9L
 };
 inline const mss::AnytimeSearch::Config anytimeConfig{
-    /* javaEval 单步评分配置 */ javaEvalConfig,
-    /* nodeLimit 节点预算 */ 256,
+    /* javaEval 单步评分与候选配置 */ {
+        /* selection 候选筛选与评分前剪枝 */ {
+            /* selectionThreshold1 第一筛选阈值 */ javaEvalConfig.selection.selectionThreshold1,
+            /* selectionThreshold2 第二筛选阈值 */ javaEvalConfig.selection.selectionThreshold2,
+            /* spaceThreshold 空间阈值 */ javaEvalConfig.selection.spaceThreshold,
+            /* interchangeable 对换去重 */ true,
+            /* equivalence 等价类去重 */ true,
+            /* dominance 支配去重 */ true
+        },
+        /* progressContribution 推进加分 */ javaEvalConfig.progressContribution,
+        /* influenceScale 长期风险系数 */ javaEvalConfig.influenceScale
+    },
+    /* nodeLimit 全盘概率分析次数预算，按旧 256 评分的耗时换算 */ 900,
     /* width[0] 第一层宽度 */ 6,
     /* width[1] 第二层宽度 */ 3,
-    /* width[2] 后续层宽度 */ 1,
-    /* fullAnalysis 保留全部根候选 */ false
+    /* width[2] 后续层宽度 */ 1
 };
-inline const mss::Pseudo::Config pseudoConfig{/* eqEps 判等容差 */ 1e-9L};
 inline const mss::FiftyFifty::TemplateConfig templateConfig{
-    /* prefix 模板前缀 */ 20,
-    /* eqEps 判等容差 */ 1e-9L
+    /* prefix 模板前缀 */ 20
 };
 inline const mss::LongTermRisk::Config riskConfig{
-    /* influenceThreshold 影响量阈值 */ 0.025L,
-    /* eqEps 判等容差 */ 1e-9L
+    /* influenceThreshold 影响量阈值 */ 0.025L
 };
 inline const mss::BruteForce::Config bruteConfig{
     /* checkAllMoves 返回全部候选 */ false,
@@ -79,7 +89,6 @@ inline const mss::MovePolicy policy{
     },
     /* fiftyFifty 50-50 算法 */ {
         /* algorithm 算法 */ mss::MovePolicy::FiftyFifty::Algorithm::OldJava,
-        /* oldJava 旧版检测配置 */ &pseudoConfig,
         /* templates 模板检测配置 */ nullptr,
         /* risk 长期风险配置 */ &riskConfig
     },

@@ -259,8 +259,8 @@ void Session::writeProbabilities(std::ostream &result, GameControl::Position &po
 void Session::writeMoveDetails(std::ostream &result, const SuggestResult::Details &details, ObservedBoard::CellId cell) {
     result << ",\"branches\":[";
     bool first = true;
-    for (int i = 0; i < (int)details.branches.size; ++i) {
-        const SuggestResult::Details::Branch &branch = details.branches.data[i];
+    for (int i = 0; i < (int)details.outcomes.size; ++i) {
+        const SuggestResult::Details::Outcome &branch = details.outcomes.data[i];
         if (branch.cell != cell) continue;
         if (!first) result << ',';
         first = false;
@@ -279,7 +279,7 @@ void Session::writeMoveDetails(std::ostream &result, const SuggestResult::Detail
 }
 
 void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config) {
-    const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyAlgorithm, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::OldJava ? &config.oldJava : nullptr, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
+    const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyAlgorithm, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
 
     SuggestResult evaluated;
     AnytimeSearch::Result searched;
@@ -291,7 +291,7 @@ void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Co
     const char *engine = evaluated.engine == SuggestResult::Engine::None ? "Finished" : safe ? "Safe" : exact ? "BruteForce" : evaluated.engine == SuggestResult::Engine::LowRisk ? "LowRisk" : evaluated.engine == SuggestResult::Engine::JavaEval ? "JavaEval" : "Anytime";
     vector<ObservedBoard::CellId> candidates;
     for (int i = 0; i < (int)evaluated.candidates.size; ++i) candidates.push_back(evaluated.candidates.data[i].cell);
-    result << ",\"engine\":" << jsonString(engine) << ",\"reason\":" << jsonString(evaluated.reason == Selection::Reason::Forced ? "forced5050" : evaluated.reason == Selection::Reason::Semi ? "5050OrSafe" : "score") << ",\"nodes\":" << evaluated.nodes << ",\"recommended\":";
+    result << ",\"engine\":" << jsonString(engine) << ",\"reason\":" << jsonString(evaluated.reason == SuggestResult::Reason::Forced ? "forced5050" : evaluated.reason == SuggestResult::Reason::Semi ? "5050OrSafe" : "score") << ",\"nodes\":" << evaluated.nodes << ",\"recommended\":";
     writeCells(result, span<const ObservedBoard::CellId>(evaluated.suggest.data, (int)evaluated.suggest.size));
     result << ",\"candidates\":";
     writeCells(result, span<const ObservedBoard::CellId>(candidates.data, (int)candidates.size));
@@ -360,7 +360,7 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
             else {
                 Config config = config_;
                 if (!parseFiftyFifty(fields, config, response)) return response;
-                const FiftyFifty::Config fifty(config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::OldJava ? &config.oldJava : nullptr, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk);
+                const FiftyFifty::Config fifty(config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk);
                 const LongTermRisk::Details risk = FiftyFifty::describe(cell, position.state(), analysis_->config.shapeSolver, fifty, analysis_->fiftyPool, analysis_->anytimeSearch.javaEval.selection.fiftyFifty);
                 result << ",\"longTermRisk\":{\"body\":" << risk.body << ",\"restriction\":" << risk.restriction << '}';
             }
@@ -502,7 +502,7 @@ bool Session::startMcts(const std::string &body, std::string &response) {
     mctsWorker_ = std::jthread([this, task, config, targets, complete](std::stop_token stop) {
         const std::unique_ptr<Analysis> analysis(task);
         PositionState &state = analysis->position.state();
-        const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyAlgorithm, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::OldJava ? &config.oldJava : nullptr, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
+        const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyAlgorithm, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
         MonteCarlo::Result result = MonteCarlo::analyze(analysis->position, config.monteCarlo, policy, analysis->fiftyPool, analysis->searchPool, analysis->monteCarlo, targets.size == 0 ? nullptr : &targets);
         auto publish = [&]() {
             const std::string update = mctsResult(result, complete, analysis->position.probability().candidates);
@@ -555,7 +555,6 @@ bool Session::startSearch(const std::string &body, std::string &response) {
     if (!parseConfig(fields, config, response)) return false;
     if (config.algorithm != MovePolicy::Basic::Algorithm::Anytime) { response = error("搜索仅支持 Anytime"); return false; }
     config.anytime.nodeLimit = 0;
-    config.anytime.fullAnalysis = targets.size != 0;
     {
         const std::lock_guard<std::mutex> lock(searchMutex_);
         searchBudget_ = 0;
@@ -567,8 +566,8 @@ bool Session::startSearch(const std::string &body, std::string &response) {
         const std::unique_ptr<Analysis> analysis(task);
         PositionState &state = analysis->position.state();
         AnytimeSearch::Pool &pool = analysis->searchPool;
-        const FiftyFifty::Config fifty(config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::OldJava ? &config.oldJava : nullptr, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk);
-        const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyAlgorithm, fifty.oldJava, fifty.templates, fifty.risk}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
+        const FiftyFifty::Config fifty(config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk);
+        const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyAlgorithm, fifty.templates, fifty.risk}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
         SuggestResult initialized;
         AnytimeSearch::Result result;
         SuggestResult::Details details;
@@ -578,12 +577,12 @@ bool Session::startSearch(const std::string &body, std::string &response) {
             // 先算完第零层；用户停止或预算为零都不会留下空推荐。
             analysis->position.suggest(policy, analysis->fiftyPool, pool, analysis->anytimeSearch, analysis->bruteForce, initialized, targets.size == 0 ? nullptr : &targets, &result, &details);
         }
-        if (initialized.engine == SuggestResult::Engine::BruteForce) result.node = initialized.nodes;
+        if (initialized.engine == SuggestResult::Engine::BruteForce) result.nodes = initialized.nodes;
         auto publish = [&]() {
             const bool exact = initialized.engine == SuggestResult::Engine::BruteForce;
             const ObservedBoard::CellId recommended = safe.size != 0 ? safe.data[0] : exact ? (initialized.suggest.size != 0 ? initialized.suggest.data[0] : -1) : result.recommended(pool);
             std::ostringstream json;
-            json << std::setprecision(18) << "{\"ok\":true,\"engine\":" << jsonString(exact ? "BruteForce" : safe.size != 0 ? "Safe" : "Anytime") << ",\"candidateCount\":" << jsonString(layoutCount.str()) << ",\"nodes\":" << result.node << ",\"completedDepth\":" << result.completedDepth << ",\"finished\":" << (result.finished ? "true" : "false") << ",\"safe\":" << (safe.size != 0 ? "true" : "false") << ",\"recommended\":" << recommended << ",\"moves\":[";
+            json << std::setprecision(18) << "{\"ok\":true,\"engine\":" << jsonString(exact ? "BruteForce" : safe.size != 0 ? "Safe" : "Anytime") << ",\"candidateCount\":" << jsonString(layoutCount.str()) << ",\"nodes\":" << result.nodes << ",\"completedDepth\":" << result.completedDepth << ",\"finished\":" << (result.finished ? "true" : "false") << ",\"safe\":" << (safe.size != 0 ? "true" : "false") << ",\"recommended\":" << recommended << ",\"moves\":[";
             const int count = safe.size != 0 ? (int)safe.size : exact ? (int)initialized.candidates.size : (int)result.roots.count;
             for (int i = 0; i < count; ++i) {
                 if (i != 0) json << ',';
@@ -611,7 +610,7 @@ bool Session::startSearch(const std::string &body, std::string &response) {
             {
                 std::unique_lock<std::mutex> lock(searchMutex_);
                 if (!searchWake_.wait(lock, stop, [&]() { return searchRunning_ || searchBudget_ > 0; })) break;
-                budget = searchRunning_ ? 100 : (std::min)(searchBudget_, 100LL);
+                budget = searchRunning_ ? 350 : (std::min)(searchBudget_, 350LL);
                 if (!searchRunning_) searchBudget_ -= budget;
             }
             AnytimeSearch::Config stepConfig = config.anytime;

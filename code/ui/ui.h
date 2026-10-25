@@ -16,7 +16,6 @@ struct Config {
     JavaEval::Config javaEval;
     AnytimeSearch::Config anytime;
     MovePolicy::FiftyFifty::Algorithm fiftyAlgorithm;
-    Pseudo::Config oldJava;
     FiftyFifty::TemplateConfig templates;
     LongTermRisk::Config risk;
     Brute brute;

@@ -1,4 +1,5 @@
 // 由 code/tools/fifty_fifty_catalog/generate.cpp 从 patterns.csv 生成。
+// / 分行，A/B 为可互换的两组本体格，. 为本体外位置；封口雷和边界条件由 Table 推导。
 #pragma once
 
 namespace mss::FiftyFiftyData {

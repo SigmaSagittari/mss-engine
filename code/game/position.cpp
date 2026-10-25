@@ -205,13 +205,13 @@ void GameControl::Position::suggest(PositionState &current, const MovePolicy &po
             int count = 0;
             for (int i = 0; i < (int)result.candidates.size; ++i)
                 if (std::find(cells->data, cells->data + cells->size, result.candidates.data[i].cell) != cells->data + cells->size) result.candidates.data[count++] = result.candidates.data[i];
-            result.candidates.size = count; result.reason = SuggestResult::Reason::Specified; result.recommend();
+            result.candidates.size = count; result.recommend();
         }
     } else if (policy.basic.algorithm == MovePolicy::Basic::Algorithm::LowRisk) {
         SuggestResult evaluated = LowRisk::analyze(current, cells);
         result.swap(evaluated);
     } else {
-        const FiftyFifty::Config fifty(policy.fiftyFifty.algorithm == MovePolicy::FiftyFifty::Algorithm::OldJava ? policy.fiftyFifty.oldJava : nullptr, policy.fiftyFifty.algorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? policy.fiftyFifty.templates : nullptr, policy.fiftyFifty.risk);
+        const FiftyFifty::Config fifty(policy.fiftyFifty.algorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? policy.fiftyFifty.templates : nullptr, policy.fiftyFifty.risk);
         if (policy.basic.algorithm == MovePolicy::Basic::Algorithm::JavaEval) {
             SuggestResult evaluated = JavaEval::analyze(current, config_.shapeSolver, *policy.basic.javaEval, fifty, fiftyPool, workspace.javaEval, cells, details);
             result.swap(evaluated);

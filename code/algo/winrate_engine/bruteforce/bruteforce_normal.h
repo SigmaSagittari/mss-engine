@@ -24,11 +24,13 @@ struct BruteForceNormal {
     };
 
     struct Layer {
+        // 当前局面各候选的踩雷布局数、必安候选及尝试顺序。
         vector<int> deaths;
         vector<int> safeCells;
         vector<int> order;
-        vector<BruteForceType::ConfigId> groups[9];
+        vector<BruteForceType::ConfigId> groups[9]; // 按揭出的数字 0..8 分桶，每项是完整雷盘下标。
         vector<RevealGroup> groupList;
+        // 同时揭开必安格时，按它们显示的数字组合给布局分组。
         vector<U128> safeHashes;
         vector<int> safeGroupIds;
         vector<int> safeGroupSizes;
@@ -42,8 +44,8 @@ struct BruteForceNormal {
         Layer &layer(int depth);
         void reset();
 
-        Grid<std::uint8_t> mineByConfig;
-        Grid<std::uint8_t> revealByConfig;
+        Grid<std::uint8_t> mineByConfig; // [完整布局][候选] 是否为雷。
+        Grid<std::uint8_t> revealByConfig; // [完整布局][候选] 揭开后显示的数字。
         DynamicBitset unopenedStorage;
         vector<BruteForceType::ConfigId> configIds;
         FlatHashTable<U128, int, U128Hash> safeGroupTable;
@@ -53,6 +55,7 @@ struct BruteForceNormal {
         std::deque<Layer> layers;
     };
 
+    // session 是 BruteForce 构建的完整布局表；返回原始赢局数，由上层归一化为胜率。
     static void solve(const BruteForceType::Session &session, const BruteForceType::Config &config, BruteForceType::Result &result, Workspace &workspace);
 };
 

@@ -9,7 +9,7 @@ int main(int argc, char **argv) {
     std::ifstream input(argv[1]);
     std::ofstream output(argv[2]);
     mss::assert_(input.good() && output.good(), "无法打开模板目录或输出头文件");
-    output << "// 由 code/tools/fifty_fifty_catalog/generate.cpp 从 patterns.csv 生成。\n#pragma once\n\nnamespace mss::FiftyFiftyData {\ninline constexpr const char *patterns[] = {\n";
+    output << "// 由 code/tools/fifty_fifty_catalog/generate.cpp 从 patterns.csv 生成。\n// / 分行，A/B 为可互换的两组本体格，. 为本体外位置；封口雷和边界条件由 Table 推导。\n#pragma once\n\nnamespace mss::FiftyFiftyData {\ninline constexpr const char *patterns[] = {\n";
     std::string line;
     std::getline(input, line);
     while (std::getline(input, line)) {

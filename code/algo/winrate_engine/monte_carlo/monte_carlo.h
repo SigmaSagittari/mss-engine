@@ -9,15 +9,15 @@ namespace mss {
 // 比较首招的完整对局胜率；有安全格时采样整局胜率。
 struct MonteCarlo {
     struct Config {
-        long double temperature;
-        long double priorWeight;
+        long double temperature; // 初始候选分转成先验权重时的 softmax 温度，必须大于 0。
+        long double priorWeight; // 先验相当于多少个样本，必须非负。
         Config(long double temperature, long double priorWeight) : temperature(temperature), priorWeight(priorWeight) {}
     };
 
     struct Candidate {
         ObservedBoard::CellId cell;
-        long long samples, wins;
-        long double prior, mean, variance;
+        long long samples, wins; // 固定以该格为首招的完整对局数和获胜数。
+        long double prior, mean, variance; // 初始先验及加入实际样本后的胜率均值、方差。
         // chanceSamples=-1 表示尚未计算；缓存只在样本数和目标均值相同时有效。
         long long chanceSamples;
         long double chanceTarget, chanceLog;
@@ -26,18 +26,21 @@ struct MonteCarlo {
     };
 
     struct Result {
+        // true：根层有必安或棋局已结束，统计整局胜率；false：分别比较候选首招。
         bool winrate;
         // engine 为 BruteForce 时保存精确结果，此时不构造采样候选、不再采样。
         SuggestResult exact;
-        long long samples, wins;
+        long long samples, wins; // 已完成模拟的总局数和胜局数。
         vector<Candidate> candidates;
-        vector<ObservedBoard::CellId> safeCells;
+        vector<ObservedBoard::CellId> safeCells; // 整局采样模式中先揭开的必安格。
         Random random;
+        // 模拟使用的布局采样池和推荐缓存，跨采样复用，由 Result 持有。
         ShapeSolver::AssignmentPool assignments;
         GameControl::SuggestPool suggestions;
 
         // 接管根层精确结果或安全格数组；统计只计实际完成的对局。
         explicit Result(SuggestResult &root);
+        // 返回 candidates 下标；有候选时才可调用，用采样后的均值选第一名。
         int best() const;
         ObservedBoard::CellId recommended() const;
     };

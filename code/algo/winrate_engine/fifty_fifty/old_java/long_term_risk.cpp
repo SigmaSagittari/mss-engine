@@ -35,14 +35,14 @@ bool LongTermRisk::hasSafeSource(const ObservedBoard::Result &board, span<const 
     return false;
 }
 
-LongTermRisk::CellList LongTermRisk::missingMines(const PositionState &state, span<const CellPosition> source, long double eqEps) {
+LongTermRisk::CellList LongTermRisk::missingMines(const PositionState &state, span<const CellPosition> source) {
     CellList missing;
     for (int i = 0; i < source.size; ++i) {
         const CellPosition &position = source.data[i];
         if (position.row < 0 || position.row >= state.board.cells.rows() || position.col < 0 || position.col >= state.board.cells.cols())
             continue;
         const ObservedBoard::CellId cell = state.board.id(position.row, position.col);
-        if (Probability::mineProbability(state.probability, cell, state.board, state.basic, state.structure) >= 1.0L - eqEps)
+        if (Probability::mineProbability(state.probability, cell, state.board, state.basic, state.structure) == 1.0L)
             continue;
         missing.push_back(cell);
     }
@@ -57,10 +57,10 @@ long double LongTermRisk::countWithForces(PositionState &state, span<const Obser
     return state.countCandidatesWithForces(mines, safes, shapeConfig, workspace.basic, workspace.structure, workspace.probability, workspace.changedCells, workspace.forcedProbability);
 }
 
-long double LongTermRisk::candidateTally(PositionState &state, span<const ObservedBoard::CellId> tiles, span<const CellPosition> source, int mineCount, int maxMissing, int minesLeft, const ShapeSolverConfig &shapeConfig, const Config &config, TallyKind kind, ObservedBoard::CellId cacheCell, Result &result, Workspace &workspace) {
+long double LongTermRisk::candidateTally(PositionState &state, span<const ObservedBoard::CellId> tiles, span<const CellPosition> source, int mineCount, int maxMissing, int minesLeft, const ShapeSolverConfig &shapeConfig, TallyKind kind, ObservedBoard::CellId cacheCell, Result &result, Workspace &workspace) {
     if (hasSafeSource(state.board, source))
         return 0.0L;
-    const CellList missing = missingMines(state, source, config.eqEps);
+    const CellList missing = missingMines(state, source);
     const int extra = mineCount == 1 ? 1 : 2;
     if (missing.count + extra > maxMissing || missing.count + extra > minesLeft)
         return 0.0L;
@@ -101,7 +101,7 @@ void LongTermRisk::update(Result &result, PositionState &state, span<const Obser
     auto consider = [&](span<const ObservedBoard::CellId> tiles, span<const CellPosition> source, int mineCount, int maxMissing) -> bool {
         if (hasSafeSource(state.board, source))
             return false;
-        const CellList missing = missingMines(state, source, config.eqEps);
+        const CellList missing = missingMines(state, source);
         const int extra = mineCount == 1 ? 1 : 2;
         if (missing.count + extra > maxMissing || missing.count + extra > minesLeft)
             return false;
@@ -121,11 +121,11 @@ void LongTermRisk::update(Result &result, PositionState &state, span<const Obser
         if (pseudo != nullptr) {
             for (int i = 0; i < tiles.size; ++i) {
                 const long double mineTally = boxTally(tiles.data[i], state);
-                if (std::abs(tally - mineTally) <= config.eqEps * (std::max)(tally, mineTally) && !contains(dead, tiles.data[i]))
+                if (std::abs(tally - mineTally) <= countTolerance * (std::max)(tally, mineTally) && !contains(dead, tiles.data[i]))
                     pseudo->cells.push_back(tiles.data[i]);
             }
             if (pseudo->cells.size != 0) {
-                pseudo->kind = (int)pseudo->cells.size == tiles.size && std::abs(2.0L * tally - state.probability.candidates) <= config.eqEps * state.probability.candidates ? Pseudo::Kind::Forced : Pseudo::Kind::Semi;
+                pseudo->kind = (int)pseudo->cells.size == tiles.size && std::abs(2.0L * tally - state.probability.candidates) <= countTolerance * state.probability.candidates ? Pseudo::Kind::Forced : Pseudo::Kind::Semi;
                 return true;
             }
         }
@@ -176,7 +176,7 @@ void LongTermRisk::update(Result &result, PositionState &state, span<const Obser
         }
 }
 
-long double LongTermRisk::influence(ObservedBoard::CellId cell, PositionState &state, Result &full, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Details *details) {
+long double LongTermRisk::influence(ObservedBoard::CellId cell, PositionState &state, Result &full, const ShapeSolverConfig &shapeConfig, Workspace &workspace, Details *details) {
     const int rows = state.board.cells.rows();
     const int cols = state.board.cells.cols();
     const int minesLeft = state.board.totalMines - state.basic.mineSum;
@@ -191,7 +191,7 @@ long double LongTermRisk::influence(ObservedBoard::CellId cell, PositionState &s
             return 0.0L;
         const ObservedBoard::CellId tiles[2] = {state.board.id(startRow, startCol), state.board.id(startRow, startCol + 1)};
         const CellPosition source[6] = {CellPosition(startRow - 1, startCol - 1), CellPosition(startRow, startCol - 1), CellPosition(startRow + 1, startCol - 1), CellPosition(startRow - 1, startCol + 2), CellPosition(startRow, startCol + 2), CellPosition(startRow + 1, startCol + 2)};
-        return candidateTally(state, span<const ObservedBoard::CellId>(tiles, 2), span<const CellPosition>(source, 6), 1, 4, minesLeft, shapeConfig, config, TallyKind::Horizontal, state.board.id(startRow, startCol), full, workspace);
+        return candidateTally(state, span<const ObservedBoard::CellId>(tiles, 2), span<const CellPosition>(source, 6), 1, 4, minesLeft, shapeConfig, TallyKind::Horizontal, state.board.id(startRow, startCol), full, workspace);
     };
     auto vertical = [&](int startRow, int startCol) {
         if (startRow < 0 || startRow + 1 >= rows || startCol < 0 || startCol >= cols)
@@ -200,7 +200,7 @@ long double LongTermRisk::influence(ObservedBoard::CellId cell, PositionState &s
             return 0.0L;
         const ObservedBoard::CellId tiles[2] = {state.board.id(startRow, startCol), state.board.id(startRow + 1, startCol)};
         const CellPosition source[6] = {CellPosition(startRow - 1, startCol - 1), CellPosition(startRow - 1, startCol), CellPosition(startRow - 1, startCol + 1), CellPosition(startRow + 2, startCol - 1), CellPosition(startRow + 2, startCol), CellPosition(startRow + 2, startCol + 1)};
-        return candidateTally(state, span<const ObservedBoard::CellId>(tiles, 2), span<const CellPosition>(source, 6), 1, 4, minesLeft, shapeConfig, config, TallyKind::Vertical, state.board.id(startRow, startCol), full, workspace);
+        return candidateTally(state, span<const ObservedBoard::CellId>(tiles, 2), span<const CellPosition>(source, 6), 1, 4, minesLeft, shapeConfig, TallyKind::Vertical, state.board.id(startRow, startCol), full, workspace);
     };
     auto box = [&](int startRow, int startCol) {
         if (startRow < 0 || startRow + 1 >= rows || startCol < 0 || startCol + 1 >= cols)
@@ -209,7 +209,7 @@ long double LongTermRisk::influence(ObservedBoard::CellId cell, PositionState &s
             return 0.0L;
         const ObservedBoard::CellId tiles[4] = {state.board.id(startRow, startCol), state.board.id(startRow, startCol + 1), state.board.id(startRow + 1, startCol), state.board.id(startRow + 1, startCol + 1)};
         const CellPosition source[4] = {CellPosition(startRow - 1, startCol - 1), CellPosition(startRow - 1, startCol + 2), CellPosition(startRow + 2, startCol - 1), CellPosition(startRow + 2, startCol + 2)};
-        return candidateTally(state, span<const ObservedBoard::CellId>(tiles, 4), span<const CellPosition>(source, 4), 2, 5, minesLeft, shapeConfig, config, TallyKind::Box, state.board.id(startRow, startCol), full, workspace);
+        return candidateTally(state, span<const ObservedBoard::CellId>(tiles, 4), span<const CellPosition>(source, 4), 2, 5, minesLeft, shapeConfig, TallyKind::Box, state.board.id(startRow, startCol), full, workspace);
     };
 
     long double value = 0.0L;
@@ -232,7 +232,7 @@ LongTermRisk::Details LongTermRisk::describe(ObservedBoard::CellId cell, Positio
     Result result;
     result.swapStorage(workspace);
     update(result, state, span<const ObservedBoard::CellId>(), shapeConfig, config, workspace, nullptr, &details);
-    influence(cell, state, result, shapeConfig, config, workspace, &details);
+    influence(cell, state, result, shapeConfig, workspace, &details);
     const long double mineTally = boxTally(cell, state);
     details.body /= mineTally;
     details.restriction /= mineTally;

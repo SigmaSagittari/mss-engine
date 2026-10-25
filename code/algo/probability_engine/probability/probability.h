@@ -105,6 +105,7 @@ struct Probability {
     static long double analyzeLogicComponents(span<const LogicComponentInput> components, int totalMines, Workspace &workspace, const std::function<void(int, int, long double, long double)> &callback);
 
     // 格子 → 组件/Box/T 的概率查询；candidates 必须大于零，输入必须与生成结果时一致。
+    // 逻辑推导的必安、必雷分别精确返回 0、1，调用方直接判等。
     static long double mineProbability(const Result &result, ObservedBoard::CellId cell, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure);
 
   private:

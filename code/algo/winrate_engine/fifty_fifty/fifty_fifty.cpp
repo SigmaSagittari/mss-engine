@@ -103,8 +103,6 @@ void FiftyFifty::Table::compileBranch(std::deque<Build::Rooted> &entries, int be
     compileBranch(entries, middle, end, parent);
 }
 
-void FiftyFifty::Result::swapStorage(Workspace &workspace) { risk.swapStorage(workspace.risk); }
-
 void FiftyFifty::Facts::swapStorage(Workspace &workspace) {
     mines.swap(workspace.mineStorage); safes.swap(workspace.safeStorage);
     marks.swap(workspace.markStorage); adjacent.swap(workspace.adjacentStorage); constraints.swap(workspace.constraintStorage);
@@ -208,7 +206,7 @@ int FiftyFifty::matchPrefix(const Table &table, int node, const Facts &facts, in
 }
 
 void FiftyFifty::detect(Pseudo::Result &result, const PositionState &state, const Config &config, Pool &pool, Workspace &workspace) {
-    if (config.oldJava) { Pseudo::update(result, state, span<const ObservedBoard::CellId>(), *config.oldJava, workspace.oldJava); return; }
+    if (config.templates == nullptr) { Pseudo::update(result, state, span<const ObservedBoard::CellId>(), workspace.oldJava); return; }
     const Table &table = pool.tables.try_emplace(config.templates->prefix, config.templates->prefix).first->second;
     Facts facts(state, workspace);
     facts.propagate(workspace);
@@ -223,7 +221,7 @@ void FiftyFifty::detect(Pseudo::Result &result, const PositionState &state, cons
     result.kind = Pseudo::Kind::None; result.cells.resize(0);
     for (int root = 0; root < facts.rows * facts.cols; ++root) if (facts.found.data[root / 64] & (1ULL << (root % 64))) {
         const long double probability = Probability::mineProbability(state.probability, root, state.board, state.basic, state.structure);
-        const bool forced = std::abs(probability - 0.5L) <= config.templates->eqEps;
+        const bool forced = std::abs(probability - 0.5L) <= halfTolerance;
         if (forced && result.kind != Pseudo::Kind::Forced) { result.cells.resize(0); result.kind = Pseudo::Kind::Forced; }
         if (result.kind != Pseudo::Kind::Forced) result.kind = Pseudo::Kind::Semi;
         if (forced || result.kind == Pseudo::Kind::Semi) result.cells.push_back(root);
@@ -235,15 +233,15 @@ void FiftyFifty::prepareRisk(Result &result, PositionState &state, const ShapeSo
     LongTermRisk::update(result.risk, state, span<const ObservedBoard::CellId>(), shapeConfig, *config.risk, workspace.risk, collectPseudo ? &result.pseudo : nullptr);
 }
 
-long double FiftyFifty::influence(ObservedBoard::CellId cell, PositionState &state, Result &full, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace) {
-    return LongTermRisk::influence(cell, state, full.risk, shapeConfig, *config.risk, workspace.risk);
+long double FiftyFifty::influence(ObservedBoard::CellId cell, PositionState &state, Result &full, const ShapeSolverConfig &shapeConfig, Workspace &workspace) {
+    return LongTermRisk::influence(cell, state, full.risk, shapeConfig, workspace.risk);
 }
 
 LongTermRisk::Details FiftyFifty::describe(ObservedBoard::CellId cell, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Pool &pool, Workspace &workspace) {
     LongTermRisk::Details details = LongTermRisk::describe(cell, state, shapeConfig, *config.risk, workspace.risk);
-    if (config.oldJava) {
+    if (config.templates == nullptr) {
         Pseudo::Result pseudo;
-        if (Pseudo::update(pseudo, state, span<const ObservedBoard::CellId>(), *config.oldJava, workspace.oldJava, cell) != Pseudo::Kind::None) details.body = 1.0L;
+        if (Pseudo::update(pseudo, state, span<const ObservedBoard::CellId>(), workspace.oldJava, cell) != Pseudo::Kind::None) details.body = 1.0L;
     } else {
         const Table &table = pool.tables.try_emplace(config.templates->prefix, config.templates->prefix).first->second;
         Facts facts(state, workspace);

@@ -8,25 +8,24 @@
 
 namespace mss {
 
-// Java 长期风险：统计 2-tile/2x2 结构被强制标记后可消除的布局数。
-// 只读 Pseudo 之外的信息；Result 不携带 pseudos，Pseudo 与本模块正交。
+// 旧 Java 长期风险：尝试相邻两格和 2x2 交换，统计补上封口雷后能抵扣的布局数。
+// 先 update 扫全盘，再按需 influence 补算单格；均临时修改 state，返回前恢复。
 struct LongTermRisk {
     struct Config {
-        long double influenceThreshold;
-        long double eqEps;
-
-        Config(long double influenceThreshold, long double eqEps) : influenceThreshold(influenceThreshold), eqEps(eqEps) {}
+        long double influenceThreshold; // 全盘扫描时，单方向模板概率超过此值才计入风险。
+        explicit Config(long double influenceThreshold) : influenceThreshold(influenceThreshold) {}
     };
 
     struct Workspace;
-    // 单模板明细：本体和限制各取命中量最大的一个，不计算多模板联合分布。
+    // describe 输出“已知本格为雷”的条件命中概率，本体和限制各取最大的一个模板。
+    // update/influence 的可选明细参数只作 describe 内部累计，此时保存的还是布局数。
     struct Details {
         ObservedBoard::CellId cell;
         long double body, restriction;
         explicit Details(ObservedBoard::CellId cell) : cell(cell), body(0.0L), restriction(0.0L) {}
     };
     struct Result {
-        Grid<long double> influences;
+        Grid<long double> influences; // [行][列] 的扫描补偿布局数；不是百分比。
         // 交换闲置存储；交换后必须 update 再查询，工作区不保留有效结果。
         void swapStorage(Workspace &workspace);
 
@@ -53,16 +52,17 @@ struct LongTermRisk {
         Grid<unsigned char> readyStorage;
     };
 
-    // dead 使用同盘面编号；临时强制标记在返回前恢复。
+    // dead 使用同盘面编号；pseudo 非空时补找已成立的死猜，并在找到首组时停止扫描。
     static Result analyze(PositionState &state, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Pseudo::Result *pseudo);
     // 全盘覆写 Result；同一 Workspace 串行复用。
     static void update(Result &result, PositionState &state, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Pseudo::Result *pseudo, Details *details = nullptr);
-    // 单格查询；full 必须来自同一 state/config，工作区可替换或复用。
-    static long double influence(ObservedBoard::CellId cell, PositionState &state, Result &full, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Details *details = nullptr);
+    // 单格查询返回补偿布局数；full 必须来自同一 state，工作区可替换或复用。
+    static long double influence(ObservedBoard::CellId cell, PositionState &state, Result &full, const ShapeSolverConfig &shapeConfig, Workspace &workspace, Details *details = nullptr);
     // 仅详情查询调用；cell 的雷率必须大于 0，返回假设该格为雷后的单模板命中概率。
     static Details describe(ObservedBoard::CellId cell, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace);
 
   private:
+    static constexpr long double countTolerance = 1e-9L;
     struct CellPosition {
         int row;
         int col;
@@ -83,10 +83,10 @@ struct LongTermRisk {
 
     static long double boxTally(ObservedBoard::CellId cell, const PositionState &state);
     static long double countWithForces(PositionState &state, span<const ObservedBoard::CellId> mines, span<const ObservedBoard::CellId> safes, const ShapeSolverConfig &shapeConfig, Workspace &workspace);
-    static long double candidateTally(PositionState &state, span<const ObservedBoard::CellId> tiles, span<const CellPosition> source, int mineCount, int maxMissing, int minesLeft, const ShapeSolverConfig &shapeConfig, const Config &config, TallyKind kind, ObservedBoard::CellId cacheCell, Result &result, Workspace &workspace);
+    static long double candidateTally(PositionState &state, span<const ObservedBoard::CellId> tiles, span<const CellPosition> source, int mineCount, int maxMissing, int minesLeft, const ShapeSolverConfig &shapeConfig, TallyKind kind, ObservedBoard::CellId cacheCell, Result &result, Workspace &workspace);
     static bool hasSafeSource(const ObservedBoard::Result &board, span<const CellPosition> source);
     static bool contains(span<const ObservedBoard::CellId> cells, ObservedBoard::CellId cell);
-    static CellList missingMines(const PositionState &state, span<const CellPosition> source, long double eqEps);
+    static CellList missingMines(const PositionState &state, span<const CellPosition> source);
     static bool hidden(const PositionState &state, int row, int col);
 };
 

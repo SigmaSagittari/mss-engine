@@ -18,9 +18,10 @@ struct BruteForce {
 
     // 构建过程复用的临时数组；每次构建覆写有效范围，Session 不借用它们。
     struct Build {
-        vector<int> candidateAt;
-        vector<BruteForceType::CandidateId> tCells;
-        vector<BruteForceType::CandidateId> placed;
+        vector<int> candidateAt; // 棋盘 CellId → 候选下标，-1 表示不在本次候选里。
+        vector<BruteForceType::CandidateId> tCells; // 待分配雷数的非前沿格。
+        vector<BruteForceType::CandidateId> placed; // 当前正在拼接的完整雷盘中的雷位。
+        // 各前沿块的布局起点、数量，以及展开后的格子赋值。
         vector<int> assignmentOffsets;
         vector<int> assignmentCounts;
         vector<char> assignments;
@@ -45,6 +46,7 @@ struct BruteForce {
 
     // board/basic/structure/shapes 必须来自同一刷新；shapes 是 structure 所属的池。
     // 输出评分为最优后续获胜布局数除以总布局数；没有候选格时推荐与候选为空。
+    // checkAllMoves=false 只保留最佳首招，true 返回全部候选；Result 自行拥有输出数组。
     static void solve(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes, const Config &config, Result &result, Workspace &workspace);
 
     // components 是当前池中的 InstanceId，彼此不重叠；offFrontierCells 与组件格子不重叠。

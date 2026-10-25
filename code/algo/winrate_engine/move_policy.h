@@ -5,6 +5,7 @@
 
 namespace mss {
 
+// 三项独立选择：普通算法、50-50 检测器、暴力接管阈值。Position::suggest 负责分派。
 // 只借用配置，不拥有工作区或池；配置须覆盖调用及后台任务的生命周期。
 struct MovePolicy {
     struct Basic {
@@ -20,10 +21,9 @@ struct MovePolicy {
         enum class Algorithm { OldJava, Templates };
         Algorithm algorithm;
         // 只读取所选分支的配置；LowRisk 不读取本组。
-        const Pseudo::Config *oldJava;
         const mss::FiftyFifty::TemplateConfig *templates;
         const LongTermRisk::Config *risk;
-        FiftyFifty(Algorithm algorithm, const Pseudo::Config *oldJava, const mss::FiftyFifty::TemplateConfig *templates, const LongTermRisk::Config *risk) : algorithm(algorithm), oldJava(oldJava), templates(templates), risk(risk) {}
+        FiftyFifty(Algorithm algorithm, const mss::FiftyFifty::TemplateConfig *templates, const LongTermRisk::Config *risk) : algorithm(algorithm), templates(templates), risk(risk) {}
     } fiftyFifty;
 
     struct Brute {
