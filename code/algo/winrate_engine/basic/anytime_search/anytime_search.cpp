@@ -76,8 +76,10 @@ void AnytimeSearch::pruneRoot(vector<JavaEval::Analysis> &analyses, const Positi
     for (int i = 0; i < (int)analyses.size; ++i)
         for (int j = i + 1; j < (int)analyses.size;)
             if (interchangeable(state, analyses.data[i].cell, analyses.data[j].cell)) {
-                // 比较完整选招分，包含根层 influence；相同时保留小编号。
-                if (analyses.data[j].score() > analyses.data[i].score() || (analyses.data[j].score() == analyses.data[i].score() && analyses.data[j].cell < analyses.data[i].cell))
+                // 沿用合并乘数选择等价根代表；相同时保留小编号。
+                const long double leftMultiplier = analyses.data[i].influence * analyses.data[i].multiplier;
+                const long double rightMultiplier = analyses.data[j].influence * analyses.data[j].multiplier;
+                if (rightMultiplier > leftMultiplier || (rightMultiplier == leftMultiplier && analyses.data[j].cell < analyses.data[i].cell))
                     analyses.data[i] = analyses.data[j];
                 for (int k = j + 1; k < (int)analyses.size; ++k)
                     analyses.data[k - 1] = analyses.data[k];
@@ -434,7 +436,7 @@ void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index,
     pool.nodes.data.data[index].value = frame.value;
     pool.nodes.data.data[index].finished = frame.settled;
     pool.nodes.data.data[index].expandedDepth = maxDepth;
-    if (frame.settled)
+    if (pool.nodes.data.data[index].root && frame.settled)
         pool.nodes.data.data[index].multiplier = 1.0L;
     frame.branch = 0;
     frame.value = 0.0L;
