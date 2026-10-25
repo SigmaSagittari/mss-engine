@@ -48,8 +48,10 @@ struct JavaEval {
 
     struct Analysis {
         ObservedBoard::CellId cell;
+        // 普通后续值不含推进奖励和长期风险；score() 只用于选招。
         long double value;
         long double multiplier;
+        long double influence;
         // 分支记录由调用方的 Branch 池持有；切片在该池退尾或清空前有效。
         vectorPool<Branch>::vector branches;
         // 必安子集哈希；只由 AnytimeSearch 填写。
@@ -62,7 +64,8 @@ struct JavaEval {
         // false 表示已算部分打不过 floor，剩余分支不再展开。
         bool valid;
 
-        Analysis(ObservedBoard::CellId cell, long double value, long double multiplier) : cell(cell), value(value), multiplier(multiplier), branches{}, equivalence(), hasEquivalence(false), hasAlternative(false), node(0), valid(true) {}
+        Analysis(ObservedBoard::CellId cell, long double value, long double multiplier, long double influence) : cell(cell), value(value), multiplier(multiplier), influence(influence), branches{}, equivalence(), hasEquivalence(false), hasAlternative(false), node(0), valid(true) {}
+        long double score() const { return value * (influence * multiplier); }
     };
 
     struct Workspace {
@@ -85,7 +88,7 @@ struct JavaEval {
     // peers 用于强制安全后的必安子集和更安全替代格；safeSearch 时不计进度奖励。
     // floor 只在该候选已算一部分后生效；< 0 表示不剪。分支增量借用 state 的池，供树续搜。
     static Analysis javaLite(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, vectorPool<Branch> &branches, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int forcedSafes, bool safeSearch, span<const Peer> peers, long double floor, SuggestResult::Details *details = nullptr);
-    // JavaLite 之后再乘长期风险 influence；retainDeltas 仅供搜索根层保留 state 池中的增量。
+    // 长期风险单独保存在 influence，value 不含修正；retainDeltas 仅供搜索根层保留 state 池中的增量。
     static Analysis evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, vectorPool<Branch> &branches, FiftyFifty::Result &risk, const FiftyFifty::Config &fiftyConfig, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int forcedSafes, span<const Peer> peers, bool retainDeltas, SuggestResult::Details *details = nullptr);
 
   private:

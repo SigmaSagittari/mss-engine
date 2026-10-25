@@ -31,7 +31,7 @@ ObservedBoard::CellId AnytimeSearch::Result::recommended(const Pool &pool) const
     const Pool::Node *best = nullptr;
     for (int i = 0; i < (int)roots.count; ++i) {
         const Pool::Node &candidate = pool.nodes.data.data[roots.offset + i];
-        if (best == nullptr || candidate.expandedDepth > best->expandedDepth || (candidate.expandedDepth == best->expandedDepth && candidate.value > best->value))
+        if (best == nullptr || candidate.expandedDepth > best->expandedDepth || (candidate.expandedDepth == best->expandedDepth && candidate.score() > best->score()))
             best = &candidate;
     }
     return best != nullptr ? best->cell : -1;
@@ -76,8 +76,8 @@ void AnytimeSearch::pruneRoot(vector<JavaEval::Analysis> &analyses, const Positi
     for (int i = 0; i < (int)analyses.size; ++i)
         for (int j = i + 1; j < (int)analyses.size;)
             if (interchangeable(state, analyses.data[i].cell, analyses.data[j].cell)) {
-                // 完整乘数包含 influence，必须评分后才选代表；相同时保留小编号。
-                if (analyses.data[j].multiplier > analyses.data[i].multiplier || (analyses.data[j].multiplier == analyses.data[i].multiplier && analyses.data[j].cell < analyses.data[i].cell))
+                // 比较完整选招分，包含根层 influence；相同时保留小编号。
+                if (analyses.data[j].score() > analyses.data[i].score() || (analyses.data[j].score() == analyses.data[i].score() && analyses.data[j].cell < analyses.data[i].cell))
                     analyses.data[i] = analyses.data[j];
                 for (int k = j + 1; k < (int)analyses.size; ++k)
                     analyses.data[k - 1] = analyses.data[k];
@@ -85,7 +85,7 @@ void AnytimeSearch::pruneRoot(vector<JavaEval::Analysis> &analyses, const Positi
             } else
                 ++j;
     std::stable_sort(analyses.data, analyses.data + analyses.size, [](const JavaEval::Analysis &left, const JavaEval::Analysis &right) {
-        return left.value > right.value;
+        return left.score() > right.score();
     });
     vector<U128> &identities = workspace.identities;
     identities.resize(0);
@@ -154,7 +154,7 @@ void AnytimeSearch::selectCandidates(vector<JavaEval::Analysis> &analyses, int l
         if (duplicate)
             continue;
         int position = 0;
-        while (position < selectedCount && (analyses.data[position].value > candidate.value || (analyses.data[position].value == candidate.value && analyses.data[position].cell < candidate.cell)))
+        while (position < selectedCount && (analyses.data[position].score() > candidate.score() || (analyses.data[position].score() == candidate.score() && analyses.data[position].cell < candidate.cell)))
             ++position;
         if (selectedCount < limit) {
             for (int j = selectedCount; j > position; --j)
@@ -213,7 +213,7 @@ bool AnytimeSearch::prepareNode(PositionState &state, Pool &pool, const ShapeSol
         if (budget <= 0)
             return false;
         const int i = pool.next++;
-        const long double floor = (int)analyses.size == limit ? analyses.data[limit - 1].value : -1.0L;
+        const long double floor = (int)analyses.size == limit ? analyses.data[limit - 1].score() : -1.0L;
         const JavaEval::Analysis analysis = JavaEval::javaLite(state, shapeConfig, config.javaEval.progressContribution, workspace.javaEval, pool.branches, selected.cells.data[i], selected.observations.data[i], remaining, 0, pool.safe, peerSpan, floor);
         budget -= analysis.node;
         nodeCount += analysis.node;
@@ -232,7 +232,7 @@ void AnytimeSearch::orderMoves(Pool &pool, vectorPool<Pool::Node>::vector childr
         frame.order.data[i] = (int)children.offset + i;
     std::sort(frame.order.data, frame.order.data + frame.order.size, [&](int left, int right) {
         const Pool::Node &lhs = pool.nodes.data.data[left], &rhs = pool.nodes.data.data[right];
-        return lhs.value != rhs.value ? lhs.value > rhs.value : left < right;
+        return lhs.score() != rhs.score() ? lhs.score() > rhs.score() : left < right;
     });
     frame.next = 0;
     frame.branch = 0;
@@ -266,12 +266,14 @@ AnytimeSearch::Result AnytimeSearch::buildRoot(PositionState &state, Pool &pool,
     if (!config.fullAnalysis && cells == nullptr)
         pruneRoot(analyses, state, config.width[0], workspace);
     result.roots = pool.nodes.push_back();
+    pool.rootInfluences.resize(analyses.size);
     for (int i = 0; i < (int)analyses.size; ++i) {
         pool.nodes.push_back(result.roots, Pool::Node(analyses.data[i].cell, 0, false));
         Pool::Node &candidate = pool.nodes.data.data[result.roots.offset + i];
         candidate.root = true;
-        candidate.value = analyses.data[i].value;
+        candidate.value = analyses.data[i].value * analyses.data[i].influence;
         candidate.multiplier = analyses.data[i].multiplier;
+        pool.rootInfluences.data[i] = analyses.data[i].influence;
         candidate.finished = analyses.data[i].branches.count == 0;
     }
     for (int i = 0; i < (int)analyses.size; ++i)
@@ -337,11 +339,11 @@ void AnytimeSearch::extendPosition(PositionState &state, Pool &pool, int index, 
         pool.nodes.data.data[index].expandedDepth = depth;
         for (int i = 0; i < (int)analyses.size; ++i)
             appendBranches(pool, (int)candidates.offset + i, analyses.data[i], pool.branches);
-        long double best = 0.0L;
+        long double best = 0.0L, bestScore = 0.0L;
         bool allFinished = true;
         for (int i = 0; i < (int)candidates.count; ++i) {
             const Pool::Node &candidate = pool.nodes.data.data[candidates.offset + i];
-            if (i == 0 || candidate.value > best) best = candidate.value;
+            if (i == 0 || candidate.score() > bestScore) { best = candidate.value; bestScore = candidate.score(); }
             allFinished = allFinished && candidate.finished;
         }
         pool.nodes.data.data[index].value = best;
@@ -357,11 +359,11 @@ void AnytimeSearch::extendPosition(PositionState &state, Pool &pool, int index, 
         ++frame.next;
     }
     const vectorPool<Pool::Node>::vector children = pool.nodes.data.data[index].child;
-    long double best = 0.0L;
+    long double best = 0.0L, bestScore = 0.0L;
     bool allFinished = true;
     for (int i = 0; i < (int)children.count; ++i) {
         const Pool::Node &candidate = pool.nodes.data.data[children.offset + i];
-        if (i == 0 || candidate.value > best) best = candidate.value;
+        if (i == 0 || candidate.score() > bestScore) { best = candidate.value; bestScore = candidate.score(); }
         allFinished = allFinished && candidate.finished;
     }
     pool.nodes.data.data[index].value = best;
@@ -422,10 +424,8 @@ void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index,
             ObservedBoard::apply(state.board, transition.boardDelta, state.basicPool.board, true);
             if (!complete) return;
         }
-        long double weight = probability;
-        if (pool.nodes.data.data[index].root && !finished)
-            weight *= pool.nodes.data.data[index].multiplier;
-        frame.value += weight * value;
+        const long double influence = pool.nodes.data.data[index].root && !finished ? pool.rootInfluences.data[index] : 1.0L;
+        frame.value += probability * influence * value;
         frame.settled = frame.settled && finished;
         ++frame.branch;
         pool.nodes.data.data[branchIndex].value = value;
@@ -434,7 +434,7 @@ void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index,
     pool.nodes.data.data[index].value = frame.value;
     pool.nodes.data.data[index].finished = frame.settled;
     pool.nodes.data.data[index].expandedDepth = maxDepth;
-    if (pool.nodes.data.data[index].root && frame.settled)
+    if (frame.settled)
         pool.nodes.data.data[index].multiplier = 1.0L;
     frame.branch = 0;
     frame.value = 0.0L;

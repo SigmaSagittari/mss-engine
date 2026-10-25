@@ -44,7 +44,7 @@ template <bool Prune, bool RetainDeltas>
 JavaEval::Analysis JavaEval::javaLiteImpl(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, vectorPool<Branch> &branches, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int forcedSafes, bool safeSearch, span<const Peer> peers, long double floor, long double influence, SuggestResult::Details *details) {
     const long double candidates = state.probability.candidates;
     const long double mineProbability = observation.probability[9];
-    Analysis analysis(cell, 0.0L, 1.0L);
+    Analysis analysis(cell, 0.0L, 1.0L, influence);
     analysis.branches = branches.push_back();
     long double remainingSafety = 1.0L - mineProbability;
     analysis.node = 1;
@@ -127,9 +127,8 @@ JavaEval::Analysis JavaEval::javaLiteImpl(PositionState &state, const ShapeSolve
         }
     }
     analysis.hasAlternative = alternatives.size != 0;
-    // 与 1.5 相同，先合并乘数，再乘原始评分，避免分两次乘产生额外舍入。
-    analysis.multiplier = influence * (1.0L + (safeSearch ? 0.0L : progress * progressContribution));
-    analysis.value = value * analysis.multiplier;
+    analysis.multiplier = 1.0L + (safeSearch ? 0.0L : progress * progressContribution);
+    analysis.value = value;
     return analysis;
 }
 
@@ -171,7 +170,7 @@ SuggestResult JavaEval::analyze(PositionState &state, const ShapeSolverConfig &s
         }
         const Analysis analysis = pseudo ? javaLiteImpl<false, false>(state, shapeConfig, config.progressContribution, workspace, branches, cell, selected.observations.data[i], remainingSafe, forcedSafes, false, span<const Peer>(), -1.0L, 1.0L, details) : evaluate(state, shapeConfig, config, workspace, branches, selected.fiftyFifty, fiftyConfig, cell, selected.observations.data[i], remainingSafe, forcedSafes, span<const Peer>(), false, details);
         result.nodes += analysis.node;
-        result.candidates.push_back(SuggestResult::Candidate(cell, analysis.value));
+        result.candidates.push_back(SuggestResult::Candidate(cell, analysis.score()));
     }
     result.recommend();
     selected.swapStorage(workspace.selection);

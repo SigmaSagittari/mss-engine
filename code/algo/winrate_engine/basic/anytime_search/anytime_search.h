@@ -26,6 +26,7 @@ struct AnytimeSearch {
     struct Pool {
         struct Node {
             long double value;
+            // 推进奖励只参与选招，不进入 value 回传。
             long double multiplier;
             // 同一 Pool 内的子节点切片；扩容后 offset/count 仍有效。
             vectorPool<Node>::vector child;
@@ -45,9 +46,12 @@ struct AnytimeSearch {
                 if (position) transition = item;
                 else cell = item;
             }
+            long double score() const { return value * multiplier; }
         };
 
         vectorPool<Node> nodes;
+        // 根候选是 nodes 的首个切片；旧 LTR 乘数按根下标保存，内层节点不占存储。
+        vector<long double> rootInfluences;
         // 只有位置节点占用分支存储，候选节点不再携带 Delta 和结局概率。
         vector<JavaEval::Branch> transitions;
         // 仅当前路径持有游标；中断后按原顺序续算，不把搜索状态放进 Workspace。
