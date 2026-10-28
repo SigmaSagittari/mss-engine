@@ -1,0 +1,7 @@
+build-*/
+**/.vs/
+.tmp*/
+*.user
+*.suo
+*.log
+current-analysis-backup.json

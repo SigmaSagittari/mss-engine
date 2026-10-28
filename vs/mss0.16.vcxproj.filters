@@ -1,0 +1,379 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
+  <ItemGroup>
+    <Filter Include="algo">
+      <UniqueIdentifier>{91E509BB-8A79-4C9A-B2E9-8E5C884E3158}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\probability_engine">
+      <UniqueIdentifier>{02BAD26E-5226-43F3-802D-9B2AC2A5CDF5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\probability_engine\basic">
+      <UniqueIdentifier>{37201D9E-D59B-4F4F-906A-00E3756EB26D}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\probability_engine\observed_board">
+      <UniqueIdentifier>{2C17A80E-3F77-4328-A55E-11A9828429DD}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\probability_engine\probability">
+      <UniqueIdentifier>{EE0AD7FC-9EAE-43C9-BA0E-FA10DFC1D8D1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\probability_engine\shape_solver">
+      <UniqueIdentifier>{C3B949C1-B8FF-4A66-96F5-CCB2EDD491F5}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\probability_engine\shape_solver\graph_solver">
+      <UniqueIdentifier>{A05E9E70-A2B5-41EA-BE0D-71BE324CDA23}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\probability_engine\structure">
+      <UniqueIdentifier>{0696BA35-AC9A-4C44-A5FB-617539E7D0A1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\winrate_engine">
+      <UniqueIdentifier>{CCD93B4D-3F8A-4972-9021-600DE3CC2008}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\winrate_engine\selection">
+      <UniqueIdentifier>{E82AD98B-A1E7-4D12-B162-68A584985953}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\winrate_engine\basic\anytime_search">
+      <UniqueIdentifier>{8A8749E8-2BDB-416A-B0EA-00E7BEF1A7D8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\winrate_engine\bruteforce">
+      <UniqueIdentifier>{FE59AFAE-2F67-4789-8C47-2B3CD5060C58}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\winrate_engine\basic\java_eval">
+      <UniqueIdentifier>{1DC19A1B-17AD-4ECB-A40E-EF6C3F3F1415}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\winrate_engine\fifty_fifty\old_java">
+      <UniqueIdentifier>{3AC17A61-44FB-4BB2-A2DF-C09F7EFFC298}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\winrate_engine\fifty_fifty\templates">
+      <UniqueIdentifier>{5E450DAB-52B3-4D60-AED8-8879728FA55E}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\winrate_engine\monte_carlo">
+      <UniqueIdentifier>{8D178C82-90B6-4259-81E7-16E435E50469}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="core">
+      <UniqueIdentifier>{53348232-C395-4FBC-9D9A-40F6FFFD3FDB}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="core\algorithm">
+      <UniqueIdentifier>{BF749F53-692F-40EB-A3C0-F69D9CDB8091}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="core\datastructure">
+      <UniqueIdentifier>{1A176D8B-6CE2-4C41-B7A7-82B2EC888098}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="game">
+      <UniqueIdentifier>{12F7C34E-DBB8-4B93-AE00-DAB957E2552B}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ui">
+      <UniqueIdentifier>{FEF879E7-24C0-4113-811C-A7C39E6731B1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ui\internal">
+      <UniqueIdentifier>{F66B38BA-D7AA-41C2-A1C5-C34CA8817CD9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ui\web">
+      <UniqueIdentifier>{3FCE96F2-695E-4232-B5FE-0ED55E3547EC}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\code\algo\probability_engine\basic\basic.cpp">
+      <Filter>algo\probability_engine\basic</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\probability_engine\basic\basic.h">
+      <Filter>algo\probability_engine\basic</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\probability_engine\observed_board\observed_board.cpp">
+      <Filter>algo\probability_engine\observed_board</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\probability_engine\observed_board\observed_board.h">
+      <Filter>algo\probability_engine\observed_board</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\probability_engine\probability\observe.cpp">
+      <Filter>algo\probability_engine\probability</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\probability_engine\probability\observe.h">
+      <Filter>algo\probability_engine\probability</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\probability_engine\probability\probability.cpp">
+      <Filter>algo\probability_engine\probability</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\probability_engine\probability\probability.h">
+      <Filter>algo\probability_engine\probability</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\probability_engine\shape_solver\dfs_solver.cpp">
+      <Filter>algo\probability_engine\shape_solver</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\probability_engine\shape_solver\dfs_solver.h">
+      <Filter>algo\probability_engine\shape_solver</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\probability_engine\shape_solver\graph_solver\graph_solver.cpp">
+      <Filter>algo\probability_engine\shape_solver\graph_solver</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\probability_engine\shape_solver\graph_solver\graph_solver.h">
+      <Filter>algo\probability_engine\shape_solver\graph_solver</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\probability_engine\shape_solver\graph_solver\graph_step.cpp">
+      <Filter>algo\probability_engine\shape_solver\graph_solver</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\probability_engine\shape_solver\graph_solver\graph_step.h">
+      <Filter>algo\probability_engine\shape_solver\graph_solver</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\probability_engine\shape_solver\shape_solver_config.h">
+      <Filter>algo\probability_engine\shape_solver</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\probability_engine\shape_solver\shape_solver_type.h">
+      <Filter>algo\probability_engine\shape_solver</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\probability_engine\shape_solver\shape_solver.cpp">
+      <Filter>algo\probability_engine\shape_solver</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\probability_engine\shape_solver\shape_solver.h">
+      <Filter>algo\probability_engine\shape_solver</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\probability_engine\structure\structure.cpp">
+      <Filter>algo\probability_engine\structure</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\probability_engine\structure\structure.h">
+      <Filter>algo\probability_engine\structure</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\winrate_engine\basic\anytime_search\anytime_search.cpp">
+      <Filter>algo\winrate_engine\basic\anytime_search</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\winrate_engine\basic\anytime_search\anytime_search.h">
+      <Filter>algo\winrate_engine\basic\anytime_search</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\winrate_engine\bruteforce\bruteforce_multimask.cpp">
+      <Filter>algo\winrate_engine\bruteforce</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\winrate_engine\bruteforce\bruteforce_multimask.h">
+      <Filter>algo\winrate_engine\bruteforce</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\winrate_engine\bruteforce\bruteforce_normal.cpp">
+      <Filter>algo\winrate_engine\bruteforce</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\winrate_engine\bruteforce\bruteforce_normal.h">
+      <Filter>algo\winrate_engine\bruteforce</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\winrate_engine\bruteforce\bruteforce_type.h">
+      <Filter>algo\winrate_engine\bruteforce</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\winrate_engine\bruteforce\bruteforce.cpp">
+      <Filter>algo\winrate_engine\bruteforce</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\winrate_engine\bruteforce\bruteforce.h">
+      <Filter>algo\winrate_engine\bruteforce</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\winrate_engine\move_policy.cpp">
+      <Filter>algo\winrate_engine</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\winrate_engine\move_policy.h">
+      <Filter>algo\winrate_engine</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\winrate_engine\basic\java_eval\java_eval.cpp">
+      <Filter>algo\winrate_engine\basic\java_eval</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\winrate_engine\basic\java_eval\java_eval.h">
+      <Filter>algo\winrate_engine\basic\java_eval</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\winrate_engine\fifty_fifty\old_java\long_term_risk.cpp">
+      <Filter>algo\winrate_engine\fifty_fifty\old_java</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\old_java\long_term_risk.h">
+      <Filter>algo\winrate_engine\fifty_fifty\old_java</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\winrate_engine\monte_carlo\monte_carlo.cpp">
+      <Filter>algo\winrate_engine\monte_carlo</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\winrate_engine\monte_carlo\monte_carlo.h">
+      <Filter>algo\winrate_engine\monte_carlo</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\winrate_engine\fifty_fifty\old_java\semi.cpp">
+      <Filter>algo\winrate_engine\fifty_fifty\old_java</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\old_java\semi.h">
+      <Filter>algo\winrate_engine\fifty_fifty\old_java</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\winrate_engine\selection\selection.cpp">
+      <Filter>algo\winrate_engine\selection</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\winrate_engine\selection\selection.h">
+      <Filter>algo\winrate_engine\selection</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\algorithm\combination.h">
+      <Filter>core\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\algorithm\neighbors.h">
+      <Filter>core\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\algorithm\poly.h">
+      <Filter>core\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\algorithm\rng.h">
+      <Filter>core\algorithm</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\assert.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\config.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\datastructure\bit_mask.h">
+      <Filter>core\datastructure</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\datastructure\dynamic_bitset.h">
+      <Filter>core\datastructure</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\datastructure\flat_hashtable.h">
+      <Filter>core\datastructure</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\datastructure\grid.h">
+      <Filter>core\datastructure</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\datastructure\hash.h">
+      <Filter>core\datastructure</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\datastructure\span.h">
+      <Filter>core\datastructure</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\datastructure\vector_pool.h">
+      <Filter>core\datastructure</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\datastructure\vector.h">
+      <Filter>core\datastructure</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\core\workspace.h">
+      <Filter>core</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\game\game_control.cpp">
+      <Filter>game</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\game\game_control.h">
+      <Filter>game</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\game\game.cpp">
+      <Filter>game</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\game\game.h">
+      <Filter>game</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\game\position_state.cpp">
+      <Filter>game</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\game\position_state.h">
+      <Filter>game</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\game\position.cpp">
+      <Filter>game</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\game\position.h">
+      <Filter>game</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\main.cpp" />
+    <ClCompile Include="..\code\ui\http_server.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\ui\internal\http_server.h">
+      <Filter>ui\internal</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\ui\internal\session.h">
+      <Filter>ui\internal</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\ui\session.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\ui\ui.cpp">
+      <Filter>ui</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\ui\ui.h">
+      <Filter>ui</Filter>
+    </ClInclude>
+    <None Include="..\code\ui\web\analysis.js">
+      <Filter>ui\web</Filter>
+    </None>
+    <None Include="..\code\ui\web\anytime_search.js">
+      <Filter>ui\web</Filter>
+    </None>
+    <None Include="..\code\ui\web\game.js">
+      <Filter>ui\web</Filter>
+    </None>
+    <None Include="..\code\ui\web\index.html">
+      <Filter>ui\web</Filter>
+    </None>
+    <None Include="..\code\ui\web\main.js">
+      <Filter>ui\web</Filter>
+    </None>
+    <None Include="..\code\ui\web\monte_carlo.js">
+      <Filter>ui\web</Filter>
+    </None>
+    <None Include="..\code\ui\web\state.js">
+      <Filter>ui\web</Filter>
+    </None>
+    <None Include="..\code\ui\web\style.css">
+      <Filter>ui\web</Filter>
+    </None>
+    <None Include="..\code\ui\web\view.js">
+      <Filter>ui\web</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\code\algo\winrate_engine\basic\lowrisk\lowrisk.cpp">
+      <Filter>algo\winrate_engine\basic\lowrisk</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\winrate_engine\fifty_fifty\fifty_fifty.cpp">
+      <Filter>algo\winrate_engine\fifty_fifty</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\winrate_engine\fifty_fifty\templates\long_term_risk.cpp">
+      <Filter>algo\winrate_engine\fifty_fifty\templates</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\winrate_engine\basic\lowrisk\lowrisk.h">
+      <Filter>algo\winrate_engine\basic\lowrisk</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\fifty_fifty.h">
+      <Filter>algo\winrate_engine\fifty_fifty</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\templates\template_data.h">
+      <Filter>algo\winrate_engine\fifty_fifty\templates</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\templates\long_term_risk.h">
+      <Filter>algo\winrate_engine\fifty_fifty\templates</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\winrate_engine\result_type.h">
+      <Filter>algo\winrate_engine</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="algo\winrate_engine\basic\lowrisk">
+      <UniqueIdentifier>{03C7205C-FC02-59C2-8EC2-1E2111A12247}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="algo\winrate_engine\fifty_fifty">
+      <UniqueIdentifier>{CA626093-6A0F-54E3-B606-9603957927F8}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="algo\winrate_engine\basic">
+      <UniqueIdentifier>{44EBEC9E-94AB-5A04-86C1-04F26EA406A9}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\code\test\common.h">
+      <Filter>test</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\test\cases.h">
+      <Filter>test</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\test\harness.h">
+      <Filter>test</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\test\benchmark\performance.h">
+      <Filter>test\benchmark</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="test">
+      <UniqueIdentifier>{C92FC496-145B-42E1-9DE8-EEACF91DA83C}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="test\benchmark">
+      <UniqueIdentifier>{3345C6D7-DDA6-460C-9B4B-098D5B7F85D5}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\code\algo\winrate_engine\fifty_fifty\templates\semi.cpp"><Filter>algo\winrate_engine\fifty_fifty\templates</Filter></ClCompile>
+    <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\templates\semi.h"><Filter>algo\winrate_engine\fifty_fifty\templates</Filter></ClInclude>
+  </ItemGroup>
+</Project>
