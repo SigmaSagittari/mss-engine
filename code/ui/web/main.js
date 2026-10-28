@@ -44,10 +44,6 @@ document.getElementById("open-settings").addEventListener("click", () => {
     settingsDialog.showModal();
 });
 document.getElementById("close-settings").addEventListener("click", () => settingsDialog.close());
-document.getElementById("export-json").addEventListener("click", () => {
-    boardStringInput.value = currentBoardString();
-    boardExportStatus.textContent = "已导出 JSON。";
-});
 document.getElementById("export-davidnhill").addEventListener("click", () => {
     const board = JSON.parse(currentBoardString());
     const lines = [`${board.cols}x${board.rows}x${board.mines}`];
