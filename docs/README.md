@@ -11,7 +11,6 @@
 | `probability_engine` 的模块形状与落点 | [probability_engine.md](prompts/probability_engine.md) |
 | 运行、超时、benchmark、下载 | [operations.md](prompts/operations.md) |
 | 待办 | [TODO.md](../TODO.md) |
-| 1.5 外壳重构草案（1.5 已归档，仅历史参考） | [REFACTOR_ARCHITECTURE.md](architecture/REFACTOR_ARCHITECTURE.md) |
 
 一条规则只写在归属文档里，其他文档只引用、不复制。引用与归属文档不一致时，以归属文档为准，并把引用改回去。
 

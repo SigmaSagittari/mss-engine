@@ -22,4 +22,4 @@
   - 固定 k 后重建 Basic、Structure、Probability 和 LongTermRisk；先识别该档的条件必安格与完成态，再对需要猜测的档按局部 `ways` 选择暴力或 JavaEval。明确各档结果如何保存必安格及完成态。
   - 核验单档、多档、纯 T 块、固定 k 后出现必安、剩余格全雷及 CellId 映射；保留各档原始结果，跨档汇总与总推荐另行研究，不直接照搬 1.4 按已知 k 求解后加权的 Recommendation。
 
-架构参考：[REFACTOR_ARCHITECTURE.md](docs/architecture/REFACTOR_ARCHITECTURE.md)（1.5 草案，只取结构思路，不取文件树和 API）。其中旧的全局 Config 传参方式、测试拆成 cpp、首步处理及 Game API 草图已有部分被后续约定替代；以当前源码、用户明确约定及 [共享编码与审查 Prompt](docs/prompts/CODE_REVIEW_PROMPT.md) 为准，不照搬过时草图。
+以上条目沿用 1.5 时期的草案思路；旧的全局 Config 传参方式、测试拆成 cpp、首步处理及 Game API 草图已被后续约定替代，以当前源码、用户明确约定及 [共享编码与审查 Prompt](docs/prompts/CODE_REVIEW_PROMPT.md) 为准，不照搬过时草图。
