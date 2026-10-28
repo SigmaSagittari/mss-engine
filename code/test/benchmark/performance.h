@@ -43,8 +43,8 @@ inline void performance(const Config &config, const mss::MovePolicy &policy) {
     std::cout << std::fixed << std::setprecision(3) << name << " version=" << mss::version << " threads=" << config.threads << ' ' << config.cols << 'x' << config.rows << " mines=" << config.mines << " seed=" << seed.lo << ',' << seed.hi << " time_limit=" << config.time << " games_limit=" << config.games;
     if (policy.basic.algorithm == mss::MovePolicy::Basic::Algorithm::Anytime) std::cout << " node_budget=" << policy.basic.anytime->nodeLimit;
     if (policy.basic.algorithm != mss::MovePolicy::Basic::Algorithm::LowRisk) {
-        std::cout << " fifty_fifty=" << (policy.fiftyFifty.algorithm == mss::MovePolicy::FiftyFifty::Algorithm::OldJava ? "OldJava" : "Templates");
-        if (policy.fiftyFifty.algorithm == mss::MovePolicy::FiftyFifty::Algorithm::Templates) std::cout << " prefix=" << policy.fiftyFifty.templates->prefix;
+        std::cout << " fifty_fifty=" << (policy.fiftyFifty.algorithm == mss::FiftyFifty::Algorithm::OldJava ? "OldJava" : "Templates");
+        if (policy.fiftyFifty.algorithm == mss::FiftyFifty::Algorithm::Templates) std::cout << " prefix=" << policy.fiftyFifty.templates->prefix;
     }
     std::cout << " brute_limit=" << policy.brute.limit << " stop=" << (games == config.games ? "games_limit" : "time_limit") << " games=" << games << " wins=" << wins << " losses=" << games - wins << " elapsed=" << elapsed << " games/s=" << games / elapsed << " winrate=" << 100.0L * wins / games << "%\n" << std::flush;
 }

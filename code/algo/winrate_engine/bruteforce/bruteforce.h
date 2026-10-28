@@ -28,7 +28,7 @@ struct BruteForce {
     };
 
     // 引用成员：本 Workspace 必须严格短命于 shapeSolver，声明顺序由上层保证。
-    // Session 由 solve 局部持有并显式传给后端，不经过 Workspace。
+    // Session 由 solve 局部持有并显式传给后端；Session 的数组直接引用本 Workspace 的存储。
     struct Workspace {
         ShapeSolver::Workspace &shapeSolver;
         Build buildStorage;
@@ -37,7 +37,6 @@ struct BruteForce {
         Grid<BruteForceType::CandidateId> mineCandidateIds;
         vector<std::uint64_t> configHashes;
 
-        void swapSessionStorage(BruteForceType::Session &session);
         BruteForceNormal::Workspace normal;
         BruteForceMultimask::Workspace multimask;
 

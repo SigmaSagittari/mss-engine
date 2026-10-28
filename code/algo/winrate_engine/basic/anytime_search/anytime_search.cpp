@@ -28,10 +28,15 @@ void AnytimeSearch::countSafe(const PositionState &state, int &remainingSafe, in
 
 ObservedBoard::CellId AnytimeSearch::Result::recommended(const Pool &pool) const {
     const Pool::Node *best = nullptr;
+    long double bestScore = 0.0L;
     for (int i = 0; i < (int)roots.count; ++i) {
-        const Pool::Node &candidate = pool.nodes.data.data[roots.offset + i];
-        if (best == nullptr || candidate.expandedDepth > best->expandedDepth || (candidate.expandedDepth == best->expandedDepth && candidate.score() > best->score()))
+        const int index = (int)roots.offset + i;
+        const Pool::Node &candidate = pool.nodes.data.data[index];
+        const long double score = pool.score(index);
+        if (best == nullptr || candidate.expandedDepth > best->expandedDepth || (candidate.expandedDepth == best->expandedDepth && score > bestScore)) {
             best = &candidate;
+            bestScore = score;
+        }
     }
     return best != nullptr ? best->cell : -1;
 }
@@ -41,7 +46,7 @@ SuggestResult AnytimeSearch::Result::snapshot(const Pool &pool) const {
     result.nodes = nodes;
     for (int i = 0; i < (int)roots.count; ++i) {
         const Pool::Node &candidate = pool.nodes.data.data[roots.offset + i];
-        result.candidates.push_back(SuggestResult::Candidate(candidate.cell, candidate.value));
+        result.candidates.push_back(SuggestResult::Candidate(candidate.cell, pool.score((int)roots.offset + i)));
     }
     const ObservedBoard::CellId cell = recommended(pool);
     if (cell >= 0) result.suggest.push_back(cell);
@@ -52,6 +57,8 @@ void AnytimeSearch::selectRoot(Result &result, PositionState &state, Pool &pool,
     Selection::Result &selected = pool.selected;
     const Selection::Result::Source source = Selection::find(state, shapeConfig, config.javaEval.selection, fiftyConfig, fiftyPool, selected, workspace.javaEval.selection, true, cells);
     result.nodes += Selection::removeDead(selected, source, state, shapeConfig, workspace.javaEval.probability);
+    if (source != Selection::Result::Source::Forced && source != Selection::Result::Source::Semi && selected.cells.size != 0 && (fiftyConfig.algorithm == FiftyFifty::Algorithm::Templates || source == Selection::Result::Source::Specified))
+        FiftyFifty::prepareRisk(selected.fiftyFifty, state, shapeConfig, fiftyConfig, fiftyPool, workspace.javaEval.selection.fiftyFifty, false);
     int remaining = 0, forced = 0;
     countSafe(state, remaining, forced);
     Selection::Config selectionConfig = config.javaEval.selection;
@@ -64,11 +71,11 @@ void AnytimeSearch::selectRoot(Result &result, PositionState &state, Pool &pool,
         const ObservedBoard::CellId cell = selected.cells.data[i];
         const Observe::Result &observation = selected.observations.data[i];
         const bool isSafeMove = observation.probability[9] == 0.0L;
-        const bool pseudo = source == Selection::Result::Source::Forced || source == Selection::Result::Source::Semi;
+        const bool semi = source == Selection::Result::Source::Forced || source == Selection::Result::Source::Semi;
         if (!Selection::prepare(selected, i, state, shapeConfig, selectionConfig, remaining, forced, isSafeMove, result.nodes, workspace.javaEval.selection))
             continue;
         const int linkedClears = selected.prepared.data[selected.prepared.size - 1].linkedClears;
-        const JavaEval::Result evaluated = isSafeMove || pseudo ? JavaEval::javaLite(state, shapeConfig, config.javaEval.progressContribution, workspace.javaEval, pool.pendingDeltas, cell, observation, remaining, linkedClears, isSafeMove, -1.0L, details) : JavaEval::evaluate(state, shapeConfig, config.javaEval, workspace.javaEval, pool.pendingDeltas, selected.fiftyFifty, cell, observation, remaining, linkedClears, true, details);
+        const JavaEval::Result evaluated = isSafeMove || semi ? JavaEval::javaLite(state, shapeConfig, config.javaEval.progressContribution, workspace.javaEval, pool.pendingDeltas, cell, observation, remaining, linkedClears, isSafeMove, -1.0L, details) : JavaEval::evaluate(state, shapeConfig, config.javaEval, fiftyConfig, workspace.javaEval, pool.pendingDeltas, selected.fiftyFifty, cell, observation, remaining, linkedClears, true, details);
         result.nodes += evaluated.nodes;
         evaluatedMoves.push_back(evaluated);
     }
@@ -145,8 +152,7 @@ void AnytimeSearch::orderMoves(Pool &pool, vectorPool<Pool::Node>::vector childr
     for (int i = 0; i < (int)children.count; ++i)
         frame.order.data[i] = (int)children.offset + i;
     std::sort(frame.order.data, frame.order.data + frame.order.size, [&](int left, int right) {
-        const Pool::Node &lhs = pool.nodes.data.data[left], &rhs = pool.nodes.data.data[right];
-        return lhs.score() != rhs.score() ? lhs.score() > rhs.score() : left < right;
+        return pool.score(left) != pool.score(right) ? pool.score(left) > pool.score(right) : left < right;
     });
     frame.next = 0;
     frame.nextOutcome = 0;
@@ -181,15 +187,15 @@ AnytimeSearch::Result AnytimeSearch::buildRoot(PositionState &state, Pool &pool,
         if (config.width[0] > 0 && (int)evaluatedMoves.size > config.width[0]) evaluatedMoves.size = config.width[0];
     }
     result.roots = pool.nodes.push_back();
-    pool.rootRiskMultipliers.resize(evaluatedMoves.size);
+    pool.rootCompensations.resize((int)result.roots.offset + evaluatedMoves.size);
     for (int i = 0; i < (int)evaluatedMoves.size; ++i) {
         pool.nodes.push_back(result.roots, Pool::Node(evaluatedMoves.data[i].cell, 0, false));
         Pool::Node &candidate = pool.nodes.data.data[result.roots.offset + i];
         candidate.root = true;
-        candidate.value = evaluatedMoves.data[i].value * evaluatedMoves.data[i].riskMultiplier;
+        candidate.value = evaluatedMoves.data[i].value;
         candidate.progressMultiplier = evaluatedMoves.data[i].progressMultiplier;
-        pool.rootRiskMultipliers.data[i] = evaluatedMoves.data[i].riskMultiplier;
         candidate.finished = evaluatedMoves.data[i].deltas.count == 0;
+        pool.rootCompensations.data[result.roots.offset + i] = candidate.finished ? 0.0L : evaluatedMoves.data[i].compensation;
     }
     for (int i = 0; i < (int)evaluatedMoves.size; ++i)
         appendDeltas(pool, (int)result.roots.offset + i, evaluatedMoves.data[i], pool.pendingDeltas);
@@ -216,7 +222,7 @@ long long AnytimeSearch::extend(Result &result, PositionState &state, Pool &pool
             int branch = 0;
             for (int i = 0; i < (int)details->outcomes.size; ++i)
                 if (details->outcomes.data[i].cell == candidate.cell) details->outcomes.data[i].value = pool.nodes.data.data[candidate.child.offset + branch++].value;
-            details->history.push_back(SuggestResult::Details::Layer(candidate.cell, maxDepth, candidate.value));
+            details->history.push_back(SuggestResult::Details::Layer(candidate.cell, maxDepth, pool.score(index)));
         }
         ++frame.next;
     }
@@ -347,8 +353,7 @@ void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index,
             ObservedBoard::apply(state.board, delta.boardDelta, state.basicPool.board, true);
             if (!complete) return;
         }
-        const long double influence = pool.nodes.data.data[index].root && !finished ? pool.rootRiskMultipliers.data[index] : 1.0L;
-        frame.value += probability * influence * value;
+        frame.value += probability * value;
         frame.settled = frame.settled && finished;
         ++frame.nextOutcome;
         pool.nodes.data.data[branchIndex].value = value;
@@ -357,8 +362,10 @@ void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index,
     pool.nodes.data.data[index].value = frame.value;
     pool.nodes.data.data[index].finished = frame.settled;
     pool.nodes.data.data[index].expandedDepth = maxDepth;
-    if (pool.nodes.data.data[index].root && frame.settled)
+    if (pool.nodes.data.data[index].root && frame.settled) {
         pool.nodes.data.data[index].progressMultiplier = 1.0L;
+        pool.rootCompensations.data[index] = 0.0L;
+    }
     frame.nextOutcome = 0;
     frame.value = 0.0L;
     frame.settled = true;
@@ -370,7 +377,7 @@ AnytimeSearch::Result AnytimeSearch::analyze(PositionState &state, Pool &pool, c
     if (details)
         for (int i = 0; i < (int)result.roots.count; ++i) {
             const Pool::Node &candidate = pool.nodes.data.data[result.roots.offset + i];
-            details->history.push_back(SuggestResult::Details::Layer(candidate.cell, 0, candidate.value));
+            details->history.push_back(SuggestResult::Details::Layer(candidate.cell, 0, pool.score((int)result.roots.offset + i)));
         }
     update(result, state, pool, shapeConfig, config, fiftyConfig, fiftyPool, workspace, details);
     return result;

@@ -3,7 +3,7 @@
 #include "core/datastructure/grid.h"
 #include "core/datastructure/span.h"
 #include "core/datastructure/vector.h"
-#include "algo/winrate_engine/fifty_fifty/old_java/pseudo.h"
+#include "algo/winrate_engine/fifty_fifty/old_java/semi.h"
 #include "game/position_state.h"
 
 namespace mss {
@@ -26,8 +26,6 @@ struct LongTermRisk {
     };
     struct Result {
         Grid<long double> influences; // [行][列] 的扫描补偿布局数；不是百分比。
-        // 交换闲置存储；交换后必须 update 再查询，工作区不保留有效结果。
-        void swapStorage(Workspace &workspace);
 
       private:
         friend struct LongTermRisk;
@@ -52,10 +50,10 @@ struct LongTermRisk {
         Grid<unsigned char> readyStorage;
     };
 
-    // dead 使用同盘面编号；pseudo 非空时补找已成立的死猜，并在找到首组时停止扫描。
-    static Result analyze(PositionState &state, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Pseudo::Result *pseudo);
+    // dead 使用同盘面编号；semi 非空时补找已成立的死猜，并在找到首组时停止扫描。
+    static Result analyze(PositionState &state, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Semi::Result *semi);
     // 全盘覆写 Result；同一 Workspace 串行复用。
-    static void update(Result &result, PositionState &state, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Pseudo::Result *pseudo, Details *details = nullptr);
+    static void update(Result &result, PositionState &state, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Semi::Result *semi, Details *details = nullptr);
     // 单格查询返回补偿布局数；full 必须来自同一 state，工作区可替换或复用。
     static long double influence(ObservedBoard::CellId cell, PositionState &state, Result &full, const ShapeSolverConfig &shapeConfig, Workspace &workspace, Details *details = nullptr);
     // 仅详情查询调用；cell 的雷率必须大于 0，返回假设该格为雷后的单模板命中概率。
@@ -83,7 +81,9 @@ struct LongTermRisk {
 
     static long double boxTally(ObservedBoard::CellId cell, const PositionState &state);
     static long double countWithForces(PositionState &state, span<const ObservedBoard::CellId> mines, span<const ObservedBoard::CellId> safes, const ShapeSolverConfig &shapeConfig, Workspace &workspace);
-    static long double candidateTally(PositionState &state, span<const ObservedBoard::CellId> tiles, span<const CellPosition> source, int mineCount, int maxMissing, int minesLeft, const ShapeSolverConfig &shapeConfig, TallyKind kind, ObservedBoard::CellId cacheCell, Result &result, Workspace &workspace);
+    static long double candidateTally(PositionState &state, span<const ObservedBoard::CellId> tiles, span<const CellPosition> source, int mineCount, int maxMissing, int minesLeft, const ShapeSolverConfig &shapeConfig, TallyKind kind, ObservedBoard::CellId cacheCell, Grid<long double> &values, Grid<unsigned char> &ready, Workspace &workspace);
+    static void update(Grid<long double> &influences, vector<long double> &enablers, Grid<long double> &values, Grid<unsigned char> &ready, PositionState &state, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Semi::Result *semi, Details *details);
+    static long double influence(ObservedBoard::CellId cell, PositionState &state, const vector<long double> &enablers, Grid<long double> &values, Grid<unsigned char> &ready, const ShapeSolverConfig &shapeConfig, Workspace &workspace, Details *details);
     static bool hasSafeSource(const ObservedBoard::Result &board, span<const CellPosition> source);
     static bool contains(span<const ObservedBoard::CellId> cells, ObservedBoard::CellId cell);
     static CellList missingMines(const PositionState &state, span<const CellPosition> source);

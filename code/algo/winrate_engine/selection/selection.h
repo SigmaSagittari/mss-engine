@@ -79,8 +79,8 @@ struct Selection {
         Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) : fiftyFifty(basic, structure, probability), basic(basic), structure(structure), probability(probability), visit(0) {}
     };
 
-    // useRisk=true 为根层，安全格已由 Position::suggest 处理；内层先取安全格，再检测 Pseudo。
-    // Pseudo 命中即返回，未命中才按 useRisk 计算长期风险并筛选。
+    // useRisk=true 为根层，安全格已由 Position::suggest 处理；内层先取安全格，再检测 Semi。
+    // Semi 命中即返回；OldJava 未命中时 useRisk 准备其 LTR 供候选筛选；Templates 不调用旧路线。
     // cells 非空指针表示显式候选，保持输入顺序；格子必须互异且未揭开，空 vector 表示不搜索。
     // 返回本次实际来源；这里只生成候选，removeDead 单独准备观测，显式候选不删减。
     static Result::Source find(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, Workspace &workspace, bool useRisk, const vector<ObservedBoard::CellId> *cells = nullptr);

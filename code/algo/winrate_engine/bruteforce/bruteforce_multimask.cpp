@@ -49,43 +49,30 @@ template <typename Mask> static vector<Mask> &maskStorage(BruteForceMultimask::W
 }
 
 template <typename Mask> struct MaskLayout {
-    vector<Mask> mineMaskByConfig;
-    Grid<std::uint64_t> mineByteWordsByConfig;
-    Grid<std::uint8_t> revealByConfig;
+    vector<Mask> &mineMaskByConfig;
+    Grid<std::uint64_t> &mineByteWordsByConfig;
+    Grid<std::uint8_t> &revealByConfig;
 
-    void swapStorage(BruteForceMultimask::Workspace &workspace) {
-        mineMaskByConfig.swap(maskStorage<Mask>(workspace));
-        mineByteWordsByConfig.swap(workspace.mineByteWords);
-        revealByConfig.swap(workspace.reveals);
-    }
+    MaskLayout(vector<Mask> &mineMaskByConfig, Grid<std::uint64_t> &mineByteWordsByConfig, Grid<std::uint8_t> &revealByConfig) : mineMaskByConfig(mineMaskByConfig), mineByteWordsByConfig(mineByteWordsByConfig), revealByConfig(revealByConfig) {}
 };
 
-// 一次根并行拥有候选顺序、汇总数据和共享缓存；返回时仅把空闲存储还给工作区。
+// 一次根并行直接读写工作区中的候选顺序、汇总数组和共享缓存。
 struct ParallelState {
-    BruteForceMultimask::Workspace &storage;
-    vector<int> order, deaths, uppers;
-    vector<long long> nodes;
+    vector<int> &order, &deaths, &uppers;
+    vector<long long> &nodes;
     BruteForceMultimask::ParallelCache cache;
 
-    explicit ParallelState(BruteForceMultimask::Workspace &storage) : storage(storage) { swapStorage(); }
-    ~ParallelState() { cache.reset(); swapStorage(); }
-    void swapStorage() {
-        order.swap(storage.order);
-        deaths.swap(storage.deaths);
-        uppers.swap(storage.uppers);
-        nodes.swap(storage.nodes);
-        for (int i = 0; i < 256; ++i) std::swap(cache.shards[i].table, storage.sharedStorage[i]);
-    }
+    ParallelState(vector<int> &order, vector<int> &deaths, vector<int> &uppers, vector<long long> &nodes, FlatHashTable<U128, int, U128Hash> (&sharedStorage)[256]) : order(order), deaths(deaths), uppers(uppers), nodes(nodes), cache(sharedStorage) {}
+    ~ParallelState() { cache.reset(); }
 };
 
-BruteForceMultimask::Worker::Worker(Scratch &scratch, ParallelCache *sharedCache) : scratch(scratch), sharedCache(sharedCache) {
+BruteForceMultimask::Worker::Worker(Scratch &scratch, ParallelCache *sharedCache) : scratch(scratch), cache(scratch.cacheStorage), sharedCache(sharedCache) {
     scratch.reset();
-    std::swap(cache, scratch.cacheStorage);
+    cache.clear();
 }
 
 BruteForceMultimask::Worker::~Worker() {
     cache.clear();
-    std::swap(cache, scratch.cacheStorage);
 }
 
 template <typename Mask> struct MaskSession {
@@ -553,8 +540,10 @@ template <typename Mask> static void solveWidth(const BruteForceType::Session &c
         solveWidthParallel<Mask>(common, config, result, workspace);
         return;
     }
-    MaskLayout<Mask> layout;
-    layout.swapStorage(workspace);
+    vector<Mask> &mineMaskByConfig = maskStorage<Mask>(workspace);
+    Grid<std::uint64_t> &mineByteWordsByConfig = workspace.mineByteWords;
+    Grid<std::uint8_t> &revealByConfig = workspace.reveals;
+    MaskLayout<Mask> layout(mineMaskByConfig, mineByteWordsByConfig, revealByConfig);
     MaskSolver<Mask>::buildLayout(common, layout);
     workspace.configIds.resize(common.possibilityCount);
     for (int configIndex = 0; configIndex < common.possibilityCount; ++configIndex)
@@ -578,18 +567,24 @@ template <typename Mask> static void solveWidth(const BruteForceType::Session &c
         }
     }
     result.nodes = session.nodes;
-    layout.swapStorage(workspace);
 }
 
 template <typename Mask> static void solveWidthParallel(const BruteForceType::Session &common, const BruteForceType::Config &config, BruteForceType::Result &result, BruteForceMultimask::Workspace &workspace) {
-    MaskLayout<Mask> layout;
-    layout.swapStorage(workspace);
+    vector<Mask> &mineMaskByConfig = maskStorage<Mask>(workspace);
+    Grid<std::uint64_t> &mineByteWordsByConfig = workspace.mineByteWords;
+    Grid<std::uint8_t> &revealByConfig = workspace.reveals;
+    MaskLayout<Mask> layout(mineMaskByConfig, mineByteWordsByConfig, revealByConfig);
     MaskSolver<Mask>::buildLayout(common, layout);
     workspace.configIds.resize(common.possibilityCount);
     for (int configIndex = 0; configIndex < common.possibilityCount; ++configIndex)
         workspace.configIds.data[configIndex] = configIndex;
     MaskSession<Mask> rootSession(common, layout, Mask::all(common.candidateCount));
-    ParallelState parallel(workspace);
+    vector<int> &order = workspace.order;
+    vector<int> &deaths = workspace.deaths;
+    vector<int> &uppers = workspace.uppers;
+    vector<long long> &nodes = workspace.nodes;
+    FlatHashTable<U128, int, U128Hash> (&sharedStorage)[256] = workspace.sharedStorage;
+    ParallelState parallel(order, deaths, uppers, nodes, sharedStorage);
     if (workspace.workers.empty()) workspace.workers.emplace_back();
     {
         BruteForceMultimask::Worker root(workspace.workers[0], nullptr);
@@ -599,7 +594,6 @@ template <typename Mask> static void solveWidthParallel(const BruteForceType::Se
     }
     const int candidateCount = (int)parallel.order.size;
     if (candidateCount == 0) {
-        layout.swapStorage(workspace);
         solveWidth<Mask>(common, config, result, workspace, false);
         return;
     }
@@ -607,7 +601,6 @@ template <typename Mask> static void solveWidthParallel(const BruteForceType::Se
     if (threadCount < 1)
         threadCount = 1;
     if (threadCount == 1) {
-        layout.swapStorage(workspace);
         solveWidth<Mask>(common, config, result, workspace, false);
         return;
     }
@@ -718,25 +711,26 @@ template <typename Mask> static void solveWidthParallel(const BruteForceType::Se
         } else
             result.moves.data[0] = BruteForceType::Result::Move(-1, 0);
     }
-    layout.swapStorage(workspace);
 }
 
 void BruteForceMultimask::ParallelCache::reset() {
     for (int i = 0; i < 256; ++i)
-        shards[i].table.clear();
+        storage[i].clear();
 }
 
 int BruteForceMultimask::ParallelCache::find(const U128 &key) {
-    CacheShard &shard = shards[key.lo % 256];
+    const int shardIndex = (int)(key.lo % 256);
+    CacheShard &shard = shards[shardIndex];
     std::lock_guard<std::mutex> lock(shard.mutex);
-    const int *value = shard.table.find(key);
+    const int *value = storage[shardIndex].find(key);
     return value == nullptr ? 0 : *value;
 }
 
 void BruteForceMultimask::ParallelCache::store(const U128 &key, int value) {
-    CacheShard &shard = shards[key.lo % 256];
+    const int shardIndex = (int)(key.lo % 256);
+    CacheShard &shard = shards[shardIndex];
     std::lock_guard<std::mutex> lock(shard.mutex);
-    int &old = shard.table[key];
+    int &old = storage[shardIndex][key];
     if (old == 0 || value > 0 || (old < 0 && value > old))
         old = value;
 }

@@ -30,19 +30,13 @@ static void saveFail(const U128 &key, int upper, int count, FlatHashTable<U128, 
 
 struct NormalSolver {
     struct State {
-        Grid<std::uint8_t> mineByConfig;
-        Grid<std::uint8_t> revealByConfig;
-        DynamicBitset unopenedCandidates;
-        FlatHashTable<U128, int, U128Hash> cache;
+        Grid<std::uint8_t> &mineByConfig;
+        Grid<std::uint8_t> &revealByConfig;
+        DynamicBitset &unopenedCandidates;
+        FlatHashTable<U128, int, U128Hash> &cache;
         long long nodes;
 
-        State() : nodes(0) {}
-        void swapStorage(BruteForceNormal::Workspace &workspace) {
-            mineByConfig.swap(workspace.mineByConfig);
-            revealByConfig.swap(workspace.revealByConfig);
-            unopenedCandidates.swap(workspace.unopenedStorage);
-            std::swap(cache, workspace.cacheStorage);
-        }
+        State(Grid<std::uint8_t> &mineByConfig, Grid<std::uint8_t> &revealByConfig, DynamicBitset &unopenedCandidates, FlatHashTable<U128, int, U128Hash> &cache) : mineByConfig(mineByConfig), revealByConfig(revealByConfig), unopenedCandidates(unopenedCandidates), cache(cache), nodes(0) {}
     };
 
     template <bool CheckAllMoves, bool IsRoot>
@@ -318,8 +312,11 @@ void BruteForceNormal::Workspace::reset() {
 }
 
 void BruteForceNormal::solve(const BruteForceType::Session &session, const BruteForceType::Config &config, BruteForceType::Result &result, Workspace &workspace) {
-    NormalSolver::State state;
-    state.swapStorage(workspace);
+    Grid<std::uint8_t> &mineByConfig = workspace.mineByConfig;
+    Grid<std::uint8_t> &revealByConfig = workspace.revealByConfig;
+    DynamicBitset &unopenedCandidates = workspace.unopenedStorage;
+    FlatHashTable<U128, int, U128Hash> &cache = workspace.cacheStorage;
+    NormalSolver::State state(mineByConfig, revealByConfig, unopenedCandidates, cache);
     state.mineByConfig.resize(session.possibilityCount, session.candidateCount, 0);
     for (int configIndex = 0; configIndex < session.possibilityCount; ++configIndex)
         for (int i = 0; i < session.minesPerConfig; ++i)
@@ -355,7 +352,6 @@ void BruteForceNormal::solve(const BruteForceType::Session &session, const Brute
     }
     result.nodes = state.nodes;
     state.cache.clear();
-    state.swapStorage(workspace);
 }
 
 } // 命名空间 mss

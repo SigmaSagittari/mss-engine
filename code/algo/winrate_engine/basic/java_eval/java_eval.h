@@ -15,7 +15,7 @@ struct JavaEval {
         Selection::Config selection;
         // 额外揭出必安格的奖励系数；只参与选招，不随 Anytime 的 value 向上累加。
         long double progressContribution;
-        // 旧版长期风险补偿的权重；只在根层的 evaluate 中使用。
+        // 根层长期风险加法补偿系数；只在根层的 evaluate 中使用。
         long double influenceScale;
 
         Config(Selection::Config selection, long double progressContribution, long double influenceScale) : selection(selection), progressContribution(progressContribution), influenceScale(influenceScale) {}
@@ -41,10 +41,10 @@ struct JavaEval {
     // 单格评分；与整次推荐使用的 SuggestResult 分开。
     struct Result {
         ObservedBoard::CellId cell;
-        // 各数字后续评分的概率加权和，不含推进奖励和长期风险。
+        // 各数字后续评分的概率加权和，不含推进奖励和根层补偿。
         long double value;
         long double progressMultiplier; // 推进奖励乘数，必安格固定为 1。
-        long double riskMultiplier; // 根层旧 LTR 乘数，树内固定为 1。
+        long double compensation; // 根层长期风险加法补偿，树内固定为 0。
         // 各数字结局在调用方 Delta 池中的切片；池退尾或清空后失效。
         vectorPool<Delta>::vector deltas;
         // 实际展开的数字结局数，每个结局调用一次全盘概率分析；安全假设和 Observe 由 Selection 另计。
@@ -52,9 +52,9 @@ struct JavaEval {
         // false：算到一半已低于 floor，value 不是完整评分，调用方应丢弃此候选。
         bool valid;
 
-        Result(ObservedBoard::CellId cell, long double value, long double progressMultiplier, long double riskMultiplier) : cell(cell), value(value), progressMultiplier(progressMultiplier), riskMultiplier(riskMultiplier), deltas{}, nodes(0), valid(true) {}
-        // JavaE 的最终选招分；Anytime 分别保存 value 和奖励乘数。
-        long double score() const { return value * (riskMultiplier * progressMultiplier); }
+        Result(ObservedBoard::CellId cell, long double value, long double progressMultiplier) : cell(cell), value(value), progressMultiplier(progressMultiplier), compensation(0.0L), deltas{}, nodes(0), valid(true) {}
+        // JavaE 的最终选招分；Anytime 分别保存 value、奖励乘数和根补偿。
+        long double score() const { return value * progressMultiplier + compensation; }
     };
 
     struct Workspace {
@@ -75,13 +75,13 @@ struct JavaEval {
     // remainingSafe 是尚未揭开的安全格总数，linkedClears 是 Selection 准备好的推进基准。
     // isSafeMove 表示本格必安，此时不计推进奖励；floor<0 不剪，否则按未算完部分的最高可能分剪枝。
     static Result javaLite(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, vectorPool<Delta> &deltas, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool isSafeMove, long double floor, SuggestResult::Details *details = nullptr);
-    // 根层单格评分，额外计算旧 LTR 的 riskMultiplier；risk 必须来自同一根盘面。
+    // 根层单格评分，按所选 50-50 路线计算根层补偿；risk 必须来自同一根盘面。
     // retainDeltas=true 供 Anytime 根层续搜，false 用于 JavaE 普通推荐；其余计分参数含义同上。
-    static Result evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, vectorPool<Delta> &deltas, FiftyFifty::Result &risk, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool retainDeltas, SuggestResult::Details *details = nullptr);
+    static Result evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, Workspace &workspace, vectorPool<Delta> &deltas, FiftyFifty::Result &risk, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool retainDeltas, SuggestResult::Details *details = nullptr);
 
   private:
     template <bool Prune, bool RetainDeltas>
-    static Result javaLiteImpl(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, vectorPool<Delta> &deltas, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool isSafeMove, long double floor, long double riskMultiplier, SuggestResult::Details *details = nullptr);
+    static Result javaLiteImpl(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, vectorPool<Delta> &deltas, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool isSafeMove, long double floor, SuggestResult::Details *details = nullptr);
 
     struct Summary {
         // 后续最安全两格按 80% / 20% 混合的评分，以及当前未揭开的必安格数。

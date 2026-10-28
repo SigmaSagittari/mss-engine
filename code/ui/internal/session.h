@@ -31,7 +31,7 @@ struct Session {
         std::string key;
         std::string value;
     };
-    // 一次计算拥有固定输入及全部池、缓存；后续查询只引用 id，不接受盘面修改。
+    // 一次计算拥有固定盘面及其结果、缓存；后续查询只引用 id，不接受盘面修改。
     struct Analysis {
         int id;
         GameControl::Config config;
@@ -40,7 +40,6 @@ struct Session {
         AnytimeSearch::Workspace anytimeSearch;
         AnytimeSearch::Pool searchPool;
         MonteCarlo::Workspace monteCarlo;
-        FiftyFifty::Pool fiftyPool;
         GameControl::Position position;
         Analysis(int id, const GameControl::Config &config, const ObservedBoard::Result &board) : id(id), config(config), bruteForce(game.probability.shapeSolver), anytimeSearch(game.basic, game.structure, game.probability), position(GameControl::Position::fromUserInput(board, game, config)) {}
     };
@@ -57,6 +56,7 @@ struct Session {
     std::string value(const std::vector<FormField> &fields, const std::string &key) const;
     std::string error(const std::string &message) const;
     bool parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolverConfig::Order &algo);
+    bool parseTemplateRisk(const std::vector<FormField> &fields, Config &config, std::string &response);
     bool parseFiftyFifty(const std::vector<FormField> &fields, Config &config, std::string &response);
     bool parseConfig(const std::vector<FormField> &fields, Config &config, std::string &response);
     bool parseBoard(const std::vector<FormField> &fields, int &rows, int &cols, int &mines, std::string &cells, std::string &response);
@@ -66,6 +66,8 @@ struct Session {
     std::string playUntilNoSafe(const std::vector<FormField> &fields);
     void writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config);
 
+    // 普通分析串行复用模板编译表；先声明以覆盖 analysis_ 中借用表的结果的生命周期。
+    FiftyFifty::Pool fiftyPool_;
     // 普通计算由 HTTP 请求串行访问；仅保留最近一次计算，前端负责串行引用其 id。
     std::unique_ptr<Analysis> analysis_;
     int nextAnalysis_;

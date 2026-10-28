@@ -12,13 +12,6 @@ namespace mss {
 
 using BruteForceSessionBuild = BruteForce::Build;
 
-void BruteForce::Workspace::swapSessionStorage(BruteForceType::Session &session) {
-    candidates.swap(session.candidates);
-    links.swap(session.links);
-    mineCandidateIds.swap(session.mineCandidateIds);
-    configHashes.swap(session.configHashes);
-}
-
 static void writeConfig(BruteForceType::Session &session, BruteForceSessionBuild &build, bool writeConfigs) {
     if (writeConfigs)
         for (int i = 0; i < session.minesPerConfig; ++i)
@@ -205,24 +198,28 @@ void BruteForce::writeResult(const BruteForceType::Result &raw, int count, Resul
 
 void BruteForce::solve(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes, const Config &config, Result &result, Workspace &workspace) {
     BruteForceSessionBuild &build = workspace.buildStorage;
-    BruteForceType::Session session;
-    workspace.swapSessionStorage(session);
+    vector<BruteForceType::Session::Candidate> &candidates = workspace.candidates;
+    vector<BruteForceType::CandidateId> &links = workspace.links;
+    Grid<BruteForceType::CandidateId> &mineCandidateIds = workspace.mineCandidateIds;
+    vector<std::uint64_t> &configHashes = workspace.configHashes;
+    BruteForceType::Session session(candidates, links, mineCandidateIds, configHashes);
     buildSession(session, build, workspace.shapeSolver, board, basic, structure, shapes);
     BruteForceType::Result raw;
     runBackend(session, config, raw, workspace);
     writeResult(raw, session.possibilityCount, result);
-    workspace.swapSessionStorage(session);
 }
 
 void BruteForce::solveComponent(const ObservedBoard::Result &board, const Basic::Result &basic, span<const Structure::InstanceId> components, span<const ObservedBoard::CellId> offFrontierCells, const Structure::Pool &shapes, int mines, const Config &config, Result &result, Workspace &workspace) {
     BruteForceSessionBuild &build = workspace.buildStorage;
-    BruteForceType::Session session;
-    workspace.swapSessionStorage(session);
+    vector<BruteForceType::Session::Candidate> &candidates = workspace.candidates;
+    vector<BruteForceType::CandidateId> &links = workspace.links;
+    Grid<BruteForceType::CandidateId> &mineCandidateIds = workspace.mineCandidateIds;
+    vector<std::uint64_t> &configHashes = workspace.configHashes;
+    BruteForceType::Session session(candidates, links, mineCandidateIds, configHashes);
     buildComponentSession(session, build, workspace.shapeSolver, board, basic, components, offFrontierCells, shapes, mines);
     BruteForceType::Result raw;
     runBackend(session, config, raw, workspace);
     writeResult(raw, session.possibilityCount, result);
-    workspace.swapSessionStorage(session);
 }
 
 } // 命名空间 mss

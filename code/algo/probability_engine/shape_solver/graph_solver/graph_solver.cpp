@@ -205,21 +205,24 @@ static int shapeBoxCount(const Structure::Shape &shape) { return (int)shape.boxS
 
 ShapeSolverType::Distribution ShapeSolverGraph::analyze(const Structure::Shape &shape, const Structure::Pool &shapes, const ShapeSolverConfig &config, vectorPool<long double> &values, Workspace &workspace) {
     const int boxCount = shapeBoxCount(shape);
-    StepGenerator::Adjacency adjacency;
-    adjacency.swapStorage(workspace.steps);
-    StepGenerator::buildAdjacency(shape, shapes, adjacency, workspace.steps);
-    StepGenerator::makeOrder(adjacency, config, adjacency.order, workspace.steps);
+    vector<int> &offsets = workspace.steps.offsets;
+    vector<Structure::BoxId> &adjacent = workspace.steps.adjacent;
+    vector<Structure::BoxId> &order = workspace.steps.order;
+    StepGenerator::buildAdjacency(shape, shapes, offsets, adjacent, workspace.steps);
+    StepGenerator::makeOrder(offsets, adjacent, config, order, workspace.steps);
 
     Layer *current = &workspace.current;
     Layer *next = &workspace.next;
     current->reset();
     next->reset();
-    StepGenerator::forEachStep(shape, shapes, span<const Structure::BoxId>(adjacency.order.data, (int)adjacency.order.size), workspace.steps, [&](const StepGenerator::StepPlan &plan) {
+    StepGenerator::Sequence &sequence = workspace.steps.sequence;
+    const span<const Structure::BoxId> orderSpan(order.data, (int)order.size);
+    StepGenerator::prepareSteps(shape, shapes, orderSpan, sequence);
+    for (int step = 0; step < orderSpan.size; ++step) {
+        const StepGenerator::StepPlan plan = StepGenerator::makeStep(shape, shapes, orderSpan, step, sequence);
         current->advance(plan, *next);
         std::swap(current, next);
-    });
-    adjacency.swapStorage(workspace.steps);
-
+    }
     ShapeSolverType::Distribution result;
     result.boxCount = boxCount;
     if (current->states.size == 0) {
@@ -271,22 +274,25 @@ ShapeSolverType::Distribution ShapeSolverGraph::analyze(const Structure::Shape &
 }
 
 void ShapeSolverGraph::observe(const Structure::Shape &shape, const Structure::Pool &shapes, span<const int> adjacentBoxCells, Structure::BoxId xBox, const ShapeSolverConfig &config, ShapeSolverType::Observed &result, Workspace &workspace) {
-    StepGenerator::Adjacency adjacency;
-    adjacency.swapStorage(workspace.steps);
-    StepGenerator::buildAdjacency(shape, shapes, adjacency, workspace.steps);
-    StepGenerator::makeOrder(adjacency, config, adjacency.order, workspace.steps);
+    vector<int> &offsets = workspace.steps.offsets;
+    vector<Structure::BoxId> &adjacent = workspace.steps.adjacent;
+    vector<Structure::BoxId> &order = workspace.steps.order;
+    StepGenerator::buildAdjacency(shape, shapes, offsets, adjacent, workspace.steps);
+    StepGenerator::makeOrder(offsets, adjacent, config, order, workspace.steps);
 
     result.values.data.resize(0);
     ObservedLayer *current = &workspace.observedCurrent;
     ObservedLayer *next = &workspace.observedNext;
     current->reset();
     next->reset();
-    StepGenerator::forEachStep(shape, shapes, span<const Structure::BoxId>(adjacency.order.data, (int)adjacency.order.size), workspace.steps, [&](const StepGenerator::StepPlan &plan) {
+    StepGenerator::Sequence &sequence = workspace.steps.sequence;
+    const span<const Structure::BoxId> orderSpan(order.data, (int)order.size);
+    StepGenerator::prepareSteps(shape, shapes, orderSpan, sequence);
+    for (int step = 0; step < orderSpan.size; ++step) {
+        const StepGenerator::StepPlan plan = StepGenerator::makeStep(shape, shapes, orderSpan, step, sequence);
         current->advance(plan, *next, adjacentBoxCells.data, xBox);
         std::swap(current, next);
-    });
-    adjacency.swapStorage(workspace.steps);
-
+    }
     int starts[9];
     int ends[9];
     for (int neighborMines = 0; neighborMines <= 8; ++neighborMines) {

@@ -71,7 +71,8 @@ inline const mss::AnytimeSearch::Config anytimeConfig{
     /* width[2] 后续层宽度 */ 1
 };
 inline const mss::FiftyFifty::TemplateConfig templateConfig{
-    /* prefix 模板前缀 */ 20
+    /* prefix Semi / LTR 共用模板前缀 */ 100,
+    /* risk 模板长期风险 */ mss::TemplateLongTermRisk::Config(15)
 };
 inline const mss::LongTermRisk::Config riskConfig{
     /* influenceThreshold 影响量阈值 */ 0.025L
@@ -88,9 +89,9 @@ inline const mss::MovePolicy policy{
         /* anytime 搜索算法配置 */ &anytimeConfig
     },
     /* fiftyFifty 50-50 算法 */ {
-        /* algorithm 算法 */ mss::MovePolicy::FiftyFifty::Algorithm::OldJava,
-        /* templates 模板检测配置 */ nullptr,
-        /* risk 长期风险配置 */ &riskConfig
+        /* algorithm 算法 */ mss::FiftyFifty::Algorithm::Templates,
+        /* oldJava 旧路线配置，未使用 */ nullptr,
+        /* templates 模板 Semi / LTR 配置 */ &templateConfig
     },
     /* brute 暴力接管 */ {
         /* limit 摆法数阈值，0 关闭 */ 1000,

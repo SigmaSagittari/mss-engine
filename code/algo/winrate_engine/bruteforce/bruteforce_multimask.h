@@ -58,10 +58,11 @@ struct BruteForceMultimask {
 
     struct ParallelCache;
 
-    // 本次 solve 的工作状态；借用 Scratch，独占本地缓存，可选接入根并行共享缓存。
+    // 本次 solve 的工作状态；cache 引用 Scratch，根并行时可接入共享缓存。
     struct Worker {
         Scratch &scratch;
-        FlatHashTable<U128, int, U128Hash> cache;
+        // 引用的缓存由 Scratch 持有，Worker 不接管其生命周期。
+        FlatHashTable<U128, int, U128Hash> &cache;
         // 非空表示当前参与根并行，count 足够大的子问题走共享缓存。
         ParallelCache *sharedCache;
 
@@ -71,13 +72,14 @@ struct BruteForceMultimask {
 
     struct CacheShard {
         std::mutex mutex;
-        FlatHashTable<U128, int, U128Hash> table;
     };
 
     // 根并行线程共享的缓存；按键分片加锁，避免所有子问题争用同一把锁。
     struct ParallelCache {
         CacheShard shards[256];
+        FlatHashTable<U128, int, U128Hash> (&storage)[256];
 
+        explicit ParallelCache(FlatHashTable<U128, int, U128Hash> (&storage)[256]) : storage(storage) {}
         void reset();
         int find(const U128 &key);
         void store(const U128 &key, int value);

@@ -55,13 +55,13 @@ JavaEval::Summary JavaEval::shortTerm(const PositionState &state, const Probabil
 }
 
 template <bool Prune, bool RetainDeltas>
-JavaEval::Result JavaEval::javaLiteImpl(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, vectorPool<Delta> &deltas, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool isSafeMove, long double floor, long double riskMultiplier, SuggestResult::Details *details) {
+JavaEval::Result JavaEval::javaLiteImpl(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, vectorPool<Delta> &deltas, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool isSafeMove, long double floor, SuggestResult::Details *details) {
     const long double candidates = state.probability.candidates;
     const long double mineProbability = observation.probability[9];
-    Result result(cell, 0.0L, 1.0L, riskMultiplier);
+    Result result(cell, 0.0L, 1.0L);
     result.deltas = deltas.push_back();
     long double remainingSafety = 1.0L - mineProbability;
-    // 必雷格没有可展开的数字结局；直接结束并保留无修正乘数。
+    // 必雷格没有可展开的数字结局，value 与补偿保持 0。
     if (remainingSafety == 0.0L)
         return result;
 
@@ -114,25 +114,27 @@ JavaEval::Result JavaEval::javaLiteImpl(PositionState &state, const ShapeSolverC
 }
 
 JavaEval::Result JavaEval::javaLite(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, vectorPool<Delta> &deltas, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool isSafeMove, long double floor, SuggestResult::Details *details) {
-    return javaLiteImpl<true, true>(state, shapeConfig, progressContribution, workspace, deltas, cell, observation, remainingSafe, linkedClears, isSafeMove, floor, 1.0L, details);
+    return javaLiteImpl<true, true>(state, shapeConfig, progressContribution, workspace, deltas, cell, observation, remainingSafe, linkedClears, isSafeMove, floor, details);
 }
 
-JavaEval::Result JavaEval::evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, vectorPool<Delta> &deltas, FiftyFifty::Result &risk, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool retainDeltas, SuggestResult::Details *details) {
-    const long double candidates = state.probability.candidates;
-    const long double safetyTally = candidates - observation.probability[9] * candidates;
-    const long double tally = FiftyFifty::influence(cell, state, risk, shapeConfig, workspace.selection.fiftyFifty);
-    const long double riskMultiplier = safetyTally == 0.0L ? 1.0L : (safetyTally + config.influenceScale * tally) / safetyTally;
-    return retainDeltas ? javaLiteImpl<false, true>(state, shapeConfig, config.progressContribution, workspace, deltas, cell, observation, remainingSafe, linkedClears, false, -1.0L, riskMultiplier, details) : javaLiteImpl<false, false>(state, shapeConfig, config.progressContribution, workspace, deltas, cell, observation, remainingSafe, linkedClears, false, -1.0L, riskMultiplier, details);
+JavaEval::Result JavaEval::evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, Workspace &workspace, vectorPool<Delta> &deltas, FiftyFifty::Result &risk, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool retainDeltas, SuggestResult::Details *details) {
+    const long double influence = observation.probability[9] == 1.0L ? 0.0L : FiftyFifty::influence(cell, state, risk, shapeConfig, fiftyConfig, workspace.selection.fiftyFifty);
+    Result result = retainDeltas ? javaLiteImpl<false, true>(state, shapeConfig, config.progressContribution, workspace, deltas, cell, observation, remainingSafe, linkedClears, false, -1.0L, details) : javaLiteImpl<false, false>(state, shapeConfig, config.progressContribution, workspace, deltas, cell, observation, remainingSafe, linkedClears, false, -1.0L, details);
+    result.compensation = config.influenceScale * influence;
+    if (fiftyConfig.algorithm == FiftyFifty::Algorithm::OldJava && observation.probability[9] != 1.0L) result.compensation *= result.value * result.progressMultiplier / (1.0L - observation.probability[9]);
+    return result;
 }
 
 SuggestResult JavaEval::analyze(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details) {
     if (details) details->clear();
     Selection::Result selected;
     const Selection::Result::Source source = Selection::find(state, shapeConfig, config.selection, fiftyConfig, fiftyPool, selected, workspace.selection, true, cells);
-    const bool pseudo = source == Selection::Result::Source::Forced || source == Selection::Result::Source::Semi;
+    const bool semi = source == Selection::Result::Source::Forced || source == Selection::Result::Source::Semi;
     // 仅两格 Forced 不展开；Semi 和较长的 Forced 链需要比较数字结局。
     const bool skipEvaluation = source == Selection::Result::Source::Forced && selected.cells.size < 4;
     const int observationNodes = skipEvaluation ? 0 : Selection::removeDead(selected, source, state, shapeConfig, workspace.probability);
+    if (!semi && selected.cells.size != 0 && (fiftyConfig.algorithm == FiftyFifty::Algorithm::Templates || source == Selection::Result::Source::Specified))
+        FiftyFifty::prepareRisk(selected.fiftyFifty, state, shapeConfig, fiftyConfig, fiftyPool, workspace.selection.fiftyFifty, false);
     int remainingSafe = state.board.cells.rows() * state.board.cells.cols() - state.board.totalMines;
     int forcedSafes = 0;
     for (int row = 0; row < state.board.cells.rows(); ++row)
@@ -155,7 +157,7 @@ SuggestResult JavaEval::analyze(PositionState &state, const ShapeSolverConfig &s
         if (!Selection::prepare(selected, i, state, shapeConfig, selectionConfig, remainingSafe, forcedSafes, false, result.nodes, workspace.selection))
             continue;
         const int linkedClears = selected.prepared.data[selected.prepared.size - 1].linkedClears;
-        const Result evaluated = pseudo ? javaLiteImpl<false, false>(state, shapeConfig, config.progressContribution, workspace, deltas, cell, selected.observations.data[i], remainingSafe, linkedClears, false, -1.0L, 1.0L, details) : evaluate(state, shapeConfig, config, workspace, deltas, selected.fiftyFifty, cell, selected.observations.data[i], remainingSafe, linkedClears, false, details);
+        const Result evaluated = semi ? javaLiteImpl<false, false>(state, shapeConfig, config.progressContribution, workspace, deltas, cell, selected.observations.data[i], remainingSafe, linkedClears, false, -1.0L, details) : evaluate(state, shapeConfig, config, fiftyConfig, workspace, deltas, selected.fiftyFifty, cell, selected.observations.data[i], remainingSafe, linkedClears, false, details);
         result.nodes += evaluated.nodes;
         result.candidates.push_back(SuggestResult::Candidate(cell, evaluated.score()));
     }

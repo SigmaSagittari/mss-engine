@@ -231,10 +231,12 @@ void HttpServer::run() {
                     const std::array<const char *, 3> algorithmMarkers{"__MSS_POLICY_LOWRISK__", "__MSS_POLICY_JAVA__", "__MSS_POLICY_ANYTIME__"};
                     for (int i = 0; i < 3; ++i) content.replace(content.find(algorithmMarkers[i]), std::string(algorithmMarkers[i]).size(), config.algorithm == (MovePolicy::Basic::Algorithm)i ? "selected" : "");
                     const std::array<const char *, 2> fiftyMarkers{"__MSS_FIFTY_OLDJAVA__", "__MSS_FIFTY_TEMPLATES__"};
-                    for (int i = 0; i < 2; ++i) content.replace(content.find(fiftyMarkers[i]), std::string(fiftyMarkers[i]).size(), config.fiftyAlgorithm == (MovePolicy::FiftyFifty::Algorithm)i ? "selected" : "");
+                    for (int i = 0; i < 2; ++i) content.replace(content.find(fiftyMarkers[i]), std::string(fiftyMarkers[i]).size(), config.fiftyFifty.algorithm == (FiftyFifty::Algorithm)i ? "selected" : "");
                     const std::string prefixMarker = "__MSS_TEMPLATE_PREFIX__", countMarker = "__MSS_TEMPLATE_COUNT__";
-                    content.replace(content.find(prefixMarker), prefixMarker.size(), std::to_string(config.templates.prefix));
+                    content.replace(content.find(prefixMarker), prefixMarker.size(), std::to_string(config.fiftyFifty.templates.prefix));
                     content.replace(content.find(countMarker), countMarker.size(), std::to_string(FiftyFifty::templateCount()));
+                    const std::string ltrEventLimitMarker = "__MSS_LTR_EVENT_LIMIT__";
+                    content.replace(content.find(ltrEventLimitMarker), ltrEventLimitMarker.size(), std::to_string(config.fiftyFifty.templates.risk.eventLimit));
                     const std::string thresholdMarker = "__MSS_BRUTE_FORCE_THRESHOLD__";
                     content.replace(content.find(thresholdMarker), thresholdMarker.size(), std::to_string(config.brute.limit));
                     const std::string threadsMarker = "__MSS_THREAD_LIMIT__";

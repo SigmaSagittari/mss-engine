@@ -14,8 +14,11 @@ void MovePolicy::hash(U128Hasher &hasher) const {
     }
     if (basic.algorithm != Basic::Algorithm::LowRisk) {
         hasher.mix((int)fiftyFifty.algorithm);
-        if (fiftyFifty.algorithm == FiftyFifty::Algorithm::Templates) hasher.mix(fiftyFifty.templates->prefix);
-        hasher.mix((std::uint64_t)std::hash<long double>{}(fiftyFifty.risk->influenceThreshold));
+        if (fiftyFifty.algorithm == mss::FiftyFifty::Algorithm::OldJava) hasher.mix((std::uint64_t)std::hash<long double>{}(fiftyFifty.oldJava->influenceThreshold));
+        else {
+            hasher.mix(fiftyFifty.templates->prefix);
+            hasher.mix(fiftyFifty.templates->risk.eventLimit);
+        }
     }
     hasher.mix(brute.limit);
     if (brute.limit != 0) {

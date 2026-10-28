@@ -78,9 +78,10 @@
                     </div>
                 </div>
                 <section id="detail-long-term-risk" aria-label="长期风险" hidden>
-                    <h3>若此为地雷，则</h3>
-                    <div><span id="detail-body-risk"></span> 命中死猜本体</div>
-                    <div><span id="detail-restriction-risk"></span> 命中一个死猜限制</div>
+                    <h3>LTR 长期风险（已知此格是雷）</h3>
+                    <div><span id="detail-risk-body-union"></span> 命中本体死猜</div>
+                    <div>其余情况（未命中本体）：</div>
+                    <div id="detail-risk-restriction-distribution"></div>
                 </section>
             </section>
         </aside>
@@ -111,7 +112,10 @@
                     </section>
                     <section class="settings-group">
                         <div class="settings-row"><h3>50-50</h3><select id="fifty-fifty" aria-label="50-50 算法"><option value="oldjava" __MSS_FIFTY_OLDJAVA__>OldJava</option><option value="templates" __MSS_FIFTY_TEMPLATES__>Templates</option></select></div>
-                        <label class="settings-row" id="template-prefix-row"><span>使用前 N 个模板</span><input id="template-prefix" type="number" min="1" max="__MSS_TEMPLATE_COUNT__" value="__MSS_TEMPLATE_PREFIX__"></label>
+                        <div class="settings-stack" id="template-settings">
+                            <label class="settings-row"><span>Semi / LTR 使用前 N 个模板</span><input id="template-prefix" type="number" min="1" max="__MSS_TEMPLATE_COUNT__" value="__MSS_TEMPLATE_PREFIX__"></label>
+                            <label class="settings-row" title="每个互相必安组按方向事件概率取前 N 项"><span>LTR 模板匹配上限</span><input id="ltr-event-limit" type="number" min="1" max="2147483647" step="1" value="__MSS_LTR_EVENT_LIMIT__"></label>
+                        </div>
                     </section>
                     <section class="settings-group">
                         <div class="settings-row"><h3>暴力接管</h3><label class="settings-check"><input id="endgame-enabled" type="checkbox"><span>启用</span></label></div>
@@ -119,7 +123,7 @@
                             <label class="settings-row"><span>可行摆法数小于</span><input id="endgame-candidate-limit" type="number" min="1" step="1" value="__MSS_BRUTE_FORCE_THRESHOLD__"></label>
                             <label class="settings-row"><span>评分范围</span><select id="endgame-check-all-moves" data-all="__MSS_BRUTE_FORCE_CHECK_ALL__"><option value="best">仅最佳招</option><option value="all">全部候选</option></select></label>
                             <label class="settings-row"><span>多线程</span><input id="endgame-multithread" type="checkbox" __MSS_BRUTE_FORCE_MULTITHREAD__></label>
-                            <label class="settings-row"><span>线程上限</span><input id="endgame-max-threads" type="number" min="1" max="2147483647" step="1" value="__MSS_THREAD_LIMIT__"></label>
+                            <label class="settings-row" id="endgame-max-threads-row"><span>线程上限</span><input id="endgame-max-threads" type="number" min="1" max="2147483647" step="1" value="__MSS_THREAD_LIMIT__"></label>
                         </div>
                     </section>
                     <label class="settings-row"><span>手动搜索节点数</span><input id="anytime-search-nodes" type="number" min="-1" max="2147483647" value="-1"></label>

@@ -277,8 +277,6 @@ Selection::Result::Source Selection::find(PositionState &state, const ShapeSolve
     result.equivalent.resize(0);
     if (cells != nullptr) {
         result.cells = *cells;
-        if (useRisk && cells->size != 0)
-            FiftyFifty::prepareRisk(result.fiftyFifty, state, shapeConfig, fiftyConfig, workspace.fiftyFifty, false);
         return Result::Source::Specified;
     }
     workspace.offEdge.resize(0);
@@ -303,15 +301,15 @@ Selection::Result::Source Selection::find(PositionState &state, const ShapeSolve
             }
         }
 
-    Pseudo::Result &pseudo = result.fiftyFifty.pseudo;
-    pseudo.cells.swap(result.cells);
-    FiftyFifty::detect(pseudo, state, fiftyConfig, fiftyPool, workspace.fiftyFifty);
-    if (pseudo.kind == Pseudo::Kind::None && useRisk)
-        FiftyFifty::prepareRisk(result.fiftyFifty, state, shapeConfig, fiftyConfig, workspace.fiftyFifty, true);
-    result.cells.swap(pseudo.cells);
-    if (pseudo.kind != Pseudo::Kind::None)
-        return pseudo.kind == Pseudo::Kind::Forced ? Result::Source::Forced : Result::Source::Semi;
-    selectOrdinary(result.cells, state, useRisk ? &result.fiftyFifty.risk : nullptr, span<const ObservedBoard::CellId>(workspace.offEdge.data, (int)workspace.offEdge.size), span<const ObservedBoard::CellId>(workspace.witnesses.data, (int)workspace.witnesses.size), firstOffEdge, config, workspace);
+    Semi::Result &semi = result.fiftyFifty.semi;
+    semi.cells.swap(result.cells);
+    FiftyFifty::detect(semi, state, fiftyConfig, fiftyPool, workspace.fiftyFifty);
+    if (semi.kind == Semi::Kind::None && useRisk && fiftyConfig.algorithm == FiftyFifty::Algorithm::OldJava)
+        FiftyFifty::prepareRisk(result.fiftyFifty, state, shapeConfig, fiftyConfig, fiftyPool, workspace.fiftyFifty, true);
+    result.cells.swap(semi.cells);
+    if (semi.kind != Semi::Kind::None)
+        return semi.kind == Semi::Kind::Forced ? Result::Source::Forced : Result::Source::Semi;
+    selectOrdinary(result.cells, state, useRisk && fiftyConfig.algorithm == FiftyFifty::Algorithm::OldJava ? &result.fiftyFifty.oldJava : nullptr, span<const ObservedBoard::CellId>(workspace.offEdge.data, (int)workspace.offEdge.size), span<const ObservedBoard::CellId>(workspace.witnesses.data, (int)workspace.witnesses.size), firstOffEdge, config, workspace);
     std::sort(result.cells.data, result.cells.data + result.cells.size, [&](ObservedBoard::CellId left, ObservedBoard::CellId right) {
         const long double leftProbability = Probability::mineProbability(state.probability, left, state.board, state.basic, state.structure);
         const long double rightProbability = Probability::mineProbability(state.probability, right, state.board, state.basic, state.structure);

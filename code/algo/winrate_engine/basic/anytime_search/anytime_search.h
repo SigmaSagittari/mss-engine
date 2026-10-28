@@ -30,7 +30,7 @@ struct AnytimeSearch {
         // 树交替存放“点击哪个格”的候选节点和“显示某个数字后”的局面节点。
         // 候选节点用 cell，局面节点用 deltaIndex；child 分别指向数字结局或下一步候选。
         struct Node {
-            // 最新完整后续分，不含推进奖励；根候选另包含旧 LTR 修正。
+            // 最新完整后续分，不含推进奖励或根层补偿。
             long double value;
             // 推进奖励只参与选招，不进入 value 回传。
             long double progressMultiplier;
@@ -57,8 +57,8 @@ struct AnytimeSearch {
         };
 
         vectorPool<Node> nodes;
-        // 根候选是 nodes 的首个切片；旧 LTR 乘数按根下标保存，内层节点不占存储。
-        vector<long double> rootRiskMultipliers;
+        // 根候选占 nodes 的首个切片；补偿按 Node 下标保存，不能用 CellId 索引。
+        vector<long double> rootCompensations;
         // 每个数字结局的概率及状态增量；其中切片借用 analyze 输入的 PositionState 记录池。
         vector<JavaEval::Delta> deltas;
         // 每个搜索深度一份续算游标；预算耗尽后保留顺序、下一结局及未完成的概率合计。
@@ -81,6 +81,7 @@ struct AnytimeSearch {
         bool preparing; // 当前新局面的候选评分尚未完成，update 需要从 next 接着算。
 
         Pool() : next(0), preparing(false) {}
+        long double score(int index) const { const Node &candidate = nodes.data.data[index]; return candidate.score() + (candidate.root ? rootCompensations.data[index] : 0.0L); }
     };
 
     struct Result {

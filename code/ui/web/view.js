@@ -143,8 +143,21 @@ function renderDetail() {
     const risk = detailData?.longTermRisk;
     document.getElementById("detail-long-term-risk").hidden = !risk;
     if (risk) {
-        document.getElementById("detail-body-risk").textContent = formatPercent(risk.body);
-        document.getElementById("detail-restriction-risk").textContent = formatPercent(risk.restriction);
+        const oldJava = risk.algorithm === "oldjava";
+        const bodyProbability = document.getElementById("detail-risk-body-union");
+        bodyProbability.textContent = formatPercent(oldJava ? risk.body : risk.bodyUnion);
+        bodyProbability.parentElement.hidden = Number.parseFloat(bodyProbability.textContent) === 0;
+        const distribution = document.getElementById("detail-risk-restriction-distribution");
+        distribution.textContent = "";
+        const counts = oldJava ? [risk.restriction] : risk.restrictionCounts;
+        for (let k = 0; k < counts.length; ++k) {
+            const probability = formatPercent(counts[k]);
+            if (Number.parseFloat(probability) === 0) continue;
+            const row = document.createElement("div");
+            row.textContent = oldJava ? `命中限制：${probability}` : `命中 ${k} 个限制：${probability}`;
+            distribution.appendChild(row);
+        }
+        distribution.previousElementSibling.hidden = oldJava || distribution.childElementCount === 0;
     }
     let engine = null;
     let move = null;

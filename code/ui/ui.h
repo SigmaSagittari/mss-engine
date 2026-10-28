@@ -1,6 +1,7 @@
 #pragma once
 
 #include "algo/winrate_engine/basic/anytime_search/anytime_search.h"
+#include "algo/winrate_engine/fifty_fifty/fifty_fifty.h"
 #include "algo/winrate_engine/monte_carlo/monte_carlo.h"
 
 namespace mss::UI {
@@ -11,13 +12,16 @@ struct Config {
         int limit;
         BruteForce::Config config;
     };
+    struct Fifty {
+        mss::FiftyFifty::Algorithm algorithm;
+        LongTermRisk::Config oldJava;
+        mss::FiftyFifty::TemplateConfig templates;
+    };
     GameControl::Config game;
     MovePolicy::Basic::Algorithm algorithm;
     JavaEval::Config javaEval;
     AnytimeSearch::Config anytime;
-    MovePolicy::FiftyFifty::Algorithm fiftyAlgorithm;
-    FiftyFifty::TemplateConfig templates;
-    LongTermRisk::Config risk;
+    Fifty fiftyFifty;
     Brute brute;
     MonteCarlo::Config monteCarlo;
 };

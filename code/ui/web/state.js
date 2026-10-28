@@ -19,6 +19,7 @@ const settingsDialog = document.getElementById("settings-dialog");
 const suggestStrategy = document.getElementById("suggest-strategy");
 const fiftyFifty = document.getElementById("fifty-fifty");
 const templatePrefix = document.getElementById("template-prefix");
+const ltrEventLimit = document.getElementById("ltr-event-limit");
 const policyNodeBudget = document.getElementById("policy-node-budget");
 const shapeAlgo = document.getElementById("shape-algo");
 const probabilityDisplay = document.getElementById("probability-display");

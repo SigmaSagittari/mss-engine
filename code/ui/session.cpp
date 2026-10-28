@@ -9,6 +9,7 @@
 #include <sstream>
 #include <system_error>
 
+#include "algo/winrate_engine/fifty_fifty/templates/long_term_risk.h"
 #include "core/config.h"
 #include "core/assert.h"
 
@@ -148,13 +149,21 @@ bool Session::parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolverCo
     return true;
 }
 
+bool Session::parseTemplateRisk(const std::vector<FormField> &fields, Config &config, std::string &response) {
+    int prefix, eventLimit;
+    if (!parseInteger(value(fields, "templatePrefix"), prefix) || prefix < 1 || prefix > FiftyFifty::templateCount()) { response = error("模板前缀超出目录"); return false; }
+    if (!parseInteger(value(fields, "ltrEventLimit"), eventLimit) || eventLimit < 1) { response = error("LTR 模板匹配上限必须是正整数"); return false; }
+    config.fiftyFifty.templates.prefix = prefix;
+    config.fiftyFifty.templates.risk.eventLimit = eventLimit;
+    return true;
+}
+
 bool Session::parseFiftyFifty(const std::vector<FormField> &fields, Config &config, std::string &response) {
     const std::string fifty = value(fields, "fiftyFifty");
-    if (fifty == "oldjava") config.fiftyAlgorithm = MovePolicy::FiftyFifty::Algorithm::OldJava;
-    else if (fifty == "templates") config.fiftyAlgorithm = MovePolicy::FiftyFifty::Algorithm::Templates;
+    if (fifty == "oldjava") config.fiftyFifty.algorithm = FiftyFifty::Algorithm::OldJava;
+    else if (fifty == "templates") config.fiftyFifty.algorithm = FiftyFifty::Algorithm::Templates;
     else { response = error("50-50 算法无效"); return false; }
-    if (config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates && (!parseInteger(value(fields, "templatePrefix"), config.templates.prefix) || config.templates.prefix < 1 || config.templates.prefix > FiftyFifty::templateCount())) { response = error("模板前缀超出目录"); return false; }
-    return true;
+    return config.fiftyFifty.algorithm == FiftyFifty::Algorithm::OldJava || parseTemplateRisk(fields, config, response);
 }
 
 bool Session::parseConfig(const std::vector<FormField> &fields, Config &config, std::string &response) {
@@ -279,12 +288,12 @@ void Session::writeMoveDetails(std::ostream &result, const SuggestResult::Detail
 }
 
 void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config) {
-    const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyAlgorithm, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
+    const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyFifty.algorithm, &config.fiftyFifty.oldJava, &config.fiftyFifty.templates}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
 
     SuggestResult evaluated;
     AnytimeSearch::Result searched;
     SuggestResult::Details details;
-    analysis.position.suggest(policy, analysis.fiftyPool, analysis.searchPool, analysis.anytimeSearch, analysis.bruteForce, evaluated, nullptr, &searched, &details);
+    analysis.position.suggest(policy, fiftyPool_, analysis.searchPool, analysis.anytimeSearch, analysis.bruteForce, evaluated, nullptr, &searched, &details);
     result << std::setprecision(18);
     const bool safe = evaluated.engine == SuggestResult::Engine::Safe;
     const bool exact = evaluated.engine == SuggestResult::Engine::BruteForce;
@@ -360,9 +369,21 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
             else {
                 Config config = config_;
                 if (!parseFiftyFifty(fields, config, response)) return response;
-                const FiftyFifty::Config fifty(config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk);
-                const LongTermRisk::Details risk = FiftyFifty::describe(cell, position.state(), analysis_->config.shapeSolver, fifty, analysis_->fiftyPool, analysis_->anytimeSearch.javaEval.selection.fiftyFifty);
-                result << ",\"longTermRisk\":{\"body\":" << risk.body << ",\"restriction\":" << risk.restriction << '}';
+                FiftyFifty::Workspace &workspace = analysis_->anytimeSearch.javaEval.selection.fiftyFifty;
+                if (config.fiftyFifty.algorithm == FiftyFifty::Algorithm::OldJava) {
+                    const LongTermRisk::Details risk = FiftyFifty::describeOldJava(cell, position.state(), analysis_->config.shapeSolver, config.fiftyFifty.oldJava, workspace.oldJava);
+                    result << ",\"longTermRisk\":{\"algorithm\":\"oldjava\",\"body\":" << risk.body << ",\"restriction\":" << risk.restriction << '}';
+                } else {
+                    TemplateLongTermRisk::Result risk;
+                    TemplateLongTermRisk::update(risk, position.state(), config.fiftyFifty.templates.prefix, config.fiftyFifty.templates.risk, fiftyPool_.templates.risk, workspace.templates.risk);
+                    const TemplateLongTermRisk::Description description = TemplateLongTermRisk::describe(cell, position.state(), risk, analysis_->config.shapeSolver, workspace.templates.risk);
+                    result << ",\"longTermRisk\":{\"algorithm\":\"templates\",\"bodyUnion\":" << description.bodyUnion << ",\"restrictionCounts\":[";
+                    for (int k = 0; k < description.noBodyRestrictionBins; ++k) {
+                        if (k != 0) result << ',';
+                        result << TemplateLongTermRisk::noBodyByRestrictionCount(risk, cell, k);
+                    }
+                    result << "]}";
+                }
             }
         }
     }
@@ -500,10 +521,11 @@ bool Session::startMcts(const std::string &body, std::string &response) {
     // 根输入及池随独立任务存活；普通分析的下一份快照不会覆盖 MC 正在使用的数据。
     Analysis *task = analysis.release();
     mctsWorker_ = std::jthread([this, task, config, targets, complete](std::stop_token stop) {
+        FiftyFifty::Pool fiftyPool;
         const std::unique_ptr<Analysis> analysis(task);
         PositionState &state = analysis->position.state();
-        const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyAlgorithm, config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
-        MonteCarlo::Result result = MonteCarlo::analyze(analysis->position, config.monteCarlo, policy, analysis->fiftyPool, analysis->searchPool, analysis->monteCarlo, targets.size == 0 ? nullptr : &targets);
+        const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyFifty.algorithm, &config.fiftyFifty.oldJava, &config.fiftyFifty.templates}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
+        MonteCarlo::Result result = MonteCarlo::analyze(analysis->position, config.monteCarlo, policy, fiftyPool, analysis->searchPool, analysis->monteCarlo, targets.size == 0 ? nullptr : &targets);
         auto publish = [&]() {
             const std::string update = mctsResult(result, complete, analysis->position.probability().candidates);
             const std::lock_guard<std::mutex> lock(mctsMutex_);
@@ -513,7 +535,7 @@ bool Session::startMcts(const std::string &body, std::string &response) {
         if (result.exact.engine == SuggestResult::Engine::BruteForce) return;
         std::chrono::steady_clock::time_point next = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
         while (!stop.stop_requested()) {
-            MonteCarlo::update(result, state, analysis->config.shapeSolver, config.monteCarlo, policy, analysis->fiftyPool, analysis->searchPool, analysis->monteCarlo);
+            MonteCarlo::update(result, state, analysis->config.shapeSolver, config.monteCarlo, policy, fiftyPool, analysis->searchPool, analysis->monteCarlo);
             if (complete)
                 break;
             if (std::chrono::steady_clock::now() >= next) {
@@ -563,11 +585,12 @@ bool Session::startSearch(const std::string &body, std::string &response) {
     }
     Analysis *task = analysis.release();
     searchWorker_ = std::jthread([this, task, config, targets, safe](std::stop_token stop) {
+        FiftyFifty::Pool fiftyPool;
         const std::unique_ptr<Analysis> analysis(task);
         PositionState &state = analysis->position.state();
         AnytimeSearch::Pool &pool = analysis->searchPool;
-        const FiftyFifty::Config fifty(config.fiftyAlgorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? &config.templates : nullptr, &config.risk);
-        const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyAlgorithm, fifty.templates, fifty.risk}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
+        const FiftyFifty::Config fifty(config.fiftyFifty.algorithm, &config.fiftyFifty.oldJava, &config.fiftyFifty.templates);
+        const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, fifty, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
         SuggestResult initialized;
         AnytimeSearch::Result result;
         SuggestResult::Details details;
@@ -575,7 +598,7 @@ bool Session::startSearch(const std::string &body, std::string &response) {
         layoutCount << std::scientific << std::setprecision(6) << analysis->position.probability().candidates;
         if (safe.size == 0) {
             // 先算完第零层；用户停止或预算为零都不会留下空推荐。
-            analysis->position.suggest(policy, analysis->fiftyPool, pool, analysis->anytimeSearch, analysis->bruteForce, initialized, targets.size == 0 ? nullptr : &targets, &result, &details);
+            analysis->position.suggest(policy, fiftyPool, pool, analysis->anytimeSearch, analysis->bruteForce, initialized, targets.size == 0 ? nullptr : &targets, &result, &details);
         }
         if (initialized.engine == SuggestResult::Engine::BruteForce) result.nodes = initialized.nodes;
         auto publish = [&]() {
@@ -615,7 +638,7 @@ bool Session::startSearch(const std::string &body, std::string &response) {
             }
             AnytimeSearch::Config stepConfig = config.anytime;
             stepConfig.nodeLimit = budget;
-            AnytimeSearch::update(result, state, pool, analysis->config.shapeSolver, stepConfig, fifty, analysis->fiftyPool, analysis->anytimeSearch, &details);
+            AnytimeSearch::update(result, state, pool, analysis->config.shapeSolver, stepConfig, fifty, fiftyPool, analysis->anytimeSearch, &details);
             publish();
         }
     });

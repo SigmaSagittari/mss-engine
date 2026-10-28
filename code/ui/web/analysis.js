@@ -3,7 +3,7 @@ function calculate(state, options = {}) {
     const config = options.suggest ? analysisConfig() : { algo: shapeAlgo.value };
     if (options.risk) {
         config.fiftyFifty = fiftyFifty.value;
-        config.templatePrefix = Number(templatePrefix.value);
+        if (fiftyFifty.value === "templates") Object.assign(config, templateRiskSettings());
     }
     const snapshot = { rows: state.rows, cols: state.cols, mines: state.mines, cells: state.cells.replace(/[G*]/g, "?"), algo: config.algo };
     const key = JSON.stringify(snapshot);
@@ -33,9 +33,16 @@ function analysisConfig(strategy = suggestStrategy.value) {
         if (!Number.isInteger(nodes) || nodes < 1 || nodes > 2147483647) throw new Error("Anytime 每步节点数必须是正整数。");
         if (width.some((value) => !Number.isInteger(value) || value < 1 || value > 2147483647)) throw new Error("候选宽度必须是正整数。");
     }
+    const templateRisk = strategy !== "lowrisk" && fiftyFifty.value === "templates" ? templateRiskSettings() : {};
+    return { strategy, fiftyFifty: fiftyFifty.value, ...templateRisk, limit, maxThreads, nodeBudget: nodes, rootWidth: width[0], middleWidth: width[1], deepWidth: width[2], algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, checkAllMoves: endgameCheckAllMoves.value === "all", multiThread: endgameMultithread.checked };
+}
+
+function templateRiskSettings() {
     const prefix = Number(templatePrefix.value);
-    if (strategy !== "lowrisk" && fiftyFifty.value === "templates" && (!Number.isInteger(prefix) || prefix < 1 || prefix > Number(templatePrefix.max))) throw new Error("模板前缀超出目录。");
-    return { strategy, fiftyFifty: fiftyFifty.value, templatePrefix: prefix, limit, maxThreads, nodeBudget: nodes, rootWidth: width[0], middleWidth: width[1], deepWidth: width[2], algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, checkAllMoves: endgameCheckAllMoves.value === "all", multiThread: endgameMultithread.checked };
+    const eventLimit = Number(ltrEventLimit.value);
+    if (!Number.isInteger(prefix) || prefix < 1 || prefix > Number(templatePrefix.max)) throw new Error("模板前缀超出目录。");
+    if (!Number.isInteger(eventLimit) || eventLimit < 1 || eventLimit > 2147483647) throw new Error("LTR 模板匹配上限必须是正整数。");
+    return { templatePrefix: prefix, ltrEventLimit: eventLimit };
 }
 
 async function requestDetail(cell) {

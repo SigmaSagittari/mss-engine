@@ -41,7 +41,7 @@ struct BruteForceType {
         Result() : nodes(0) {}
     };
 
-    // 一次 solve 的候选集合和完整布局表；由 BruteForce 构建后显式传给后端。
+    // 一次 solve 的候选集合和完整布局表；数组引用由 BruteForce::Workspace 持有，只能在该工作区存活期间使用。
     struct Session {
         struct Candidate {
             ObservedBoard::CellId cell;
@@ -55,17 +55,17 @@ struct BruteForceType {
         int candidateCount;
         // 完整雷位方案数量；每个方案对应一个 ConfigId。
         int possibilityCount;
-        vector<Candidate> candidates;
+        vector<Candidate> &candidates;
         // 候选邻居的 CandidateId 连续存储，由 linksOffset/linksCount 定位。
-        vector<CandidateId> links;
+        vector<CandidateId> &links;
         // 每行恰有这么多项。
         int minesPerConfig;
         // [ConfigId][雷序号] 的候选下标表。
-        Grid<CandidateId> mineCandidateIds;
+        Grid<CandidateId> &mineCandidateIds;
         // 每个 ConfigId 的 splitmix64；所有后端共用，避免逐节点现算。
-        vector<std::uint64_t> configHashes;
+        vector<std::uint64_t> &configHashes;
 
-        Session() : candidateCount(0), possibilityCount(0), minesPerConfig(0) {}
+        Session(vector<Candidate> &candidates, vector<CandidateId> &links, Grid<CandidateId> &mineCandidateIds, vector<std::uint64_t> &configHashes) : candidateCount(0), possibilityCount(0), candidates(candidates), links(links), minesPerConfig(0), mineCandidateIds(mineCandidateIds), configHashes(configHashes) {}
     };
 };
 

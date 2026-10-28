@@ -211,7 +211,7 @@ void GameControl::Position::suggest(PositionState &current, const MovePolicy &po
         SuggestResult evaluated = LowRisk::analyze(current, cells);
         result.swap(evaluated);
     } else {
-        const FiftyFifty::Config fifty(policy.fiftyFifty.algorithm == MovePolicy::FiftyFifty::Algorithm::Templates ? policy.fiftyFifty.templates : nullptr, policy.fiftyFifty.risk);
+        const FiftyFifty::Config &fifty = policy.fiftyFifty;
         if (policy.basic.algorithm == MovePolicy::Basic::Algorithm::JavaEval) {
             SuggestResult evaluated = JavaEval::analyze(current, config_.shapeSolver, *policy.basic.javaEval, fifty, fiftyPool, workspace.javaEval, cells, details);
             result.swap(evaluated);
