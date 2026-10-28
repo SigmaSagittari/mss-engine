@@ -6,6 +6,7 @@
 #include "algo/probability_engine/structure/structure.h"
 #include "core/datastructure/flat_hashtable.h"
 #include "core/datastructure/vector.h"
+#include "core/datastructure/vector_pool.h"
 #include "game/position_state.h"
 
 namespace mss {
@@ -36,29 +37,34 @@ struct TemplateLongTermRisk {
         struct BuildChild { int wallBegin, wallCount; };
 
         struct Table {
-            explicit Table(int prefix);
+            Table(int prefix, Pool &pool);
 
           private:
             friend struct TemplateLongTermRisk;
             friend struct TemplateLongTermRiskEngine;
             int prefix;
-            vector<Point> points;
-            vector<Pattern> patterns;
-            vector<Group> groups;
-            vector<Blocker> blockers;
-            vector<Check> checks;
-            vector<int> outputs;
+            vectorPool<Point>::vector points;
+            vectorPool<Pattern>::vector patterns;
+            vectorPool<Group>::vector groups;
+            vectorPool<Blocker>::vector blockers;
+            vectorPool<Check>::vector checks;
+            vectorPool<int>::vector outputs;
         };
 
         Pool();
         Pool(const Pool &) = delete;
         Pool &operator=(const Pool &) = delete;
-        ~Pool();
 
       private:
         friend struct TemplateLongTermRisk;
         friend struct TemplateLongTermRiskEngine;
-        vector<Table *> tables;
+        vectorPool<Point> points;
+        vectorPool<Pattern> patterns;
+        vectorPool<Group> groups;
+        vectorPool<Blocker> blockers;
+        vectorPool<Check> checks;
+        vectorPool<int> outputs;
+        vector<Table> tables;
     };
 
     struct Result {
@@ -80,7 +86,8 @@ struct TemplateLongTermRisk {
         friend struct TemplateLongTermRisk;
         friend struct TemplateLongTermRiskEngine;
         // 危险：以下是当前棋盘的实际输入信息；update 写入，后续查询只在 update 完成后读取。
-        const Pool::Table *table;
+        const Pool *pool;
+        int tableIndex;
         int rows, cols, eventLimit;
         vector<long double> probabilities;
         vector<unsigned char> hidden;

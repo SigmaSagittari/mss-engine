@@ -3,12 +3,14 @@
 #include <cstdint>
 
 #include "algo/winrate_engine/fifty_fifty/old_java/semi.h"
+#include "core/datastructure/vector_pool.h"
 
 namespace mss {
 
 struct TemplateSemi {
     // 一个模板前缀编译出的只读匹配表，包含旋转、镜像和边界/雷墙判断。
     // 相同前缀由 Pool 共享；构表缓冲由 Workspace 复用，不依赖具体盘面。
+    struct Pool;
     struct Table {
         // Safe/Mine 是假设根格为雷后必须推导出的状态；Wall 可由必雷格或棋盘外挡住。
         enum class Kind : unsigned char { Safe, Mine, Wall };
@@ -39,23 +41,26 @@ struct TemplateSemi {
             struct Boundary { Point point; int difference; };
             struct Group { int begin, end; };
         };
-        vector<Check> checks;
-        vector<Prefix> prefixes;
-        vector<Point> runs;
-        Grid<int> starts; // 由相对偏移定位安全前缀；-1 表示没有该分支。
+        vectorPool<Check>::vector checks;
+        vectorPool<Prefix>::vector prefixes;
+        vectorPool<Point>::vector runs;
+        vectorPool<int>::vector starts; // 由相对偏移定位安全前缀；-1 表示没有该分支。
         int prefix, radiusR, radiusC;
 
-        Table(int prefix, vector<Point> &first, vector<Point> &second, vector<Point> &core, vector<Build::Boundary> &boundary, vector<Build::Pattern> &patterns, vector<Point> &points, vector<Build::Rooted> &entries, vector<Test> &tests, vector<Test> &frequency, vector<Build::Group> &groups);
-        void compilePrefix(vector<Build::Rooted> &entries, vector<Test> &tests, vector<Test> &frequency, vector<Build::Group> &groups, int begin, int end, int depth, int node);
-        void compileBranch(vector<Build::Rooted> &entries, vector<Test> &tests, vector<Test> &frequency, int begin, int end, int parent);
+        Table(int prefix, Pool &pool, vector<Point> &first, vector<Point> &second, vector<Point> &core, vector<Build::Boundary> &boundary, vector<Build::Pattern> &patterns, vector<Point> &points, vector<Build::Rooted> &entries, vector<Test> &tests, vector<Test> &frequency, vector<Build::Group> &groups);
+        void compilePrefix(Pool &pool, vector<Build::Rooted> &entries, vector<Test> &tests, vector<Test> &frequency, vector<Build::Group> &groups, int begin, int end, int depth, int node);
+        void compileBranch(Pool &pool, vector<Build::Rooted> &entries, vector<Test> &tests, vector<Test> &frequency, int begin, int end, int parent);
     };
 
     struct Pool {
-        vector<Table *> tables;
+        vectorPool<Table::Check> checks;
+        vectorPool<Table::Prefix> prefixes;
+        vectorPool<Table::Point> runs;
+        vectorPool<int> starts;
+        vector<Table> tables;
         Pool();
         Pool(const Pool &) = delete;
         Pool &operator=(const Pool &) = delete;
-        ~Pool();
     };
     struct Workspace;
     // 模板检测的临时推导：同时假设每个候选为雷，批量推进数字约束。
@@ -102,7 +107,7 @@ struct TemplateSemi {
 
   private:
     static constexpr long double halfTolerance = 1e-9L;
-    static int matchPrefix(const Table &table, int node, const Facts &facts, int root);
+    static int matchPrefix(const Table &table, const Pool &pool, int node, const Facts &facts, int root);
 };
 
 } // 命名空间 mss

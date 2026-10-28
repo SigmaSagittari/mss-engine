@@ -13,11 +13,7 @@ int TemplateSemi::templateCount() { return sizeof(FiftyFiftyData::patterns) / si
 
 TemplateSemi::Pool::Pool() {}
 
-TemplateSemi::Pool::~Pool() {
-    for (int i = 0; i < (int)tables.size; ++i) delete tables.data[i];
-}
-
-TemplateSemi::Table::Table(int prefix, vector<Point> &first, vector<Point> &second, vector<Point> &core, vector<Build::Boundary> &boundary, vector<Build::Pattern> &patterns, vector<Point> &points, vector<Build::Rooted> &entries, vector<Test> &tests, vector<Test> &frequency, vector<Build::Group> &groups) : prefix(prefix), radiusR(0), radiusC(0) {
+TemplateSemi::Table::Table(int prefix, Pool &pool, vector<Point> &first, vector<Point> &second, vector<Point> &core, vector<Build::Boundary> &boundary, vector<Build::Pattern> &patterns, vector<Point> &points, vector<Build::Rooted> &entries, vector<Test> &tests, vector<Test> &frequency, vector<Build::Group> &groups) : checks(pool.checks.push_back()), prefixes(pool.prefixes.push_back()), runs(pool.runs.push_back()), starts(pool.starts.push_back()), prefix(prefix), radiusR(0), radiusC(0) {
     assert_(prefix > 0 && prefix <= templateCount(), "模板前缀超过目录");
     patterns.resize(0); points.resize(0); entries.resize(0); tests.resize(0); frequency.resize(0); groups.resize(0);
     for (int source = 0; source < prefix; ++source) {
@@ -81,45 +77,49 @@ TemplateSemi::Table::Table(int prefix, vector<Point> &first, vector<Point> &seco
         }
     }
     std::sort(entries.data, entries.data + entries.size, [&](const Build::Rooted &x, const Build::Rooted &y) { return std::lexicographical_compare(tests.data + x.begin, tests.data + x.begin + x.count, tests.data + y.begin, tests.data + y.begin + y.count); });
-    prefixes.push_back(Prefix({0, 0}));
-    compilePrefix(entries, tests, frequency, groups, 0, entries.size, 0, 0);
-    for (int i = prefixes.data[0].first; i < prefixes.data[0].first + prefixes.data[0].count; ++i) {
-        radiusR = (std::max)(radiusR, std::abs(prefixes.data[i].offset.r));
-        radiusC = (std::max)(radiusC, std::abs(prefixes.data[i].offset.c));
+    pool.prefixes.push_back(this->prefixes, Prefix({0, 0}));
+    compilePrefix(pool, entries, tests, frequency, groups, 0, entries.size, 0, 0);
+    for (int i = pool.prefixes.data.data[this->prefixes.offset].first; i < pool.prefixes.data.data[this->prefixes.offset].first + pool.prefixes.data.data[this->prefixes.offset].count; ++i) {
+        radiusR = (std::max)(radiusR, std::abs(pool.prefixes.data.data[this->prefixes.offset + i].offset.r));
+        radiusC = (std::max)(radiusC, std::abs(pool.prefixes.data.data[this->prefixes.offset + i].offset.c));
     }
-    starts.resize(radiusR * 2 + 1, radiusC * 2 + 1, -1);
-    for (int i = prefixes.data[0].first; i < prefixes.data[0].first + prefixes.data[0].count; ++i) starts[prefixes.data[i].offset.r + radiusR][prefixes.data[i].offset.c + radiusC] = i;
+    starts.count = (radiusR * 2 + 1) * (radiusC * 2 + 1); pool.starts.data.resize(starts.offset + starts.count);
+    for (int i = 0; i < (int)starts.count; ++i) pool.starts.data.data[starts.offset + i] = -1;
+    for (int i = pool.prefixes.data.data[this->prefixes.offset].first; i < pool.prefixes.data.data[this->prefixes.offset].first + pool.prefixes.data.data[this->prefixes.offset].count; ++i) {
+        const Prefix &item = pool.prefixes.data.data[this->prefixes.offset + i];
+        pool.starts.data.data[starts.offset + (item.offset.r + radiusR) * (radiusC * 2 + 1) + item.offset.c + radiusC] = i;
+    }
 }
 
-void TemplateSemi::Table::compilePrefix(vector<Build::Rooted> &entries, vector<Test> &tests, vector<Test> &frequency, vector<Build::Group> &groups, int begin, int end, int depth, int node) {
-    prefixes.data[node].runBegin = runs.size;
+void TemplateSemi::Table::compilePrefix(Pool &pool, vector<Build::Rooted> &entries, vector<Test> &tests, vector<Test> &frequency, vector<Build::Group> &groups, int begin, int end, int depth, int node) {
+    pool.prefixes.data.data[prefixes.offset + node].runBegin = runs.count;
     while (tests.data[entries.data[begin].begin + depth].kind == Kind::Safe && tests.data[entries.data[begin].begin + depth] == tests.data[entries.data[end - 1].begin + depth]) {
         const Test test = tests.data[entries.data[begin].begin + depth++];
-        runs.push_back({test.r, test.c});
+        pool.runs.push_back(runs, Point{test.r, test.c});
     }
-    prefixes.data[node].runEnd = runs.size;
-    const int first = prefixes.size, groupBegin = groups.size;
+    pool.prefixes.data.data[prefixes.offset + node].runEnd = runs.count;
+    const int first = prefixes.count, groupBegin = groups.size;
     int tail = begin;
     while (tail < end && tests.data[entries.data[tail].begin + depth].kind == Kind::Safe) {
         const Test test = tests.data[entries.data[tail].begin + depth];
         const int group = tail++;
         while (tail < end && tests.data[entries.data[tail].begin + depth] == test) ++tail;
-        prefixes.push_back(Prefix({test.r, test.c})); groups.push_back({group, tail});
+        pool.prefixes.push_back(prefixes, Prefix({test.r, test.c})); groups.push_back({group, tail});
     }
     const int groupCount = groups.size - groupBegin;
-    prefixes.data[node].first = first; prefixes.data[node].count = groupCount;
+    pool.prefixes.data.data[prefixes.offset + node].first = first; pool.prefixes.data.data[prefixes.offset + node].count = groupCount;
     for (int i = 0; i < groupCount; ++i) {
         const Build::Group group = groups.data[groupBegin + i];
-        compilePrefix(entries, tests, frequency, groups, group.begin, group.end, depth + 1, first + i);
+        compilePrefix(pool, entries, tests, frequency, groups, group.begin, group.end, depth + 1, first + i);
     }
     groups.resize(groupBegin);
     for (int i = tail; i < end; ++i) { entries.data[i].begin += depth; entries.data[i].count -= depth; }
-    prefixes.data[node].begin = checks.size; compileBranch(entries, tests, frequency, tail, end, -1); prefixes.data[node].end = checks.size;
+    pool.prefixes.data.data[prefixes.offset + node].begin = checks.count; compileBranch(pool, entries, tests, frequency, tail, end, -1); pool.prefixes.data.data[prefixes.offset + node].end = checks.count;
 }
 
-void TemplateSemi::Table::compileBranch(vector<Build::Rooted> &entries, vector<Test> &tests, vector<Test> &frequency, int begin, int end, int parent) {
+void TemplateSemi::Table::compileBranch(Pool &pool, vector<Build::Rooted> &entries, vector<Test> &tests, vector<Test> &frequency, int begin, int end, int parent) {
     if (begin == end) return;
-    for (int i = begin; i < end; ++i) if (!entries.data[i].count) { checks.data[parent].accept = true; return; }
+    for (int i = begin; i < end; ++i) if (!entries.data[i].count) { pool.checks.data.data[checks.offset + parent].accept = true; return; }
     frequency.resize(0);
     for (int i = begin; i < end; ++i) {
         const Build::Rooted &entry = entries.data[i];
@@ -141,10 +141,10 @@ void TemplateSemi::Table::compileBranch(vector<Build::Rooted> &entries, vector<T
         for (int j = removed; j + 1 < entry.begin + entry.count; ++j) tests.data[j] = tests.data[j + 1];
         --entry.count;
     }
-    const int index = checks.size;
-    checks.resize(index + 1); checks.data[index].test = selected; checks.data[index].accept = false;
-    compileBranch(entries, tests, frequency, begin, middle, index); checks.data[index].skip = checks.size;
-    compileBranch(entries, tests, frequency, middle, end, parent);
+    const int index = checks.count;
+    pool.checks.data.resize(checks.offset + index + 1); checks.count = index + 1; pool.checks.data.data[checks.offset + index].test = selected; pool.checks.data.data[checks.offset + index].accept = false;
+    compileBranch(pool, entries, tests, frequency, begin, middle, index); pool.checks.data.data[checks.offset + index].skip = checks.count;
+    compileBranch(pool, entries, tests, frequency, middle, end, parent);
 }
 
 TemplateSemi::Facts::Facts(const PositionState &state, Grid<std::uint64_t> &mines, Grid<std::uint64_t> &safes, vector<Basic::Mark> &marks, vector<Adjacent> &adjacent, vector<Constraint> &constraints, vector<std::uint64_t> &active, vector<std::uint64_t> &found) : mines(mines), safes(safes), marks(marks), adjacent(adjacent), constraints(constraints), active(active), found(found), rows(state.board.cells.rows()), cols(state.board.cells.cols()), words((rows * cols + 63) / 64) {
@@ -216,16 +216,17 @@ bool TemplateSemi::Facts::matches(int id, int word, std::uint64_t bit, Table::Ki
     return marks.data[id] == Basic::Mark::H && ((kind == Table::Kind::Safe ? safes[id] : mines[id])[word] & bit);
 }
 
-int TemplateSemi::matchPrefix(const Table &table, int node, const Facts &facts, int root) {
-    const Table::Prefix &prefix = table.prefixes.data[node];
+int TemplateSemi::matchPrefix(const Table &table, const Pool &pool, int node, const Facts &facts, int root) {
+    const Table::Prefix &prefix = pool.prefixes.data.data[table.prefixes.offset + node];
     const int row = root / facts.cols, col = root % facts.cols, word = root / 64;
     const std::uint64_t bit = 1ULL << (root % 64);
     for (int i = prefix.runBegin; i < prefix.runEnd; ++i) {
-        const int r = row + table.runs.data[i].r, c = col + table.runs.data[i].c;
+        const Table::Point &point = pool.runs.data.data[table.runs.offset + i];
+        const int r = row + point.r, c = col + point.c;
         if (r < 0 || r >= facts.rows || c < 0 || c >= facts.cols || !facts.matches(r * facts.cols + c, word, bit, Table::Kind::Safe)) return -1;
     }
     for (int index = prefix.begin; index < prefix.end;) {
-        const Table::Check &check = table.checks.data[index];
+        const Table::Check &check = pool.checks.data.data[table.checks.offset + index];
         const int r = row + check.test.r, c = col + check.test.c;
         const bool inside = r >= 0 && r < facts.rows && c >= 0 && c < facts.cols;
         const bool pass = inside ? facts.matches(r * facts.cols + c, word, bit, check.test.kind) : check.test.kind == Table::Kind::Wall;
@@ -234,22 +235,23 @@ int TemplateSemi::matchPrefix(const Table &table, int node, const Facts &facts, 
         ++index;
     }
     for (int i = prefix.first; i < prefix.first + prefix.count; ++i) {
-        const int r = row + table.prefixes.data[i].offset.r, c = col + table.prefixes.data[i].offset.c;
+        const Table::Prefix &child = pool.prefixes.data.data[table.prefixes.offset + i];
+        const int r = row + child.offset.r, c = col + child.offset.c;
         if (r < 0 || r >= facts.rows || c < 0 || c >= facts.cols || !facts.matches(r * facts.cols + c, word, bit, Table::Kind::Safe)) continue;
-        const int found = matchPrefix(table, i, facts, root);
+        const int found = matchPrefix(table, pool, i, facts, root);
         if (found >= 0) return found;
     }
     return -1;
 }
 
 void TemplateSemi::detect(Semi::Result &result, const PositionState &state, int prefix, Pool &pool, Workspace &workspace) {
-    Table *selected = nullptr;
-    for (int i = 0; i < (int)pool.tables.size; ++i) if (pool.tables.data[i]->prefix == prefix) { selected = pool.tables.data[i]; break; }
-    if (selected == nullptr) {
-        selected = new Table(prefix, workspace.first, workspace.second, workspace.core, workspace.boundary, workspace.patterns, workspace.points, workspace.entries, workspace.tests, workspace.frequency, workspace.groups);
-        pool.tables.push_back(selected);
+    int selected = -1;
+    for (int i = 0; i < (int)pool.tables.size; ++i) if (pool.tables.data[i].prefix == prefix) { selected = i; break; }
+    if (selected == -1) {
+        selected = pool.tables.size;
+        pool.tables.push_back(Table(prefix, pool, workspace.first, workspace.second, workspace.core, workspace.boundary, workspace.patterns, workspace.points, workspace.entries, workspace.tests, workspace.frequency, workspace.groups));
     }
-    const Table &table = *selected;
+    const Table &table = pool.tables.data[selected];
     Facts facts(state, workspace.mineStorage, workspace.safeStorage, workspace.markStorage, workspace.adjacentStorage, workspace.constraintStorage, workspace.activeStorage, workspace.foundStorage);
     facts.propagate(workspace.pending, workspace.queued);
     for (int id = 0; id < facts.rows * facts.cols; ++id) if (facts.marks.data[id] == Basic::Mark::H)
@@ -257,8 +259,8 @@ void TemplateSemi::detect(Semi::Result &result, const PositionState &state, int 
             const int root = word * 64 + std::countr_zero(bits);
             const int dr = id / facts.cols - root / facts.cols, dc = id % facts.cols - root % facts.cols;
             if (std::abs(dr) > table.radiusR || std::abs(dc) > table.radiusC) continue;
-            const int node = table.starts[dr + table.radiusR][dc + table.radiusC];
-            if (node >= 0 && matchPrefix(table, node, facts, root) >= 0) facts.found.data[word] |= 1ULL << (root % 64);
+            const int node = pool.starts.data.data[table.starts.offset + (dr + table.radiusR) * (table.radiusC * 2 + 1) + dc + table.radiusC];
+            if (node >= 0 && matchPrefix(table, pool, node, facts, root) >= 0) facts.found.data[word] |= 1ULL << (root % 64);
         }
     result.kind = Semi::Kind::None; result.cells.resize(0);
     for (int root = 0; root < facts.rows * facts.cols; ++root) if (facts.found.data[root / 64] & (1ULL << (root % 64))) {

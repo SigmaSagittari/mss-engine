@@ -9,13 +9,9 @@
 
 namespace mss {
 
-TemplateLongTermRisk::Pool::Table::Table(int prefix) : prefix(prefix) {}
+TemplateLongTermRisk::Pool::Table::Table(int prefix, Pool &pool) : prefix(prefix), points(pool.points.push_back()), patterns(pool.patterns.push_back()), groups(pool.groups.push_back()), blockers(pool.blockers.push_back()), checks(pool.checks.push_back()), outputs(pool.outputs.push_back()) {}
 
 TemplateLongTermRisk::Pool::Pool() {}
-
-TemplateLongTermRisk::Pool::~Pool() {
-    for (int i = 0; i < (int)tables.size; ++i) delete tables.data[i];
-}
 
 TemplateLongTermRisk::Workspace::Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) : basic(basic), structure(structure), probability(probability) {}
 
@@ -53,9 +49,9 @@ struct TemplateLongTermRiskEngine {
         if (mirror) point.col = -point.col;
     }
 
-    static bool sameCore(const TemplateLongTermRisk::Pool::Table &table, const TemplateLongTermRisk::Pool::Pattern &pattern, const TemplateLongTermRisk::Pool::Point *first, const TemplateLongTermRisk::Pool::Point *second, int aCount) {
+    static bool sameCore(const TemplateLongTermRisk::Pool &pool, const TemplateLongTermRisk::Pool::Table &table, const TemplateLongTermRisk::Pool::Pattern &pattern, const TemplateLongTermRisk::Pool::Point *first, const TemplateLongTermRisk::Pool::Point *second, int aCount) {
         if (pattern.aCount != aCount || pattern.coreCount != 2 * aCount) return false;
-        const TemplateLongTermRisk::Pool::Point *points = table.points.data + pattern.pointBegin;
+        const TemplateLongTermRisk::Pool::Point *points = pool.points.data.data + table.points.offset + pattern.pointBegin;
         for (int i = 0; i < aCount; ++i) if (!samePoint(points[i], first[i]) || !samePoint(points[aCount + i], second[i])) return false;
         return true;
     }
@@ -82,34 +78,35 @@ struct TemplateLongTermRiskEngine {
         sortPoints(walls, wallCount);
     }
 
-    static void appendPattern(TemplateLongTermRisk::Pool::Table &table, const TemplateLongTermRisk::Pool::Point *rawFirst, const TemplateLongTermRisk::Pool::Point *rawSecond, int aCount) {
+    static void appendPattern(TemplateLongTermRisk::Pool &pool, TemplateLongTermRisk::Pool::Table &table, const TemplateLongTermRisk::Pool::Point *rawFirst, const TemplateLongTermRisk::Pool::Point *rawSecond, int aCount) {
         for (int turn = 0; turn < 4; ++turn) for (int mirror = 0; mirror < 2; ++mirror) {
             TemplateLongTermRisk::Pool::Point first[16], second[16], core[32], walls[256];
             for (int i = 0; i < aCount; ++i) { first[i] = rawFirst[i]; second[i] = rawSecond[i]; transformPoint(first[i], turn, mirror); transformPoint(second[i], turn, mirror); }
             normalizeGroups(first, second, aCount);
             for (int i = 0; i < aCount; ++i) { core[i] = first[i]; core[aCount + i] = second[i]; }
             bool duplicate = false;
-            for (int i = 0; i < (int)table.patterns.size; ++i) if (sameCore(table, table.patterns.data[i], first, second, aCount)) { duplicate = true; break; }
+            for (int i = 0; i < (int)table.patterns.count; ++i) if (sameCore(pool, table, pool.patterns.data.data[table.patterns.offset + i], first, second, aCount)) { duplicate = true; break; }
             if (duplicate) continue;
             int wallCount = 0;
             boundary(core, 2 * aCount, aCount, walls, wallCount);
             assert_(2 * aCount < 32 && wallCount <= 64, "模板本体或封口超出位掩码范围");
-            const int begin = (int)table.points.size;
-            for (int i = 0; i < 2 * aCount; ++i) table.points.push_back(core[i]);
-            for (int i = 0; i < wallCount; ++i) table.points.push_back(walls[i]);
-            const int pattern = (int)table.patterns.size;
-            table.patterns.resize(pattern + 1);
-            TemplateLongTermRisk::Pool::Pattern &stored = table.patterns.data[pattern];
+            const int begin = table.points.count;
+            for (int i = 0; i < 2 * aCount; ++i) pool.points.push_back(table.points, core[i]);
+            for (int i = 0; i < wallCount; ++i) pool.points.push_back(table.points, walls[i]);
+            const int pattern = table.patterns.count;
+            pool.patterns.data.resize(table.patterns.offset + pattern + 1);
+            table.patterns.count = pattern + 1;
+            TemplateLongTermRisk::Pool::Pattern &stored = pool.patterns.data.data[table.patterns.offset + pattern];
             stored.pointBegin = begin; stored.aCount = aCount; stored.coreCount = 2 * aCount; stored.wallCount = wallCount;
         }
     }
 
-    static bool childExists(const TemplateLongTermRisk::Pool::Table &table, const TemplateLongTermRisk::Pool::Point *subFirst, const TemplateLongTermRisk::Pool::Point *subSecond, int aCount) {
+    static bool childExists(const TemplateLongTermRisk::Pool &pool, const TemplateLongTermRisk::Pool::Table &table, const TemplateLongTermRisk::Pool::Point *subFirst, const TemplateLongTermRisk::Pool::Point *subSecond, int aCount) {
         for (int turn = 0; turn < 4; ++turn) for (int mirror = 0; mirror < 2; ++mirror) {
             TemplateLongTermRisk::Pool::Point first[16], second[16];
             for (int i = 0; i < aCount; ++i) { first[i] = subFirst[i]; second[i] = subSecond[i]; transformPoint(first[i], turn, mirror); transformPoint(second[i], turn, mirror); }
             normalizeGroups(first, second, aCount);
-            for (int i = 0; i < (int)table.patterns.size; ++i) if (sameCore(table, table.patterns.data[i], first, second, aCount)) return true;
+            for (int i = 0; i < (int)table.patterns.count; ++i) if (sameCore(pool, table, pool.patterns.data.data[table.patterns.offset + i], first, second, aCount)) return true;
         }
         return false;
     }
@@ -120,18 +117,18 @@ struct TemplateLongTermRiskEngine {
         points[count++] = point;
     }
 
-    static void appendBlocker(TemplateLongTermRisk::Pool::Table &table, const TemplateLongTermRisk::Pool::Blocker &blocker, int begin) {
-        for (int i = begin; i < (int)table.blockers.size; ++i) {
-            const TemplateLongTermRisk::Pool::Blocker &existing = table.blockers.data[i];
+    static void appendBlocker(TemplateLongTermRisk::Pool &pool, TemplateLongTermRisk::Pool::Table &table, const TemplateLongTermRisk::Pool::Blocker &blocker, int begin) {
+        for (int i = begin; i < (int)table.blockers.count; ++i) {
+            const TemplateLongTermRisk::Pool::Blocker &existing = pool.blockers.data.data[table.blockers.offset + i];
             if (existing.parent == blocker.parent && existing.extra == blocker.extra && existing.core == blocker.core) return;
         }
-        table.blockers.push_back(blocker);
+        pool.blockers.push_back(table.blockers, blocker);
     }
 
-    static void buildPatternBlockers(TemplateLongTermRisk::Pool::Table &table, vector<TemplateLongTermRisk::Pool::BuildChild> &buildChildren, vector<TemplateLongTermRisk::Pool::Point> &buildChildWalls, int patternIndex) {
-        const TemplateLongTermRisk::Pool::Pattern &pattern = table.patterns.data[patternIndex];
+    static void buildPatternBlockers(TemplateLongTermRisk::Pool &pool, TemplateLongTermRisk::Pool::Table &table, vector<TemplateLongTermRisk::Pool::BuildChild> &buildChildren, vector<TemplateLongTermRisk::Pool::Point> &buildChildWalls, int patternIndex) {
+        const TemplateLongTermRisk::Pool::Pattern &pattern = pool.patterns.data.data[table.patterns.offset + patternIndex];
         TemplateLongTermRisk::Pool::Point points[96];
-        for (int i = 0; i < pattern.coreCount + pattern.wallCount; ++i) points[i] = table.points.data[pattern.pointBegin + i];
+        for (int i = 0; i < pattern.coreCount + pattern.wallCount; ++i) points[i] = pool.points.data.data[table.points.offset + pattern.pointBegin + i];
         TemplateLongTermRisk::Pool::Point extra[64];
         int extraCount = 0;
         buildChildren.resize(0); buildChildWalls.resize(0);
@@ -143,7 +140,7 @@ struct TemplateLongTermRiskEngine {
             for (int i = 0; i < pattern.aCount; ++i) if (first & (1U << i)) subFirst[subCount++] = points[i];
             int secondCount = 0;
             for (int i = 0; i < pattern.aCount; ++i) if (second & (1U << i)) subSecond[secondCount++] = points[pattern.aCount + i];
-            if (subCount != secondCount || !childExists(table, subFirst, subSecond, subCount)) continue;
+            if (subCount != secondCount || !childExists(pool, table, subFirst, subSecond, subCount)) continue;
             for (int i = 0; i < subCount; ++i) { subCore[i] = subFirst[i]; subCore[subCount + i] = subSecond[i]; }
             int childWallCount = 0;
             boundary(subCore, 2 * subCount, subCount, childWalls, childWallCount);
@@ -161,12 +158,12 @@ struct TemplateLongTermRiskEngine {
             buildChildren.push_back({wallBegin, childWallCount});
         }
         sortPoints(extra, extraCount);
-        TemplateLongTermRisk::Pool::Pattern &stored = table.patterns.data[patternIndex];
-        stored.extraBegin = (int)table.points.size;
+        TemplateLongTermRisk::Pool::Pattern &stored = pool.patterns.data.data[table.patterns.offset + patternIndex];
+        stored.extraBegin = table.points.count;
         stored.extraCount = extraCount;
-        for (int i = 0; i < extraCount; ++i) table.points.push_back(extra[i]);
-        stored.groupBegin = (int)table.groups.size;
-        const int blockerBegin = (int)table.blockers.size;
+        for (int i = 0; i < extraCount; ++i) pool.points.push_back(table.points, extra[i]);
+        stored.groupBegin = table.groups.count;
+        const int blockerBegin = table.blockers.count;
         for (int i = 0; i < (int)buildChildren.size; ++i) {
             const TemplateLongTermRisk::Pool::BuildChild &child = buildChildren.data[i];
             TemplateLongTermRisk::Pool::Blocker relation{0, 0, 0};
@@ -176,23 +173,23 @@ struct TemplateLongTermRiskEngine {
                 for (int k = 0; k < pattern.wallCount; ++k) if (samePoint(point, points[pattern.coreCount + k])) relation.parent |= 1ULL << k;
                 for (int k = 0; k < extraCount; ++k) if (samePoint(point, extra[k])) relation.extra |= 1ULL << k;
             }
-            appendBlocker(table, relation, blockerBegin);
+            appendBlocker(pool, table, relation, blockerBegin);
         }
-        table.groups.push_back({blockerBegin, (int)table.blockers.size});
-        stored.groupEnd = (int)table.groups.size;
+        pool.groups.push_back(table.groups, TemplateLongTermRisk::Pool::Group{blockerBegin, (int)table.blockers.count});
+        stored.groupEnd = table.groups.count;
     }
 
-    static void emitCheck(TemplateLongTermRisk::Pool::Table &table, const vector<TemplateLongTermRisk::Pool::BuildNode> &buildNodes, const vector<TemplateLongTermRisk::Pool::BuildOutput> &buildOutputs, int node) {
-        const int index = (int)table.checks.size;
-        const int outputBegin = (int)table.outputs.size;
-        for (int output = buildNodes.data[node].outputHead; output != -1; output = buildOutputs.data[output].next) table.outputs.push_back(buildOutputs.data[output].pattern);
+    static void emitCheck(TemplateLongTermRisk::Pool &pool, TemplateLongTermRisk::Pool::Table &table, const vector<TemplateLongTermRisk::Pool::BuildNode> &buildNodes, const vector<TemplateLongTermRisk::Pool::BuildOutput> &buildOutputs, int node) {
+        const int index = table.checks.count;
+        const int outputBegin = table.outputs.count;
+        for (int output = buildNodes.data[node].outputHead; output != -1; output = buildOutputs.data[output].next) pool.outputs.push_back(table.outputs, buildOutputs.data[output].pattern);
         const TemplateLongTermRisk::Pool::Point point = buildNodes.data[node].point;
-        table.checks.push_back({point.row, point.col, index + 1, outputBegin, (int)table.outputs.size});
-        for (int child = buildNodes.data[node].firstChild; child != -1; child = buildNodes.data[child].nextSibling) emitCheck(table, buildNodes, buildOutputs, child);
-        table.checks.data[index].skip = (int)table.checks.size;
+        pool.checks.push_back(table.checks, TemplateLongTermRisk::Pool::Check{point.row, point.col, index + 1, outputBegin, (int)table.outputs.count});
+        for (int child = buildNodes.data[node].firstChild; child != -1; child = buildNodes.data[child].nextSibling) emitCheck(pool, table, buildNodes, buildOutputs, child);
+        pool.checks.data.data[table.checks.offset + index].skip = table.checks.count;
     }
 
-    static void compileTable(TemplateLongTermRisk::Pool::Table &table, vector<TemplateLongTermRisk::Pool::BuildNode> &buildNodes, vector<TemplateLongTermRisk::Pool::BuildOutput> &buildOutputs, vector<TemplateLongTermRisk::Pool::BuildChild> &buildChildren, vector<TemplateLongTermRisk::Pool::Point> &buildChildWalls) {
+    static void compileTable(TemplateLongTermRisk::Pool &pool, TemplateLongTermRisk::Pool::Table &table, vector<TemplateLongTermRisk::Pool::BuildNode> &buildNodes, vector<TemplateLongTermRisk::Pool::BuildOutput> &buildOutputs, vector<TemplateLongTermRisk::Pool::BuildChild> &buildChildren, vector<TemplateLongTermRisk::Pool::Point> &buildChildWalls) {
         buildNodes.resize(0); buildOutputs.resize(0);
         for (int source = 0; source < table.prefix; ++source) {
             TemplateLongTermRisk::Pool::Point first[16], second[16];
@@ -202,13 +199,13 @@ struct TemplateLongTermRiskEngine {
                 else { if (*text == 'A') first[aCount++] = {row, col}; if (*text == 'B') second[bCount++] = {row, col}; ++col; }
             }
             assert_(aCount > 0 && aCount == bCount && aCount < 16, "模板的本体尺寸不符合目录约束");
-            appendPattern(table, first, second, aCount);
+            appendPattern(pool, table, first, second, aCount);
         }
-        for (int pattern = 0; pattern < (int)table.patterns.size; ++pattern) buildPatternBlockers(table, buildChildren, buildChildWalls, pattern);
+        for (int pattern = 0; pattern < (int)table.patterns.count; ++pattern) buildPatternBlockers(pool, table, buildChildren, buildChildWalls, pattern);
         buildNodes.push_back({{0, 0}, -1, -1, -1});
-        for (int pattern = 0; pattern < (int)table.patterns.size; ++pattern) {
-            const TemplateLongTermRisk::Pool::Pattern &entry = table.patterns.data[pattern];
-            const TemplateLongTermRisk::Pool::Point *points = table.points.data + entry.pointBegin;
+        for (int pattern = 0; pattern < (int)table.patterns.count; ++pattern) {
+            const TemplateLongTermRisk::Pool::Pattern &entry = pool.patterns.data.data[table.patterns.offset + pattern];
+            const TemplateLongTermRisk::Pool::Point *points = pool.points.data.data + table.points.offset + entry.pointBegin;
             int node = 0;
             for (int slot = 1; slot < entry.coreCount; ++slot) {
                 int child = buildNodes.data[node].firstChild;
@@ -223,15 +220,15 @@ struct TemplateLongTermRiskEngine {
             buildOutputs.push_back({pattern, buildNodes.data[node].outputHead});
             buildNodes.data[node].outputHead = (int)buildOutputs.size - 1;
         }
-        for (int child = buildNodes.data[0].firstChild; child != -1; child = buildNodes.data[child].nextSibling) emitCheck(table, buildNodes, buildOutputs, child);
+        for (int child = buildNodes.data[0].firstChild; child != -1; child = buildNodes.data[child].nextSibling) emitCheck(pool, table, buildNodes, buildOutputs, child);
     }
 
-    static TemplateLongTermRisk::Pool::Table &getTable(TemplateLongTermRisk::Pool &pool, vector<TemplateLongTermRisk::Pool::BuildNode> &buildNodes, vector<TemplateLongTermRisk::Pool::BuildOutput> &buildOutputs, vector<TemplateLongTermRisk::Pool::BuildChild> &buildChildren, vector<TemplateLongTermRisk::Pool::Point> &buildChildWalls, int prefix) {
-        for (int i = 0; i < (int)pool.tables.size; ++i) if (pool.tables.data[i]->prefix == prefix) return *pool.tables.data[i];
-        TemplateLongTermRisk::Pool::Table *table = new TemplateLongTermRisk::Pool::Table(prefix);
-        compileTable(*table, buildNodes, buildOutputs, buildChildren, buildChildWalls);
+    static int getTable(TemplateLongTermRisk::Pool &pool, vector<TemplateLongTermRisk::Pool::BuildNode> &buildNodes, vector<TemplateLongTermRisk::Pool::BuildOutput> &buildOutputs, vector<TemplateLongTermRisk::Pool::BuildChild> &buildChildren, vector<TemplateLongTermRisk::Pool::Point> &buildChildWalls, int prefix) {
+        for (int i = 0; i < (int)pool.tables.size; ++i) if (pool.tables.data[i].prefix == prefix) return i;
+        TemplateLongTermRisk::Pool::Table table(prefix, pool);
+        compileTable(pool, table, buildNodes, buildOutputs, buildChildren, buildChildWalls);
         pool.tables.push_back(table);
-        return *table;
+        return pool.tables.size - 1;
     }
 
     static int cell(const TemplateLongTermRisk::Result &result, int row, int col, const TemplateLongTermRisk::Pool::Point &point) {
@@ -240,8 +237,9 @@ struct TemplateLongTermRiskEngine {
     }
 
     static void consider(TemplateLongTermRisk::Result &result, int patternId, int row, int col, const PositionState &state) {
-        const TemplateLongTermRisk::Pool::Pattern &pattern = result.table->patterns.data[patternId];
-        const TemplateLongTermRisk::Pool::Point *points = result.table->points.data + pattern.pointBegin;
+        const TemplateLongTermRisk::Pool::Table &table = result.pool->tables.data[result.tableIndex];
+        const TemplateLongTermRisk::Pool::Pattern &pattern = result.pool->patterns.data.data[table.patterns.offset + patternId];
+        const TemplateLongTermRisk::Pool::Point *points = result.pool->points.data.data + table.points.offset + pattern.pointBegin;
         int missing = 0;
         long double sealProbability = 1.0L;
         for (int i = 0; i < pattern.wallCount; ++i) {
@@ -321,8 +319,9 @@ struct TemplateLongTermRiskEngine {
     }
 
     static void appendBlocker(const TemplateLongTermRisk::Pool::Blocker &blocker, const TemplateLongTermRisk::Pool::Pattern &pattern, const TemplateLongTermRisk::Result::Match &match, const TemplateLongTermRisk::Result &result, const vector<ObservedBoard::CellId> &mines, const vector<ObservedBoard::CellId> &safes, vector<ObservedBoard::CellId> &eventBlockerCells, bool &possible) {
-        const TemplateLongTermRisk::Pool::Point *points = result.table->points.data + pattern.pointBegin;
-        const TemplateLongTermRisk::Pool::Point *extra = result.table->points.data + pattern.extraBegin;
+        const TemplateLongTermRisk::Pool::Table &table = result.pool->tables.data[result.tableIndex];
+        const TemplateLongTermRisk::Pool::Point *points = result.pool->points.data.data + table.points.offset + pattern.pointBegin;
+        const TemplateLongTermRisk::Pool::Point *extra = result.pool->points.data.data + table.points.offset + pattern.extraBegin;
         for (unsigned long long bits = blocker.core; bits && possible; bits &= bits - 1) addBlockerPoint(result, mines, safes, eventBlockerCells, match, points[std::countr_zero(bits)], possible);
         for (unsigned long long bits = blocker.parent; bits && possible; bits &= bits - 1) addBlockerPoint(result, mines, safes, eventBlockerCells, match, points[pattern.coreCount + std::countr_zero(bits)], possible);
         for (unsigned long long bits = blocker.extra; bits && possible; bits &= bits - 1) addBlockerPoint(result, mines, safes, eventBlockerCells, match, extra[std::countr_zero(bits)], possible);
@@ -378,8 +377,9 @@ struct TemplateLongTermRiskEngine {
         TemplateLongTermRisk::Result::Event &event = result.events.data[eventIndex];
         if (event.prepared) return;
         const TemplateLongTermRisk::Result::Match &match = result.matches.data[event.match];
-        const TemplateLongTermRisk::Pool::Pattern &pattern = result.table->patterns.data[match.pattern];
-        const TemplateLongTermRisk::Pool::Point *points = result.table->points.data + pattern.pointBegin;
+        const TemplateLongTermRisk::Pool::Table &table = result.pool->tables.data[result.tableIndex];
+        const TemplateLongTermRisk::Pool::Pattern &pattern = result.pool->patterns.data.data[table.patterns.offset + match.pattern];
+        const TemplateLongTermRisk::Pool::Point *points = result.pool->points.data.data + table.points.offset + pattern.pointBegin;
         mines.resize(0); safes.resize(0);
         for (int i = 0; i < pattern.coreCount; ++i) {
             const int id = cell(result, match.row, match.col, points[i]);
@@ -393,11 +393,11 @@ struct TemplateLongTermRiskEngine {
         eventBlockers.resize(0); eventBlockerCells.resize(0);
         bool possible = true;
         if (event.kind == 1) for (int groupIndex = pattern.groupBegin; groupIndex < pattern.groupEnd && possible; ++groupIndex) {
-            const TemplateLongTermRisk::Pool::Group &group = result.table->groups.data[groupIndex];
+            const TemplateLongTermRisk::Pool::Group &group = result.pool->groups.data.data[table.groups.offset + groupIndex];
             for (int blockerIndex = group.blockerBegin; blockerIndex < group.blockerEnd && possible; ++blockerIndex) {
                 const int begin = (int)eventBlockerCells.size;
                 bool blockerPossible = true;
-                appendBlocker(result.table->blockers.data[blockerIndex], pattern, match, result, mines, safes, eventBlockerCells, blockerPossible);
+                appendBlocker(result.pool->blockers.data.data[table.blockers.offset + blockerIndex], pattern, match, result, mines, safes, eventBlockerCells, blockerPossible);
                 if (!blockerPossible) { eventBlockerCells.resize(begin); continue; }
                 sortCellRange(eventBlockerCells, begin, (int)eventBlockerCells.size - begin);
                 const int count = (int)eventBlockerCells.size - begin;
@@ -562,11 +562,12 @@ struct TemplateLongTermRiskEngine {
         int matchCount = 0;
         for (int i = 0; i < (int)pendingMatches.size; ++i) if (!matchCount || pendingMatches.data[i] != pendingMatches.data[matchCount - 1]) pendingMatches.data[matchCount++] = pendingMatches.data[i];
         pendingMatches.resize(matchCount);
+        const TemplateLongTermRisk::Pool::Table &table = result.pool->tables.data[result.tableIndex];
         for (int i = 0; i < matchCount; ++i) {
             const int matchIndex = pendingMatches.data[i];
             const TemplateLongTermRisk::Result::Match &match = result.matches.data[matchIndex];
-            const TemplateLongTermRisk::Pool::Pattern &pattern = result.table->patterns.data[match.pattern];
-            const TemplateLongTermRisk::Pool::Point *points = result.table->points.data + pattern.pointBegin;
+            const TemplateLongTermRisk::Pool::Pattern &pattern = result.pool->patterns.data.data[table.patterns.offset + match.pattern];
+            const TemplateLongTermRisk::Pool::Point *points = result.pool->points.data.data + table.points.offset + pattern.pointBegin;
             for (int slot = 0; slot < pattern.coreCount + pattern.wallCount; ++slot) {
                 const int id = cell(result, match.row, match.col, points[slot]);
                 if (id < 0 || !isGroupCell(groupCells, id)) continue;
@@ -1024,8 +1025,8 @@ int TemplateLongTermRisk::maxPrefix() {
 void TemplateLongTermRisk::update(Result &result, PositionState &state, int prefix, const Config &config, Pool &pool, Workspace &workspace) {
     assert_(prefix >= 1 && prefix <= maxPrefix(), "LTR模板前缀超出目录范围");
     assert_(config.eventLimit > 0, "LTR方向事件上限必须为正数");
-    Pool::Table &table = TemplateLongTermRiskEngine::getTable(pool, workspace.buildNodes, workspace.buildOutputs, workspace.buildChildren, workspace.buildChildWalls, prefix);
-    result.table = &table;
+    result.pool = &pool; result.tableIndex = TemplateLongTermRiskEngine::getTable(pool, workspace.buildNodes, workspace.buildOutputs, workspace.buildChildren, workspace.buildChildWalls, prefix);
+    const Pool::Table &table = pool.tables.data[result.tableIndex];
     result.eventLimit = config.eventLimit;
     result.rows = state.board.cells.rows(); result.cols = state.board.cells.cols();
     const int size = result.rows * result.cols;
@@ -1042,19 +1043,19 @@ void TemplateLongTermRisk::update(Result &result, PositionState &state, int pref
     for (int row = 0; row < result.rows; ++row) for (int col = 0; col < result.cols; ++col) {
         const int anchor = row * result.cols + col;
         if (!result.hidden.data[anchor]) continue;
-        for (int checkIndex = 0; checkIndex < (int)table.checks.size;) {
-            const Pool::Check &check = table.checks.data[checkIndex];
+        for (int checkIndex = 0; checkIndex < (int)table.checks.count;) {
+            const Pool::Check &check = pool.checks.data.data[table.checks.offset + checkIndex];
             const int nextRow = row + check.row, nextCol = col + check.col;
             if (nextRow < 0 || nextRow >= result.rows || nextCol < 0 || nextCol >= result.cols || !result.hidden.data[nextRow * result.cols + nextCol]) { checkIndex = check.skip; continue; }
-            for (int output = check.outputBegin; output < check.outputEnd; ++output) TemplateLongTermRiskEngine::consider(result, table.outputs.data[output], row, col, state);
+            for (int output = check.outputBegin; output < check.outputEnd; ++output) TemplateLongTermRiskEngine::consider(result, pool.outputs.data.data[table.outputs.offset + output], row, col, state);
             ++checkIndex;
         }
     }
     for (int id = 0; id <= size; ++id) result.offsets.data[id] = 0;
     for (int matchIndex = 0; matchIndex < (int)result.matches.size; ++matchIndex) {
         const Result::Match &match = result.matches.data[matchIndex];
-        const Pool::Pattern &pattern = table.patterns.data[match.pattern];
-        const Pool::Point *points = table.points.data + pattern.pointBegin;
+        const Pool::Pattern &pattern = pool.patterns.data.data[table.patterns.offset + match.pattern];
+        const Pool::Point *points = pool.points.data.data + table.points.offset + pattern.pointBegin;
         for (int slot = 0; slot < pattern.coreCount + pattern.wallCount; ++slot) {
             const int id = TemplateLongTermRiskEngine::cell(result, match.row, match.col, points[slot]);
             if (id < 0 || (slot >= pattern.coreCount && result.probabilities.data[id] >= 1.0L)) continue;
@@ -1067,8 +1068,8 @@ void TemplateLongTermRisk::update(Result &result, PositionState &state, int pref
     result.links.resize(result.offsets.data[size]);
     for (int matchIndex = 0; matchIndex < (int)result.matches.size; ++matchIndex) {
         const Result::Match &match = result.matches.data[matchIndex];
-        const Pool::Pattern &pattern = table.patterns.data[match.pattern];
-        const Pool::Point *points = table.points.data + pattern.pointBegin;
+        const Pool::Pattern &pattern = pool.patterns.data.data[table.patterns.offset + match.pattern];
+        const Pool::Point *points = pool.points.data.data + table.points.offset + pattern.pointBegin;
         for (int slot = 0; slot < pattern.coreCount + pattern.wallCount; ++slot) {
             const int id = TemplateLongTermRiskEngine::cell(result, match.row, match.col, points[slot]);
             if (id >= 0 && (slot < pattern.coreCount || result.probabilities.data[id] < 1.0L)) result.links.data[workspace.order.data[id]++] = {matchIndex, slot};
