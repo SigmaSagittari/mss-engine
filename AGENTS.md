@@ -9,7 +9,7 @@
 1. 用户当前明确要求。
 2. 本文件的作用域和授权规则。
 3. [CODE_REVIEW_PROMPT.md](docs/prompts/CODE_REVIEW_PROMPT.md)。
-4. 任务对应的子文档（implementation / test / probability_engine / operations）。
+4. 任务对应的子文档（implementation / test / operations）。
 5. 现有代码和相邻实现：只作为风格与 API 证据，不能覆盖明确禁令。
 6. 架构草案、TODO、旧注释、旧批准：不是当前授权。
 
@@ -20,7 +20,6 @@
 - 写代码或审查代码前，完整阅读 [CODE_REVIEW_PROMPT.md](docs/prompts/CODE_REVIEW_PROMPT.md)。
 - 修改实现代码：再完整阅读 [implementation.md](docs/prompts/implementation.md)。
 - 新增或修改测试：再完整阅读 [implementation.md](docs/prompts/implementation.md) 和 [test.md](docs/prompts/test.md)。
-- 修改 `probability_engine`：再完整阅读 [probability_engine.md](docs/prompts/probability_engine.md)。
 - 运行程序、测试、benchmark、下载工具或需要用户手动操作：再完整阅读 [operations.md](docs/prompts/operations.md)。
 - 不要加载与当前任务无关的子文档，也不要把整片无关源码灌入上下文。
 
@@ -35,6 +34,6 @@
 - 纯审查任务只读：不改文件、不运行程序或测试；需要运行时先问用户。
 - 架构草案、TODO、旧任务的批准或自己对用户意图的猜测，都不是当前实现授权。用户明确要求架构方案时，方案要落到真实文件和 API，并说明它只是方案；实现仍要另行授权。
 
-本文件和子文档里的条目都是硬约束，没有"建议"级别。
+本文件和子文档里的条目都是硬约束，没有“建议”级别。
 
 [main.cpp](code/main.cpp) 是程序入口，不是规范入口；需要核实时再读它。

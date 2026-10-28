@@ -8,7 +8,6 @@
 | 工作方法、审查、可靠性判断、回复格式 | [CODE_REVIEW_PROMPT.md](prompts/CODE_REVIEW_PROMPT.md) |
 | C++ 写法、结构体与默认值、`Config`/`Workspace`、文件与接口边界、UI/JS | [implementation.md](prompts/implementation.md) |
 | 测试 | [test.md](prompts/test.md) |
-| `probability_engine` 的模块形状与落点 | [probability_engine.md](prompts/probability_engine.md) |
 | 运行、超时、benchmark、下载 | [operations.md](prompts/operations.md) |
 | 待办 | [TODO.md](../TODO.md) |
 
@@ -16,5 +15,5 @@
 
 ## 写作约定
 
-- 规则文档不写"当前已落地/尚未落地"的模块清单，状态以源码目录为准。
+- 规则文档不写“当前已落地/尚未落地”的模块清单，状态以源码目录为准。
 - 修改规则后，检查本页归属表和其他文档的引用是否仍然成立。
