@@ -213,7 +213,7 @@ void GameControl::Position::suggest(PositionState &current, const MovePolicy &po
     } else {
         const FiftyFifty::Config &fifty = policy.fiftyFifty;
         if (policy.basic.algorithm == MovePolicy::Basic::Algorithm::JavaEval) {
-            SuggestResult evaluated = JavaEval::analyze(current, config_.shapeSolver, *policy.basic.javaEval, fifty, fiftyPool, workspace.javaEval, cells, details);
+            SuggestResult evaluated = JavaEval::analyze(current, config_.shapeSolver, *policy.basic.javaEval, fifty, fiftyPool, workspace.selection, cells, details);
             result.swap(evaluated);
         } else {
             const AnytimeSearch::Result searched = AnytimeSearch::analyze(current, searchPool, config_.shapeSolver, *policy.basic.anytime, fifty, fiftyPool, workspace, cells, details);

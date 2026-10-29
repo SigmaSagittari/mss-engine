@@ -97,6 +97,7 @@
     <ClCompile Include="..\code\algo\winrate_engine\bruteforce\bruteforce_normal.cpp" />
     <ClCompile Include="..\code\algo\winrate_engine\move_policy.cpp" />
     <ClCompile Include="..\code\algo\winrate_engine\basic\java_eval\java_eval.cpp" />
+    <ClCompile Include="..\code\algo\winrate_engine\java_lite\java_lite.cpp" />
     <ClCompile Include="..\code\algo\winrate_engine\fifty_fifty\old_java\long_term_risk.cpp">
       <ObjectFileName>$(IntDir)old_java_long_term_risk.obj</ObjectFileName>
     </ClCompile>
@@ -132,6 +133,7 @@
     <ClInclude Include="..\code\algo\winrate_engine\bruteforce\bruteforce.h" />
     <ClInclude Include="..\code\algo\winrate_engine\move_policy.h" />
     <ClInclude Include="..\code\algo\winrate_engine\basic\java_eval\java_eval.h" />
+    <ClInclude Include="..\code\algo\winrate_engine\java_lite\java_lite.h" />
     <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\old_java\long_term_risk.h" />
     <ClInclude Include="..\code\algo\winrate_engine\monte_carlo\monte_carlo.h" />
     <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\old_java\semi.h" />

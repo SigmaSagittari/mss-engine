@@ -2,7 +2,7 @@
 
 #include <deque>
 
-#include "algo/winrate_engine/basic/java_eval/java_eval.h"
+#include "algo/winrate_engine/selection/selection.h"
 #include "core/datastructure/vector_pool.h"
 #include "game/position_state.h"
 
@@ -12,14 +12,14 @@ namespace mss {
 // Pool 保存整棵树和暂停位置；Result 是这棵树的查询句柄；Workspace 只复用临时内存。
 struct AnytimeSearch {
     struct Config {
-        JavaEval::Config javaEval;
+        Selection::Config selection;
         // 续搜的全盘概率分析与 Observe 次数预算；每次各计 1，0 不续搜，根层初始化另算。
         // 候选观察批次和单格数字结局各自完整计算，可超支，下一阶段开始前检查预算。
         long long nodeLimit;
         // 根层、第二步、更深层分别保留多少个候选；指定首招时根层不截断。
         int width[3];
 
-        Config(JavaEval::Config javaEval, long long nodeLimit, int width0, int width1, int width2) : javaEval(javaEval), nodeLimit(nodeLimit) {
+        Config(Selection::Config selection, long long nodeLimit, int width0, int width1, int width2) : selection(selection), nodeLimit(nodeLimit) {
             width[0] = width0;
             width[1] = width1;
             width[2] = width2;
@@ -60,7 +60,7 @@ struct AnytimeSearch {
         // 根候选占 nodes 的首个切片；补偿按 Node 下标保存，不能用 CellId 索引。
         vector<long double> rootCompensations;
         // 每个数字结局的概率及状态增量；其中切片借用 analyze 输入的 PositionState 记录池。
-        vector<JavaEval::Delta> deltas;
+        vector<JavaLite::Delta> deltas;
         // 每个搜索深度一份续算游标；预算耗尽后保留顺序、下一结局及未完成的概率合计。
         struct Frame {
             vector<int> order; // 这一层候选的 Node 下标，按选招分排序后冻结。
@@ -75,12 +75,11 @@ struct AnytimeSearch {
         std::deque<Frame> frames;
         // 同时最多准备一个新位置；安全假设、数字结局与 Observe 按实际调用次数扣节点。
         Selection::Result selected;
-        vector<JavaEval::Result> evaluatedMoves;
-        vectorPool<JavaEval::Delta> pendingDeltas; // 当前新局面的评分暂存，建好子节点后转存到 deltas。
-        int next; // selected 中下一个尚未准备、评分的候选下标。
-        bool preparing; // 当前新局面的候选评分尚未完成，update 需要从 next 接着算。
+        vector<Selection::Evaluation> evaluatedMoves;
+        vectorPool<JavaLite::Delta> pendingDeltas; // 当前新局面的评分暂存，建好子节点后转存到 deltas。
+        bool preparing; // 当前局面的候选尚未算完，update 从 selected.next 接着算。
 
-        Pool() : next(0), preparing(false) {}
+        Pool() : preparing(false) {}
         long double score(int index) const { const Node &candidate = nodes.data.data[index]; return candidate.score() + (candidate.root ? rootCompensations.data[index] : 0.0L); }
     };
 
@@ -100,9 +99,9 @@ struct AnytimeSearch {
     };
 
     struct Workspace {
-        Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) : javaEval(basic, structure, probability) {}
+        Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) : selection(basic, structure, probability) {}
 
-        JavaEval::Workspace javaEval;
+        Selection::Workspace selection;
     };
 
     // analyze/update 期间及续搜前不得改变根盘面或清空 state 的池；Workspace 可顺序复用。
@@ -121,13 +120,11 @@ struct AnytimeSearch {
     };
 
     static void swapProbability(Probability::Result &left, Probability::Result &right);
-    // remainingSafe 含所有未揭开的安全格；forcedSafes 只数盘面上显式标记的 ForcedSafe。
-    static void countSafe(const PositionState &state, int &remainingSafe, int &forcedSafes);
-    static void selectCandidates(vector<JavaEval::Result> &evaluatedMoves, int limit);
+    static void selectCandidates(vector<Selection::Evaluation> &evaluatedMoves, int limit);
     static void selectRoot(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details);
     static bool prepareNode(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, int width, long long &budget, long long &nodeCount);
     static void orderMoves(Pool &pool, vectorPool<Pool::Node>::vector children, Pool::Frame &frame);
-    static void appendDeltas(Pool &pool, int index, const JavaEval::Result &evaluated, const vectorPool<JavaEval::Delta> &deltas);
+    static void appendDeltas(Pool &pool, int index, const JavaLite::Result &evaluated, const vectorPool<JavaLite::Delta> &deltas);
     static Result buildRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details);
     static long long extend(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, Evaluation &evaluation, long long nodeBudget, int maxDepth, SuggestResult::Details *details);
     static void extendPosition(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, Evaluation &evaluation, long long &budget, long long &nodeCount, bool &complete);

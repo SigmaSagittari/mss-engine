@@ -2,7 +2,7 @@
 #include "ui/ui.h"
 
 int main() {
-     //test::harness();
     mss::UI::run();
+    //test::harness();
     return 0;
 }

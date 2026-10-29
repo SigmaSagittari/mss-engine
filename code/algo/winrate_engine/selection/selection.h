@@ -1,6 +1,6 @@
 #pragma once
 
-#include "algo/probability_engine/probability/observe.h"
+#include "algo/winrate_engine/java_lite/java_lite.h"
 #include "algo/winrate_engine/fifty_fifty/fifty_fifty.h"
 #include "core/datastructure/grid.h"
 #include "core/datastructure/hash.h"
@@ -9,25 +9,40 @@
 
 namespace mss {
 
-// 候选生成、死格过滤及评分前三种剪枝；假设安全同时提供后续评分的推进基准。
+// 生成候选、过滤死格并完成单格评分；根层补偿和候选消耗由同一入口结算。
 struct Selection {
+    // JavaEval 允许必安和短 Forced 直接评分；Root 完整评估根层；Inner 不计算根层 LTR。
+    enum class Mode { JavaEval, Root, Inner };
+
+    // 候选短期评分与根层补偿各保存一份；最终选招分在这里组合。
+    struct Evaluation {
+        JavaLite::Result javaLite;
+        long double compensation; // 根层长期风险加法补偿，树内固定为 0。
+        ObservedBoard::CellId cell;
+        int preparationNodes; // 本候选评分前实际执行的概率查询次数。
+
+        Evaluation(ObservedBoard::CellId cell, const JavaLite::Result &javaLite, long double compensation, int preparationNodes) : javaLite(javaLite), compensation(compensation), cell(cell), preparationNodes(preparationNodes) {}
+        long double score() const { return javaLite.value * javaLite.progressMultiplier + compensation; }
+        int nodes() const { return preparationNodes + javaLite.nodes; }
+    };
+
     struct Result {
         // Ordinary：按安全率和空间挑选；Safe：内层已有必安；Specified：调用方指定。
         // Forced：封闭 50-50；Semi：假设候选为雷后必然形成死猜。
         enum class Source { Ordinary, Safe, Specified, Forced, Semi };
-        struct Prepared {
-            int index; // 原始 cells/observations 中的下标，不是棋盘 CellId。
-            int linkedClears; // 只知道本格安全时已有的必安数量，用作额外推进的比较基准。
-
-            Prepared(int index, int linkedClears) : index(index), linkedClears(linkedClears) {}
-        };
         vector<ObservedBoard::CellId> cells;
-        vector<Observe::Result> observations; // removeDead 填写，与 cells 逐项对应。
-        // 评分前按原候选顺序准备；只保留通过剪枝的候选及其推进基准。
-        vector<Prepared> prepared;
-        vector<U128> identities; // 本次已保留的等价类签名，支持剪枝中断后续算。
-        vector<int> equivalent; // 已由先前假设安全确认等价的后续候选下标，无需再次求概率。
+        vector<Observe::Result> observations; // direct 时不使用，否则与 cells 一一对应。
+        vector<ObservedBoard::CellId> prepared; // 对换判断使用已经通过评分前剪枝的格子。
+        // 危险：复用容器时不重建 Result；begin 完整写入这些局面字段后才能调用 next。
+        Source source;
+        int next;
+        int remainingSafe, forcedSafes;
+        Mode mode;
+        bool direct;
+        vectorPool<JavaLite::Delta> *deltas; // 借用调用方的池；为空时只评分。
         FiftyFifty::Result fiftyFifty;
+
+        SuggestResult::Reason reason() const { return source == Source::Forced ? SuggestResult::Reason::Forced : source == Source::Semi ? SuggestResult::Reason::Semi : SuggestResult::Reason::ScoreWins; }
     };
 
     struct Config {
@@ -41,7 +56,11 @@ struct Selection {
         bool equivalence; // 等价类去重：假设安全后得到相同的必安候选集合。
         bool dominance; // 支配去重：假设本格安全后，有一个原本更安全的候选必安。
 
-        Config(long double selectionThreshold1, long double selectionThreshold2, int spaceThreshold, bool interchangeable, bool equivalence, bool dominance) : selectionThreshold1(selectionThreshold1), selectionThreshold2(selectionThreshold2), spaceThreshold(spaceThreshold), interchangeable(interchangeable), equivalence(equivalence), dominance(dominance) {}
+        long double progressContribution;
+        long double influenceScale; // 仅根层使用的长期风险补偿系数。
+
+        Config(long double selectionThreshold1, long double selectionThreshold2, int spaceThreshold, bool interchangeable, bool equivalence, bool dominance, long double progressContribution, long double influenceScale) : selectionThreshold1(selectionThreshold1), selectionThreshold2(selectionThreshold2), spaceThreshold(spaceThreshold), interchangeable(interchangeable), equivalence(equivalence), dominance(dominance), progressContribution(progressContribution), influenceScale(influenceScale) {}
+        void hash(U128Hasher &hasher) const;
     };
 
   private:
@@ -53,11 +72,11 @@ struct Selection {
     };
 
     struct FrontierBox {
-        long double safety;
+        long double mineProbability;
         Structure::InstanceId instance;
         Structure::BoxId box;
 
-        FrontierBox(long double safety, Structure::InstanceId instance, Structure::BoxId box) : safety(safety), instance(instance), box(box) {}
+        FrontierBox(long double mineProbability, Structure::InstanceId instance, Structure::BoxId box) : mineProbability(mineProbability), instance(instance), box(box) {}
     };
 
   public:
@@ -67,6 +86,7 @@ struct Selection {
         Structure::Workspace &structure;
         Probability::Workspace &probability;
         PositionState::Reveal reveal;
+        JavaLite::Workspace javaLite;
         Grid<unsigned> visited;
         unsigned visit;
         vector<CellPosition> stack;
@@ -76,23 +96,24 @@ struct Selection {
         vector<ObservedBoard::CellId> offEdge;
         vector<ObservedBoard::CellId> witnesses;
 
-        Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) : fiftyFifty(basic, structure, probability), basic(basic), structure(structure), probability(probability), visit(0) {}
+        Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) : fiftyFifty(basic, structure, probability), basic(basic), structure(structure), probability(probability), javaLite(basic, structure, probability), visit(0) {}
     };
 
-    // useRisk=true 为根层，安全格已由 Position::suggest 处理；内层先取安全格，再检测 Semi。
-    // Semi 命中即返回；OldJava 未命中时 useRisk 准备其 LTR 供候选筛选；Templates 不调用旧路线。
-    // cells 非空指针表示显式候选，保持输入顺序；格子必须互异且未揭开，空 vector 表示不搜索。
-    // 返回本次实际来源；这里只生成候选，removeDead 单独准备观测，显式候选不删减。
-    static Result::Source find(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, Workspace &workspace, bool useRisk, const vector<ObservedBoard::CellId> *cells = nullptr);
-    // 计算每格的数字/爆炸分布；只从 Ordinary 中删除死格，返回实际 Observe 次数，包含被删掉的格子。
-    static int removeDead(Result &result, Result::Source source, PositionState &state, const ShapeSolverConfig &shapeConfig, Probability::Workspace &probabilityWorkspace);
-    // removeDead 后从 index=0 顺序调用；根层和内层共用，返回 true 时末项是本格的评分输入。
-    // isSafeMove 跳过假设安全；需猜格至多做一次，返回前恢复 state。必雷格没有安全分支。
-    // nodes 累加实际的假设安全概率分析次数，被剪掉的候选也按实际计算计数。
-    static bool prepare(Result &result, int index, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, int remainingSafe, int forcedSafes, bool isSafeMove, long long &nodes, Workspace &workspace);
+    // state 已同步且概率有效；初始化候选与根层风险，返回实际 Observe 次数。
+    // cells 非空时格子互异且未揭开，保持输入顺序并关闭评分前剪枝；空数组得到空结果。
+    // mode 决定评分规则；deltas 非空时向调用方的池写入数字结局增量，快捷评分没有增量。
+    // Result 和池须持续存活，每次 next 的 state 须回到 begin 的局面。
+    static int begin(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, Workspace &workspace, Mode mode, vectorPool<JavaLite::Delta> *deltas, const vector<ObservedBoard::CellId> *cells = nullptr);
+    // 消费一个候选并返回评分；被剪掉时 javaLite.valid=false，nodes() 仍包含本次实际工作量。
+    // 调用前 next<cells.size；每个候选完整计算后才返回，预算由调用方在候选之间检查。
+    // 只有 Inner 允许剪枝，floor 提供比较下界；负数表示尚无下界，根层忽略 floor。
+    static Evaluation next(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, Workspace &workspace, long double floor, SuggestResult::Details *details = nullptr);
     static bool offEdgeCandidate(const ObservedBoard::Result &board, ObservedBoard::CellId cell);
 
   private:
+    static Result::Source find(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, Workspace &workspace, bool useRisk, const vector<ObservedBoard::CellId> *cells);
+    static int removeDead(Result &result, Result::Source source, PositionState &state, const ShapeSolverConfig &shapeConfig, Probability::Workspace &probabilityWorkspace);
+    static bool prepare(Result &result, int index, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, int &linkedClears, int &nodes, Workspace &workspace);
     static bool interchangeable(const PositionState &state, ObservedBoard::CellId lhs, ObservedBoard::CellId rhs);
     static bool contains(span<const ObservedBoard::CellId> cells, ObservedBoard::CellId cell);
     static bool meetsSpaceThreshold(int startRow, int startCol, const PositionState &state, int threshold, Workspace &workspace);

@@ -70,6 +70,9 @@
     <Filter Include="ui\web">
       <UniqueIdentifier>{3FCE96F2-695E-4232-B5FE-0ED55E3547EC}</UniqueIdentifier>
     </Filter>
+    <Filter Include="algo\winrate_engine\java_lite">
+      <UniqueIdentifier>{91A87234-87D4-4DA9-9E77-B849A6108135}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\code\algo\probability_engine\basic\basic.cpp">
@@ -164,6 +167,12 @@
     </ClCompile>
     <ClInclude Include="..\code\algo\winrate_engine\move_policy.h">
       <Filter>algo\winrate_engine</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\winrate_engine\java_lite\java_lite.cpp">
+      <Filter>algo\winrate_engine\java_lite</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\winrate_engine\java_lite\java_lite.h">
+      <Filter>algo\winrate_engine\java_lite</Filter>
     </ClInclude>
     <ClCompile Include="..\code\algo\winrate_engine\basic\java_eval\java_eval.cpp">
       <Filter>algo\winrate_engine\basic\java_eval</Filter>

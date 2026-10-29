@@ -1,10 +1,23 @@
 #include "algo/winrate_engine/selection/selection.h"
 
 #include <algorithm>
+#include <functional>
 
 #include "core/algorithm/neighbors.h"
 
 namespace mss {
+
+void Selection::Config::hash(U128Hasher &hasher) const {
+    auto mixReal = [&](long double value) { hasher.mix((std::uint64_t)std::hash<long double>{}(value)); };
+    mixReal(selectionThreshold1);
+    mixReal(selectionThreshold2);
+    hasher.mix(spaceThreshold);
+    hasher.mix(interchangeable);
+    hasher.mix(equivalence);
+    hasher.mix(dominance);
+    mixReal(progressContribution);
+    mixReal(influenceScale);
+}
 
 // 对换去重：两格独占的邻位只能是必雷或棋盘外，不依赖 Box。
 bool Selection::interchangeable(const PositionState &state, ObservedBoard::CellId lhs, ObservedBoard::CellId rhs) {
@@ -26,64 +39,68 @@ bool Selection::interchangeable(const PositionState &state, ObservedBoard::CellI
     return matches(left.first, left.second, right.first, right.second, rhs) && matches(right.first, right.second, left.first, left.second, lhs);
 }
 
-bool Selection::prepare(Result &result, int index, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, int remainingSafe, int forcedSafes, bool isSafeMove, long long &nodes, Workspace &workspace) {
+bool Selection::prepare(Result &result, int index, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, int &linkedClears, int &nodes, Workspace &workspace) {
     const ObservedBoard::CellId cell = result.cells.data[index];
-    if (config.equivalence)
-        for (int i = 0; i < (int)result.equivalent.size; ++i)
-            if (result.equivalent.data[i] == index)
-                return false;
-    if (config.interchangeable)
+    if (result.source != Result::Source::Specified && config.interchangeable)
         for (int i = 0; i < (int)result.prepared.size; ++i)
-            if (interchangeable(state, result.cells.data[result.prepared.data[i].index], cell))
+            if (interchangeable(state, result.prepared.data[i], cell))
                 return false;
     const long double mineProbability = result.observations.data[index].probability[9];
-    if (isSafeMove || mineProbability == 1.0L) {
-        result.prepared.push_back(Result::Prepared(index, 0));
+    if (mineProbability == 0.0L || mineProbability == 1.0L) {
+        result.prepared.push_back(cell);
+        linkedClears = 0;
         return true;
     }
-    state.applyReveal(cell, ObservedBoard::CellState::ForcedSafe, shapeConfig, workspace.basic, workspace.structure, workspace.probability, workspace.reveal);
-    ++nodes;
-    // 只统计前沿和已知安全格；无前沿格的额外清除不计入推进基准。
-    int linkedClears = state.board.totalMines + remainingSafe - state.basic.mineSum - state.basic.unknownSum;
+    vector<FrontierBox> &boxes = workspace.boxes;
+    boxes.resize(0);
+    // 只统计原前沿和已知安全格；保存原始概率与 Box，假设后旧实例仍在池中，组件映射会改变。
+    linkedClears = state.board.totalMines + result.remainingSafe - state.basic.mineSum - state.basic.unknownSum - result.forcedSafes;
     for (int component = 0; component < (int)state.structure.components.size; ++component) {
-        const Structure::Instance &instance = state.shapes.instances.list.data[state.structure.components.data[component]];
-        const Probability::Result::Component &layout = workspace.reveal.probability.components.data[component];
+        const Structure::InstanceId instanceId = state.structure.components.data[component];
+        const Structure::Instance &instance = state.shapes.instances.list.data[instanceId];
+        const Probability::Result::Component &layout = state.probability.components.data[component];
+        linkedClears -= instance.cells.count;
+        for (int box = 0; box < layout.boxCount; ++box)
+            boxes.push_back(FrontierBox(state.probability.boxProbabilities.data[layout.boxOffset + box], instanceId, box));
+    }
+    state.applyReveal(cell, ObservedBoard::CellState::ForcedMine, shapeConfig, workspace.basic, workspace.structure, workspace.probability, workspace.reveal);
+    ++nodes;
+    auto conditionalMine = [&](ObservedBoard::CellId other) {
+        const Structure::Result::CellLocation &location = state.structure.cellLoc.data[other];
+        if (location.component < 0 || location.box < 0)
+            return Probability::mineProbability(workspace.reveal.probability, other, state.board, state.basic, state.structure);
+        return workspace.reveal.probability.boxProbabilities.data[workspace.reveal.probability.components.data[location.component].boxOffset + location.box];
+    };
+    // P(X雷|B安) = (P(X雷) - P(B雷)P(X雷|B雷)) / P(B安)。
+    // 沿用概率查询的 1e-10 阈值，镜像用于归一化后的近零条件概率。
+    auto conditionalSafe = [&](long double original, long double forced) { return (original - mineProbability * forced) / (1.0L - mineProbability) <= 1e-10L; };
+    for (int i = 0; i < (int)boxes.size; ++i) {
+        const FrontierBox &box = boxes.data[i];
+        const Structure::Instance &instance = state.shapes.instances.list.data[box.instance];
         const int *offsets = state.shapes.instances.boxOf.data.data + instance.boxOf.offset;
-        for (int box = 0; box + 1 < (int)instance.boxOf.count; ++box)
-            if (1.0L - workspace.reveal.probability.boxProbabilities.data[layout.boxOffset + box] != 1.0L)
-                linkedClears -= offsets[box + 1] - offsets[box];
+        const ObservedBoard::CellId *cells = state.shapes.instances.cells.data.data + instance.cells.offset;
+        for (int j = offsets[box.box]; j < offsets[box.box + 1]; ++j)
+            if (cells[j] != cell && conditionalSafe(box.mineProbability, conditionalMine(cells[j]))) ++linkedClears;
     }
-    linkedClears -= forcedSafes + (workspace.reveal.previous == ObservedBoard::CellState::ForcedSafe ? 0 : 1);
-    U128Hasher hasher;
     bool dominated = false;
-    const int equivalentCount = result.equivalent.size;
-    if (config.equivalence || config.dominance)
-        for (int i = 0; i < (int)result.cells.size; ++i)
-            if (Probability::mineProbability(workspace.reveal.probability, result.cells.data[i], state.board, state.basic, state.structure) == 0.0L) {
-                // 等价类去重：假设安全后得到同一个必安候选集合。
-                if (config.equivalence) {
-                    hasher.mix(result.cells.data[i]);
-                    // A 安全推出 B 安全且两者等概率，则安全事件相同，后续 B 直接复用此类。
-                    if (i > index && result.observations.data[i].probability[9] == mineProbability) result.equivalent.push_back(i);
-                }
-                // 支配去重的充分条件：原本更安全的候选在本格安全时必安。
-                if (config.dominance && result.observations.data[i].probability[9] < mineProbability) dominated = true;
-            }
+    int count = index + 1;
+    // B雷推出A雷，即A安推出B安；优先代表直接删去后面的等价或受支配候选。
+    for (int i = 0; i < (int)result.cells.size; ++i) {
+        const long double other = result.observations.data[i].probability[9];
+        if (result.source != Result::Source::Specified && i != index) {
+            const long double forced = conditionalMine(result.cells.data[i]);
+            if ((other < mineProbability ? config.dominance : config.equivalence && other == mineProbability && i < index) && conditionalSafe(other, forced)) dominated = true;
+            if (i > index && other < 1.0L && (other > mineProbability ? config.dominance : config.equivalence && other == mineProbability) && forced >= 1.0L - 1e-10L) continue;
+        }
+        if (i > index) {
+            result.cells.data[count] = result.cells.data[i];
+            result.observations.data[count++] = result.observations.data[i];
+        }
+    }
+    result.cells.size = result.observations.size = count;
     state.undoReveal(workspace.reveal);
-    if (dominated) {
-        result.equivalent.resize(equivalentCount);
-        return false;
-    }
-    if (config.equivalence) {
-        const U128 identity = hasher.finalize();
-        for (int i = 0; i < (int)result.identities.size; ++i)
-            if (result.identities.data[i] == identity) {
-                result.equivalent.resize(equivalentCount);
-                return false;
-            }
-        result.identities.push_back(identity);
-    }
-    result.prepared.push_back(Result::Prepared(index, linkedClears));
+    if (dominated) return false;
+    result.prepared.push_back(cell);
     return true;
 }
 
@@ -162,10 +179,10 @@ void Selection::selectOrdinary(vector<ObservedBoard::CellId> &result, const Posi
         const Probability::Result::Component &layout = state.probability.components.data[component];
         const int boxCount = (int)instance.boxOf.count - 1;
         for (int box = 0; box < boxCount; ++box)
-            workspace.boxes.push_back(FrontierBox(1.0L - state.probability.boxProbabilities.data[layout.boxOffset + box], state.structure.components.data[component], box));
+            workspace.boxes.push_back(FrontierBox(state.probability.boxProbabilities.data[layout.boxOffset + box], state.structure.components.data[component], box));
     }
     std::sort(workspace.boxes.data, workspace.boxes.data + workspace.boxes.size, [](const FrontierBox &left, const FrontierBox &right) {
-        return left.safety > right.safety;
+        return left.mineProbability < right.mineProbability;
     });
     auto cellsOf = [&](const FrontierBox &box) {
         const Structure::Instance &instance = state.shapes.instances.list.data[box.instance];
@@ -175,16 +192,16 @@ void Selection::selectOrdinary(vector<ObservedBoard::CellId> &result, const Posi
     };
     long double bestSafety = state.basic.unknownSum != 0 ? 1.0L - state.probability.tCellProbability : 0.0L;
     if (workspace.boxes.size != 0)
-        bestSafety = (std::max)(bestSafety, workspace.boxes.data[0].safety);
+        bestSafety = (std::max)(bestSafety, (1.0L - workspace.boxes.data[0].mineProbability));
     long double test = bestSafety == 1.0L ? 1.0L : bestSafety - config.selectionThreshold1;
     long double test2 = bestSafety == 1.0L ? 1.0L : bestSafety - config.selectionThreshold2;
 
     workspace.onEdge.resize(0);
     for (int i = 0; i < (int)workspace.boxes.size; ++i) {
         const FrontierBox &box = workspace.boxes.data[i];
-        if (box.safety < test && ((int)workspace.onEdge.size >= 2 || box.safety < test2))
+        if ((1.0L - box.mineProbability) < test && ((int)workspace.onEdge.size >= 2 || (1.0L - box.mineProbability) < test2))
             break;
-        test = (std::min)(test, box.safety);
+        test = (std::min)(test, (1.0L - box.mineProbability));
         const span<const ObservedBoard::CellId> cells = cellsOf(box);
         for (int cell = 0; cell < cells.size; ++cell)
             workspace.onEdge.push_back(cells.data[cell]);
@@ -259,8 +276,8 @@ void Selection::selectOrdinary(vector<ObservedBoard::CellId> &result, const Posi
         for (int i = 0; i < (int)workspace.boxes.size; ++i) {
             const span<const ObservedBoard::CellId> cells = cellsOf(workspace.boxes.data[i]);
             for (int cell = 0; cell < cells.size; ++cell)
-                if (safest == -1 || workspace.boxes.data[i].safety > safestSafety || (workspace.boxes.data[i].safety == safestSafety && cells.data[cell] < safest)) {
-                    safestSafety = workspace.boxes.data[i].safety;
+                if (safest == -1 || (1.0L - workspace.boxes.data[i].mineProbability) > safestSafety || ((1.0L - workspace.boxes.data[i].mineProbability) == safestSafety && cells.data[cell] < safest)) {
+                    safestSafety = (1.0L - workspace.boxes.data[i].mineProbability);
                     safest = cells.data[cell];
                 }
         }
@@ -273,8 +290,6 @@ Selection::Result::Source Selection::find(PositionState &state, const ShapeSolve
     result.cells.resize(0);
     result.observations.resize(0);
     result.prepared.resize(0);
-    result.identities.resize(0);
-    result.equivalent.resize(0);
     if (cells != nullptr) {
         result.cells = *cells;
         return Result::Source::Specified;
@@ -316,6 +331,52 @@ Selection::Result::Source Selection::find(PositionState &state, const ShapeSolve
         return leftProbability != rightProbability ? leftProbability < rightProbability : left < right;
     });
     return Result::Source::Ordinary;
+}
+
+int Selection::begin(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, Workspace &workspace, Mode mode, vectorPool<JavaLite::Delta> *deltas, const vector<ObservedBoard::CellId> *cells) {
+    const bool root = mode != Mode::Inner;
+    result.mode = mode;
+    result.deltas = deltas;
+    result.next = 0;
+    result.source = find(state, shapeConfig, config, fiftyConfig, fiftyPool, result, workspace, root, cells);
+    const bool semi = result.source == Result::Source::Forced || result.source == Result::Source::Semi;
+    result.direct = mode == Mode::JavaEval && result.source == Result::Source::Forced && result.cells.size < 4;
+    const int nodes = result.direct ? 0 : removeDead(result, result.source, state, shapeConfig, workspace.probability);
+    if (root && !semi && result.cells.size != 0 && (fiftyConfig.algorithm == FiftyFifty::Algorithm::Templates || result.source == Result::Source::Specified))
+        FiftyFifty::prepareRisk(result.fiftyFifty, state, shapeConfig, fiftyConfig, fiftyPool, workspace.fiftyFifty, false);
+    result.remainingSafe = state.board.cells.rows() * state.board.cells.cols() - state.board.totalMines;
+    result.forcedSafes = 0;
+    for (int row = 0; row < state.board.cells.rows(); ++row)
+        for (int col = 0; col < state.board.cells.cols(); ++col) {
+            if (state.board.cells[row][col] <= ObservedBoard::CellState::Num8) --result.remainingSafe;
+            else if (root && state.board.cells[row][col] == ObservedBoard::CellState::ForcedSafe) ++result.forcedSafes;
+        }
+    return nodes;
+}
+
+Selection::Evaluation Selection::next(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, Workspace &workspace, long double floor, SuggestResult::Details *details) {
+    const int index = result.next++;
+    const ObservedBoard::CellId cell = result.cells.data[index];
+    if (result.mode == Mode::JavaEval && (result.direct || result.observations.data[index].probability[9] == 0.0L))
+        return Evaluation(cell, JavaLite::Result(1.0L, 1.0L, {}, 0, true), 0.0L, 0);
+    const Observe::Result &observation = result.observations.data[index];
+    const bool safe = observation.probability[9] == 0.0L;
+    if (result.mode == Mode::Inner && !safe && floor >= 0.0L) {
+        long double safety = 0.0L;
+        for (int digit = 0; digit <= 8; ++digit) safety += observation.probability[digit];
+        if (safety * (1.0L + safety * config.progressContribution) < floor)
+            return Evaluation(cell, JavaLite::Result(0.0L, 1.0L, {}, 0, false), 0.0L, 0);
+    }
+    int linkedClears;
+    int preparationNodes = 0;
+    if (!prepare(result, index, state, shapeConfig, config, linkedClears, preparationNodes, workspace))
+        return Evaluation(cell, JavaLite::Result(0.0L, 1.0L, {}, 0, false), 0.0L, preparationNodes);
+    const bool risk = result.mode != Mode::Inner && !safe && result.source != Result::Source::Forced && result.source != Result::Source::Semi;
+    const long double influence = risk && observation.probability[9] != 1.0L ? FiftyFifty::influence(cell, state, result.fiftyFifty, shapeConfig, fiftyConfig, workspace.fiftyFifty) : 0.0L;
+    const JavaLite::Result javaLite = JavaLite::evaluate(state, shapeConfig, config.progressContribution, workspace.javaLite, result.deltas, cell, observation, result.remainingSafe, linkedClears, safe, result.mode == Mode::Inner, floor, details);
+    long double compensation = risk ? config.influenceScale * influence : 0.0L;
+    if (risk && fiftyConfig.algorithm == FiftyFifty::Algorithm::OldJava && observation.probability[9] != 1.0L) compensation *= javaLite.value * javaLite.progressMultiplier / (1.0L - observation.probability[9]);
+    return Evaluation(cell, javaLite, compensation, preparationNodes);
 }
 
 int Selection::removeDead(Result &result, Result::Source source, PositionState &state, const ShapeSolverConfig &shapeConfig, Probability::Workspace &probabilityWorkspace) {

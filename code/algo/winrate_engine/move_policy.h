@@ -1,6 +1,7 @@
 #pragma once
 
 #include "algo/winrate_engine/basic/anytime_search/anytime_search.h"
+#include "algo/winrate_engine/basic/java_eval/java_eval.h"
 #include "algo/winrate_engine/bruteforce/bruteforce.h"
 
 namespace mss {

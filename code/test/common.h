@@ -27,7 +27,7 @@ inline const Config config{
     /* mines 雷数 */ 99,
     /* time 时限，秒 */ 900.0L,
     /* games 局数上限 */ 200000,
-    /* threads 对局线程数 */ 5
+    /* threads 对局线程数 */ 1
 };
 inline const mss::GameControl::Config gameConfig{
     /* shapeSolver 概率求解器 */ {
@@ -41,31 +41,27 @@ inline const mss::GameControl::Config gameConfig{
     }
 };
 inline const mss::JavaEval::Config javaEvalConfig{
-    /* selection 候选筛选 */ {
-        /* selectionThreshold1 第一筛选阈值 */ 0.10L,
-        /* selectionThreshold2 第二筛选阈值 */ 0.20L,
-        /* spaceThreshold 空间阈值 */ 8,
-        /* interchangeable 对换去重 */ false,
-        /* equivalence 等价类去重 */ false,
-        /* dominance 支配去重 */ true
-    },
+    /* selectionThreshold1 第一筛选阈值 */ 0.10L,
+    /* selectionThreshold2 第二筛选阈值 */ 0.20L,
+    /* spaceThreshold 空间阈值 */ 8,
+    /* interchangeable 对换去重 */ false,
+    /* equivalence 等价类去重 */ false,
+    /* dominance 支配去重 */ true,
     /* progressContribution 推进加分 */ 0.001L,
     /* influenceScale 长期风险系数 */ 0.9L
 };
 inline const mss::AnytimeSearch::Config anytimeConfig{
-    /* javaEval 单步评分与候选配置 */ {
-        /* selection 候选筛选与评分前剪枝 */ {
-            /* selectionThreshold1 第一筛选阈值 */ javaEvalConfig.selection.selectionThreshold1,
-            /* selectionThreshold2 第二筛选阈值 */ javaEvalConfig.selection.selectionThreshold2,
-            /* spaceThreshold 空间阈值 */ javaEvalConfig.selection.spaceThreshold,
-            /* interchangeable 对换去重 */ true,
-            /* equivalence 等价类去重 */ true,
-            /* dominance 支配去重 */ true
-        },
+    /* selection 候选选择与单步评分 */ {
+        /* selectionThreshold1 第一筛选阈值 */ javaEvalConfig.selectionThreshold1,
+        /* selectionThreshold2 第二筛选阈值 */ javaEvalConfig.selectionThreshold2,
+        /* spaceThreshold 空间阈值 */ javaEvalConfig.spaceThreshold,
+        /* interchangeable 对换去重 */ true,
+        /* equivalence 等价类去重 */ true,
+        /* dominance 支配去重 */ true,
         /* progressContribution 推进加分 */ javaEvalConfig.progressContribution,
         /* influenceScale 长期风险系数 */ javaEvalConfig.influenceScale
     },
-    /* nodeLimit 全盘概率分析与 Observe 次数预算，约等于旧版 256 节点 */ 1280,
+    /* nodeLimit 全盘概率分析与 Observe 次数预算 */ 10000,
     /* width[0] 第一层宽度 */ 6,
     /* width[1] 第二层宽度 */ 3,
     /* width[2] 后续层宽度 */ 1
@@ -94,7 +90,7 @@ inline const mss::MovePolicy policy{
         /* templates 模板 Semi / LTR 配置 */ &templateConfig
     },
     /* brute 暴力接管 */ {
-        /* limit 摆法数阈值，0 关闭 */ 1000,
+        /* limit 摆法数阈值，0 关闭 */ 10000,
         /* config 关闭时可传 nullptr */ &bruteConfig
     }
 };

@@ -369,7 +369,7 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
             else {
                 Config config = config_;
                 if (!parseFiftyFifty(fields, config, response)) return response;
-                FiftyFifty::Workspace &workspace = analysis_->anytimeSearch.javaEval.selection.fiftyFifty;
+                FiftyFifty::Workspace &workspace = analysis_->anytimeSearch.selection.fiftyFifty;
                 if (config.fiftyFifty.algorithm == FiftyFifty::Algorithm::OldJava) {
                     const LongTermRisk::Details risk = FiftyFifty::describeOldJava(cell, position.state(), analysis_->config.shapeSolver, config.fiftyFifty.oldJava, workspace.oldJava);
                     result << ",\"longTermRisk\":{\"algorithm\":\"oldjava\",\"body\":" << risk.body << ",\"restriction\":" << risk.restriction << '}';

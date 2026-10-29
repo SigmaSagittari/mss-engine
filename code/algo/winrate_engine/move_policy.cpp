@@ -8,7 +8,7 @@ void MovePolicy::hash(U128Hasher &hasher) const {
     hasher.mix((int)basic.algorithm);
     if (basic.algorithm == Basic::Algorithm::JavaEval) basic.javaEval->hash(hasher);
     if (basic.algorithm == Basic::Algorithm::Anytime) {
-        basic.anytime->javaEval.hash(hasher);
+        basic.anytime->selection.hash(hasher);
         hasher.mix((std::uint64_t)basic.anytime->nodeLimit);
         for (int i = 0; i < 3; ++i) hasher.mix(basic.anytime->width[i]);
     }
