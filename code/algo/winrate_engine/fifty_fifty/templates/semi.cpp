@@ -147,13 +147,13 @@ void TemplateSemi::Table::compileBranch(Pool &pool, vector<Build::Rooted> &entri
     compileBranch(pool, entries, tests, frequency, middle, end, parent);
 }
 
-TemplateSemi::Facts::Facts(const PositionState &state, Grid<std::uint64_t> &mines, Grid<std::uint64_t> &safes, vector<Basic::Mark> &marks, vector<Adjacent> &adjacent, vector<Constraint> &constraints, vector<std::uint64_t> &active, vector<std::uint64_t> &found) : mines(mines), safes(safes), marks(marks), adjacent(adjacent), constraints(constraints), active(active), found(found), rows(state.board.cells.rows()), cols(state.board.cells.cols()), words((rows * cols + 63) / 64) {
+TemplateSemi::Facts::Facts(const PositionState &state, const Probability::Pool &probabilities, Grid<std::uint64_t> &mines, Grid<std::uint64_t> &safes, vector<Basic::Mark> &marks, vector<Adjacent> &adjacent, vector<Constraint> &constraints, vector<std::uint64_t> &active, vector<std::uint64_t> &found) : mines(mines), safes(safes), marks(marks), adjacent(adjacent), constraints(constraints), active(active), found(found), rows(state.board.cells.rows()), cols(state.board.cells.cols()), words((rows * cols + 63) / 64) {
     const int cells = rows * cols;
     marks.resize(cells); adjacent.resize(cells); constraints.resize(0); active.resize(words); found.resize(words);
     mines.resize(cells, words, 0); safes.resize(cells, words, 0);
     for (int word = 0; word < words; ++word) { active.data[word] = 0; found.data[word] = 0; }
     for (int id = 0; id < cells; ++id) {
-        const long double probability = Probability::mineProbability(state.probability, id, state.board, state.basic, state.structure);
+        const long double probability = Probability::mineProbability(state.probability, probabilities, id, state.board, state.basic, state.structure);
         marks.data[id] = probability == 1 ? Basic::Mark::F : probability == 0 ? Basic::Mark::S : state.basic.marks[id / cols][id % cols];
         adjacent.data[id].count = 0;
         if (marks.data[id] != Basic::Mark::H) continue;
@@ -244,7 +244,7 @@ int TemplateSemi::matchPrefix(const Table &table, const Pool &pool, int node, co
     return -1;
 }
 
-void TemplateSemi::detect(Semi::Result &result, const PositionState &state, int prefix, Pool &pool, Workspace &workspace) {
+void TemplateSemi::detect(Semi::Result &result, const PositionState &state, const Probability::Pool &probabilities, int prefix, Pool &pool, Workspace &workspace) {
     int selected = -1;
     for (int i = 0; i < (int)pool.tables.size; ++i) if (pool.tables.data[i].prefix == prefix) { selected = i; break; }
     if (selected == -1) {
@@ -252,7 +252,7 @@ void TemplateSemi::detect(Semi::Result &result, const PositionState &state, int 
         pool.tables.push_back(Table(prefix, pool, workspace.first, workspace.second, workspace.core, workspace.boundary, workspace.patterns, workspace.points, workspace.entries, workspace.tests, workspace.frequency, workspace.groups));
     }
     const Table &table = pool.tables.data[selected];
-    Facts facts(state, workspace.mineStorage, workspace.safeStorage, workspace.markStorage, workspace.adjacentStorage, workspace.constraintStorage, workspace.activeStorage, workspace.foundStorage);
+    Facts facts(state, probabilities, workspace.mineStorage, workspace.safeStorage, workspace.markStorage, workspace.adjacentStorage, workspace.constraintStorage, workspace.activeStorage, workspace.foundStorage);
     facts.propagate(workspace.pending, workspace.queued);
     for (int id = 0; id < facts.rows * facts.cols; ++id) if (facts.marks.data[id] == Basic::Mark::H)
         for (int word = 0; word < facts.words; ++word) for (std::uint64_t bits = facts.safes[id][word] & ~facts.found.data[word]; bits; bits &= bits - 1) {
@@ -264,7 +264,7 @@ void TemplateSemi::detect(Semi::Result &result, const PositionState &state, int 
         }
     result.kind = Semi::Kind::None; result.cells.resize(0);
     for (int root = 0; root < facts.rows * facts.cols; ++root) if (facts.found.data[root / 64] & (1ULL << (root % 64))) {
-        const long double probability = Probability::mineProbability(state.probability, root, state.board, state.basic, state.structure);
+        const long double probability = Probability::mineProbability(state.probability, probabilities, root, state.board, state.basic, state.structure);
         const bool forced = std::abs(probability - 0.5L) <= halfTolerance;
         if (forced && result.kind != Semi::Kind::Forced) { result.cells.resize(0); result.kind = Semi::Kind::Forced; }
         if (result.kind != Semi::Kind::Forced) result.kind = Semi::Kind::Semi;

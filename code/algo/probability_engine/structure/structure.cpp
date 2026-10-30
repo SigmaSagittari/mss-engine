@@ -117,6 +117,21 @@ static U128 computeInstanceHash(const Structure::Instance &instance, const Struc
     return hasher.finalize();
 }
 
+void Structure::Pool::clear() {
+    shapes.boxSizes.data.resize(0);
+    shapes.constraints.data.resize(0);
+    shapes.boxIds.data.resize(0);
+    shapes.list.resize(0);
+    shapes.index.clear();
+    instances.cells.data.resize(0);
+    instances.boxOf.data.resize(0);
+    instances.constraintCells.data.resize(0);
+    instances.list.resize(0);
+    instances.index.clear();
+    deltas.removed.data.resize(0);
+    deltas.added.data.resize(0);
+}
+
 Structure::ShapeId Structure::Pool::Shapes::intern(Shape shape) {
     const ShapeId *found = index.find(shape.hash);
     if (found != nullptr) {
@@ -325,7 +340,7 @@ Structure::Delta Structure::update(Result &result, const ObservedBoard::Result &
         const ComponentId component = scratch.removed.data[i];
         pool.deltas.removed.push_back(delta.removed, {component, result.components.data[component]});
     }
-    applyDelta(result, pool, delta);
+    applyDelta(result, delta, pool);
 
     // 新连接只会出现在变化格及其邻格；远端传播落在已命中的旧组件中，整组格子已在 invalidate 中标脏。
     for (int i = 0; i < (int)scratch.dirtyCells.size; ++i) {
@@ -336,7 +351,7 @@ Structure::Delta Structure::update(Result &result, const ObservedBoard::Result &
     return delta;
 }
 
-void Structure::applyDelta(Result &result, const Pool &pool, const Delta &delta, bool reverse) {
+void Structure::applyDelta(Result &result, const Delta &delta, const Pool &pool, bool reverse) {
     const Delta::Change *removed = pool.deltas.removed.data.data + delta.removed.offset;
     const InstanceId *added = pool.deltas.added.data.data + delta.added.offset;
     const int removedCount = (int)delta.removed.count;

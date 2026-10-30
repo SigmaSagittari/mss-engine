@@ -14,33 +14,39 @@ namespace mss {
 // 小 Shape 的完整枚举后端。结果直接使用 ShapeSolverType 的共享类型。
 struct ShapeSolverDfs {
     struct Workspace {
-        // Box -> 关联约束的边链表；每条约束的当前和、最大可贡献量和已分配容量。
-        vector<int> boxHead;
-        vector<int> constraintNext;
-        vector<int> constraintIds;
-        vector<int> constraintSum;
-        vector<int> constraintMaxAdd;
-        vector<int> currentSum;
-        vector<int> assignedSize;
-        // 当前枚举到的各 Box 雷数；只在回调期间有效。
-        vector<char> assignment;
-        struct Frame {
-            // 下一层要分配的 Box 和当前 Box 下一种待试的雷数。
-            int index;
-            int nextMine;
-            // 进入本帧时已应用的父层 Box 及其雷数；根帧为 -1 和 0。
-            int appliedIndex;
-            int appliedMine;
-            long double ways;
-        };
-        vector<Frame> frames;
-        // 随机布雷建赋值缓存：每个雷数档的赋值数、计数排序游标和累计权重。
-        vector<int> groupCounts;
-        vector<int> groupCursor;
-        vector<long double> groupWays;
-        // 普通分布的 ways 和按组件雷数行累计的矩。
-        vector<long double> ways;
-        Grid<long double> moments;
+        struct Enumerate {
+            struct Constraints {
+                // Box -> 关联约束的边链表。
+                vector<int> boxHead;
+                vector<int> constraintNext;
+                vector<int> constraintIds;
+                vector<int> constraintSum;
+                vector<int> constraintMaxAdd;
+                vector<int> currentSum;
+                vector<int> assignedSize;
+            } constraints;
+            // 当前枚举到的各 Box 雷数；只在回调期间有效。
+            vector<char> assignment;
+            struct Frame {
+                // 下一层要分配的 Box 和当前 Box 下一种待试的雷数。
+                int index;
+                int nextMine;
+                // 进入本帧时已应用的父层 Box 及其雷数；根帧为 -1 和 0。
+                int appliedIndex;
+                int appliedMine;
+                long double ways;
+            };
+            vector<Frame> frames;
+        } enumerate;
+        struct Assignments {
+            vector<int> counts;
+            vector<int> cursor;
+            vector<long double> ways;
+        } assignments;
+        struct Analyze {
+            vector<long double> ways;
+            Grid<long double> moments;
+        } analyze;
         // 观测累计表和卷积缓冲；每次调用覆写，只保留存储容量。
         vectorPool<long double> observedValues;
     };
@@ -84,7 +90,7 @@ struct ShapeSolverDfs {
 
   private:
     // 枚举循环只在 .cpp 内定义，回调借用 workspace.assignment。
-    template <typename Callback> static void enumerateAssignments(const Structure::Shape &shape, const Structure::Pool &shapes, Workspace &workspace, Callback &&callback);
+    template <typename Callback> static void enumerateAssignments(const Structure::Shape &shape, const Structure::Pool &shapes, Workspace::Enumerate &workspace, Callback &&callback);
 };
 
 } // 命名空间 mss

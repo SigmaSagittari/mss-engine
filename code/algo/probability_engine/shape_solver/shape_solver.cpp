@@ -44,7 +44,8 @@ void ShapeSolver::AssignmentPool::clear() {
     index.clear();
 }
 
-ShapeSolver::DistributionId ShapeSolver::analyze(const Structure::Shape &shape, const Structure::Pool &shapes, const Config &config, DistributionPool &pool, Workspace &workspace) {
+ShapeSolver::DistributionId ShapeSolver::analyze(const Structure::Shape &shape, const Config &config, DistributionPool &pool, Workspace &workspace) {
+    const Structure::Pool &shapes = pool.shapes;
     const DistributionId cached = pool.find(shape.hash);
     if (cached >= 0)
         return cached;
@@ -63,7 +64,8 @@ void ShapeSolver::observe(const Structure::Shape &shape, const Structure::Pool &
         ShapeSolverGraph::observe(shape, shapes, adjacentBoxCells, xBox, config, result, workspace.graph);
 }
 
-const ShapeSolver::Assignments &ShapeSolver::assignments(Structure::ShapeId shapeId, const Structure::Shape &shape, const Structure::Pool &shapes, AssignmentPool &pool, Workspace &workspace) {
+const ShapeSolver::Assignments &ShapeSolver::assignments(Structure::ShapeId shapeId, const Structure::Shape &shape, AssignmentPool &pool, Workspace &workspace) {
+    const Structure::Pool &shapes = pool.shapes;
     if (const Assignments *cached = pool.find(shapeId))
         return *cached;
     const Assignments assignments = ShapeSolverDfs::buildAssignments(shape, shapes, pool.storage, workspace.dfs);

@@ -51,7 +51,7 @@ bool Semi::adjacent(const ObservedBoard::Result &board, CellId lhs, CellId rhs) 
     return lhs != rhs && std::abs(left.first - right.first) <= 1 && std::abs(left.second - right.second) <= 1;
 }
 
-void Semi::assess(Link &link, const PositionState &state) {
+void Semi::assess(Link &link, const PositionState &state, const Probability::Pool &probabilities) {
     const CellId tiles[2] = {link.first, link.second};
     for (int index = 0; index < 2; ++index) {
         const CellId tile = tiles[index];
@@ -60,7 +60,7 @@ void Semi::assess(Link &link, const PositionState &state) {
             const CellId info = state.board.id(row, col);
             if (info == link.first || info == link.second)
                 return;
-            if (Probability::mineProbability(state.probability, info, state.board, state.basic, state.structure) == 1.0L)
+            if (Probability::mineProbability(state.probability, probabilities, info, state.board, state.basic, state.structure) == 1.0L)
                 return;
             const CellId other = tile == link.first ? link.second : link.first;
             if (!adjacent(state.board, info, other)) {
@@ -75,7 +75,7 @@ void Semi::assess(Link &link, const PositionState &state) {
     }
 }
 
-void Semi::findRootedLinks(span<const CellId> cells, const PositionState &state, span<const CellId> dead, int witnessSize, vector<Link> &links, int &linkCount) {
+void Semi::findRootedLinks(span<const CellId> cells, const PositionState &state, const Probability::Pool &probabilities, span<const CellId> dead, int witnessSize, vector<Link> &links, int &linkCount) {
     const int offsets[2][2] = {{-1, 0}, {0, 1}};
     for (int index = 0; index < cells.size; ++index) {
         const CellId tile1 = cells.data[index];
@@ -93,7 +93,7 @@ void Semi::findRootedLinks(span<const CellId> cells, const PositionState &state,
             else
                 links.data[linkCount].reset(tile1, tile2, semiContains(dead, tile1), semiContains(dead, tile2), true, witnessSize);
             Link &link = links.data[linkCount];
-            assess(link, state);
+            assess(link, state, probabilities);
             if ((link.closedFirst || link.closedSecond) && (!link.deadFirst || !link.deadSecond))
                 ++linkCount;
         }
@@ -121,7 +121,7 @@ bool Semi::linkLess(const Link &lhs, const Link &rhs) {
     return lhs.witnessSize < rhs.witnessSize;
 }
 
-void Semi::collectLinks(const PositionState &state, span<const CellId> dead, vector<Link> &links, int &linkCount, std::deque<vector<CellId>> &witnesses, int &witnessCount, Workspace &workspace) {
+void Semi::collectLinks(const PositionState &state, const Probability::Pool &probabilities, span<const CellId> dead, vector<Link> &links, int &linkCount, std::deque<vector<CellId>> &witnesses, int &witnessCount, Workspace &workspace) {
     for (int component = 0; component < (int)state.structure.components.size; ++component) {
         const Structure::Instance &instance = state.shapes.instances.list.data[state.structure.components.data[component]];
         const Structure::Shape &shape = state.shapes.shapes.list.data[instance.shape];
@@ -136,7 +136,7 @@ void Semi::collectLinks(const PositionState &state, span<const CellId> dead, vec
             const Structure::BoxId *members = constraintMembers(constraint, state.shapes);
             for (int box = 0; box < (int)constraint.boxIds.count; ++box) {
                 const Structure::BoxId id = members[box];
-                const long double mine = Probability::mineProbability(state.probability, instanceCells[boxOf[id]], state.board, state.basic, state.structure);
+                const long double mine = Probability::mineProbability(state.probability, probabilities, instanceCells[boxOf[id]], state.board, state.basic, state.structure);
                 if (mine == 1.0L) {
                     sum -= boxSizes[id];
                     continue;
@@ -165,11 +165,11 @@ void Semi::collectLinks(const PositionState &state, span<const CellId> dead, vec
                     links.push_back(Link(first, second, semiContains(dead, first), semiContains(dead, second), false, 2));
                 else
                     links.data[linkCount].reset(first, second, semiContains(dead, first), semiContains(dead, second), false, 2);
-                assess(links.data[linkCount], state);
+                assess(links.data[linkCount], state, probabilities);
                 ++linkCount;
             } else {
                 const int previous = linkCount;
-                findRootedLinks(span<const CellId>(workspace.cells.data, (int)workspace.cells.size), state, dead, (int)workspace.cells.size, links, linkCount);
+                findRootedLinks(span<const CellId>(workspace.cells.data, (int)workspace.cells.size), state, probabilities, dead, (int)workspace.cells.size, links, linkCount);
                 if (linkCount == previous) {
                     if (witnessCount == (int)witnesses.size())
                         witnesses.emplace_back();
@@ -183,7 +183,7 @@ void Semi::collectLinks(const PositionState &state, span<const CellId> dead, vec
     }
 }
 
-static bool extendChain(const PositionState &state, span<Semi::Link> links, Semi::Chain &chain, std::deque<Semi::Chain> &chains, int &chainCount, bool (*noTrouble)(const ObservedBoard::Result &, span<const CellId>, span<const CellId>), CellId target) {
+static bool extendChain(const PositionState &state, const Probability::Pool &probabilities, span<Semi::Link> links, Semi::Chain &chain, std::deque<Semi::Chain> &chains, int &chainCount, bool (*noTrouble)(const ObservedBoard::Result &, span<const CellId>, span<const CellId>), CellId target) {
     bool extended = false;
     for (int index = 0; index < links.size; ++index) {
         Semi::Link &link = links.data[index];
@@ -204,8 +204,8 @@ static bool extendChain(const PositionState &state, span<Semi::Link> links, Semi
             chain.trouble.push_back(link.trouble[i]);
         // processed 只属于当前路径；失败后撤销，不能吃掉其它闭链分支。
         link.processed = true;
-        const bool hit = !closed || target < 0 || (std::find(chain.whole5050.data, chain.whole5050.data + chain.whole5050.size, target) != chain.whole5050.data + chain.whole5050.size && (!chain.semi || Probability::mineProbability(state.probability, target, state.board, state.basic, state.structure) <= 0.5L));
-        if (closed ? hit && chain.whole5050.size % 2 == 0 && noTrouble(state.board, span<const CellId>(chain.trouble.data, (int)chain.trouble.size), span<const CellId>(chain.whole5050.data, (int)chain.whole5050.size)) : extendChain(state, links, chain, chains, chainCount, noTrouble, target))
+        const bool hit = !closed || target < 0 || (std::find(chain.whole5050.data, chain.whole5050.data + chain.whole5050.size, target) != chain.whole5050.data + chain.whole5050.size && (!chain.semi || Probability::mineProbability(state.probability, probabilities, target, state.board, state.basic, state.structure) <= 0.5L));
+        if (closed ? hit && chain.whole5050.size % 2 == 0 && noTrouble(state.board, span<const CellId>(chain.trouble.data, (int)chain.trouble.size), span<const CellId>(chain.whole5050.data, (int)chain.whole5050.size)) : extendChain(state, probabilities, links, chain, chains, chainCount, noTrouble, target))
             return true;
         link.processed = false;
         chain.openTile = previous;
@@ -221,7 +221,7 @@ static bool extendChain(const PositionState &state, span<Semi::Link> links, Semi
     return false;
 }
 
-Semi::Kind Semi::extendChains(Result &result, const PositionState &state, span<Link> links, std::deque<Chain> &chains, int &chainCount, CellId target) {
+Semi::Kind Semi::extendChains(Result &result, const PositionState &state, const Probability::Pool &probabilities, span<Link> links, std::deque<Chain> &chains, int &chainCount, CellId target) {
     if (chains.empty())
         chains.emplace_back(-1, false);
     Chain &chain = chains[0];
@@ -238,11 +238,11 @@ Semi::Kind Semi::extendChains(Result &result, const PositionState &state, span<L
         for (int i = 0; i < start.troubleCount; ++i)
             chain.trouble.push_back(start.trouble[i]);
         start.processed = true;
-        if (extendChain(state, links, chain, chains, chainCount, noTrouble, target)) {
+        if (extendChain(state, probabilities, links, chain, chains, chainCount, noTrouble, target)) {
             result.cells.resize(0);
             for (int i = 0; i < (int)chain.whole5050.size; ++i) {
                 const CellId cell = chain.whole5050.data[i];
-                if (!chain.semi || Probability::mineProbability(state.probability, cell, state.board, state.basic, state.structure) <= 0.5L)
+                if (!chain.semi || Probability::mineProbability(state.probability, probabilities, cell, state.board, state.basic, state.structure) <= 0.5L)
                     result.cells.push_back(cell);
             }
             return chain.semi ? Kind::Semi : Kind::Forced;
@@ -259,14 +259,14 @@ Semi::Kind Semi::extendChains(Result &result, const PositionState &state, span<L
     return Kind::None;
 }
 
-Semi::Kind Semi::connectChains(Result &result, const PositionState &state, span<const CellId> dead, std::deque<Chain> &chains, int chainCount, const std::deque<vector<CellId>> &witnesses, int witnessCount, Workspace &workspace, CellId target) {
+Semi::Kind Semi::connectChains(Result &result, const PositionState &state, const Probability::Pool &probabilities, span<const CellId> dead, std::deque<Chain> &chains, int chainCount, const std::deque<vector<CellId>> &witnesses, int witnessCount, Workspace &workspace, CellId target) {
     for (int witnessIndex = 0; witnessIndex < witnessCount; ++witnessIndex) {
         const vector<CellId> &witness = witnesses[witnessIndex];
         for (int first = 0; first < chainCount; ++first) {
             Chain *chain1 = &chains[first];
             if (!semiContains(span<const CellId>(witness.data, (int)witness.size), chain1->openTile))
                 continue;
-            const long double tally1 = Probability::mineProbability(state.probability, chain1->openTile, state.board, state.basic, state.structure) * state.probability.candidates;
+            const long double tally1 = Probability::mineProbability(state.probability, probabilities, chain1->openTile, state.board, state.basic, state.structure) * state.probability.candidates;
             for (int second = first + 1; second < chainCount; ++second) {
                 Chain *chain2 = &chains[second];
                 if (!semiContains(span<const CellId>(witness.data, (int)witness.size), chain2->openTile))
@@ -277,10 +277,10 @@ Semi::Kind Semi::connectChains(Result &result, const PositionState &state, span<
                         overlap = true;
                 if (overlap)
                     continue;
-                const long double tally2 = Probability::mineProbability(state.probability, chain2->openTile, state.board, state.basic, state.structure) * state.probability.candidates;
+                const long double tally2 = Probability::mineProbability(state.probability, probabilities, chain2->openTile, state.board, state.basic, state.structure) * state.probability.candidates;
 
                 Link linker(chain1->openTile, chain2->openTile, semiContains(dead, chain1->openTile), semiContains(dead, chain2->openTile), false, (int)witness.size);
-                assess(linker, state);
+                assess(linker, state, probabilities);
 
                 workspace.combined.resize(0);
                 for (int i = 0; i < (int)chain1->whole5050.size; ++i)
@@ -302,7 +302,7 @@ Semi::Kind Semi::connectChains(Result &result, const PositionState &state, span<
                     const long double lowest = (std::min)(tally1, tally2);
                     bool broken = false;
                     for (int i = 0; i < (int)workspace.combined.size; ++i) {
-                        const long double tally = Probability::mineProbability(state.probability, workspace.combined.data[i], state.board, state.basic, state.structure) * state.probability.candidates;
+                        const long double tally = Probability::mineProbability(state.probability, probabilities, workspace.combined.data[i], state.board, state.basic, state.structure) * state.probability.candidates;
                         if (tally < lowest) {
                             broken = true;
                             break;
@@ -327,13 +327,13 @@ Semi::Kind Semi::connectChains(Result &result, const PositionState &state, span<
     return Kind::None;
 }
 
-Semi::Kind Semi::update(Result &result, const PositionState &state, span<const CellId> dead, Workspace &workspace, CellId target) {
+Semi::Kind Semi::update(Result &result, const PositionState &state, const Probability::Pool &probabilities, span<const CellId> dead, Workspace &workspace, CellId target) {
     result.kind = Kind::None;
     result.cells.resize(0);
     int linkCount = 0;
     int chainCount = 0;
     int witnessCount = 0;
-    collectLinks(state, dead, workspace.links, linkCount, workspace.witnesses, witnessCount, workspace);
+    collectLinks(state, probabilities, dead, workspace.links, linkCount, workspace.witnesses, witnessCount, workspace);
     const span<Link> links(workspace.links.data, linkCount);
     std::sort(links.begin(), links.end(), linkLess);
     const Link *unavoidable = nullptr;
@@ -365,12 +365,12 @@ Semi::Kind Semi::update(Result &result, const PositionState &state, span<const C
         result.kind = unavoidable->semi ? Kind::Semi : Kind::Forced;
         return result.kind;
     }
-    const Kind kind = extendChains(result, state, links, workspace.chains, chainCount, target);
+    const Kind kind = extendChains(result, state, probabilities, links, workspace.chains, chainCount, target);
     if (kind != Kind::None) {
         result.kind = kind;
         return kind;
     }
-    const Kind connected = connectChains(result, state, dead, workspace.chains, chainCount, workspace.witnesses, witnessCount, workspace, target);
+    const Kind connected = connectChains(result, state, probabilities, dead, workspace.chains, chainCount, workspace.witnesses, witnessCount, workspace, target);
     if (connected != Kind::None) {
         result.kind = connected;
         return connected;
@@ -378,9 +378,9 @@ Semi::Kind Semi::update(Result &result, const PositionState &state, span<const C
     return result.kind;
 }
 
-Semi::Result Semi::analyze(const PositionState &state, span<const CellId> dead, Workspace &workspace) {
+Semi::Result Semi::analyze(const PositionState &state, const Probability::Pool &probabilities, span<const CellId> dead, Workspace &workspace) {
     Result result;
-    update(result, state, dead, workspace);
+    update(result, state, probabilities, dead, workspace);
     return result;
 }
 

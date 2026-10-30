@@ -79,7 +79,7 @@ struct BruteForceMultimask {
         CacheShard shards[256];
         FlatHashTable<U128, int, U128Hash> (&storage)[256];
 
-        explicit ParallelCache(FlatHashTable<U128, int, U128Hash> (&storage)[256]) : storage(storage) {}
+        ParallelCache(FlatHashTable<U128, int, U128Hash> (&storage)[256]) : storage(storage) {}
         void reset();
         int find(const U128 &key);
         void store(const U128 &key, int value);

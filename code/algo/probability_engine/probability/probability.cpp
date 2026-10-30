@@ -40,7 +40,14 @@ long double Probability::limitProbability(long double probability) {
     return probability >= 1.0L - 1e-10L ? 1.0L : probability;
 }
 
-void Probability::analyze(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &pool, const ShapeSolver::Config &config, ShapeSolver::DistributionPool &distributions, Result &result, Workspace &workspace) {
+void Probability::Pool::clear() {
+    components.data.resize(0);
+    boxProbabilities.data.resize(0);
+}
+
+Probability::Result Probability::analyze(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const ShapeSolver::Config &config, Pool &results, Workspace &workspace) {
+    const Structure::Pool &pool = results.shapes;
+    ShapeSolver::DistributionPool &distributions = results.distributions;
     Workspace &ws = workspace;
     ws.distributionIds.resize(0);
     ws.frontiers.resize(0);
@@ -49,30 +56,26 @@ void Probability::analyze(const ObservedBoard::Result &board, const Basic::Resul
     for (int component = 0; component < componentCount; ++component) {
         const Structure::Instance &instance = pool.instances.list.data[structure.components.data[component]];
         const Structure::Shape &shape = pool.shapes.list.data[instance.shape];
-        ws.distributionIds.push_back(ShapeSolver::analyze(shape, pool, config, distributions, ws.shapeSolver));
+        ws.distributionIds.push_back(ShapeSolver::analyze(shape, config, distributions, ws.shapeSolver));
     }
     for (int component = 0; component < componentCount; ++component)
-        if (distributions.list.data[ws.distributionIds.data[component]].ways.count == 0) {
-            result.components.resize(0);
-            result.boxProbabilities.resize(0);
-            result.candidates = 0.0L;
-            result.tCellProbability = 0.0L;
-            return;
-        }
+        if (distributions.list.data[ws.distributionIds.data[component]].ways.count == 0)
+            return {results.components.push_back(), results.boxProbabilities.push_back(), 0.0L, 0.0L};
 
-    result.components.resize(componentCount);
+    vectorPool<Result::Component>::vector components = results.components.push_back();
     int boxOffset = 0;
     for (int component = 0; component < componentCount; ++component) {
         const Structure::Instance &instance = pool.instances.list.data[structure.components.data[component]];
         const Structure::Shape &shape = pool.shapes.list.data[instance.shape];
-        result.components.data[component].boxOffset = boxOffset;
-        result.components.data[component].boxCount = (int)shape.boxSizes.count;
+        results.components.push_back(components, {boxOffset, (int)shape.boxSizes.count});
         boxOffset += (int)shape.boxSizes.count;
     }
-    result.boxProbabilities.resize(boxOffset);
-    std::fill(result.boxProbabilities.data, result.boxProbabilities.data + boxOffset, 0.0L);
-    result.candidates = 0.0L;
-    result.tCellProbability = 0.0L;
+    const vectorPool<long double>::vector boxProbabilities{results.boxProbabilities.data.size, (std::size_t)boxOffset};
+    results.boxProbabilities.data.resize(boxProbabilities.offset + boxProbabilities.count);
+    long double *probabilities = results.boxProbabilities.data.data + boxProbabilities.offset;
+    std::fill(probabilities, probabilities + boxOffset, 0.0L);
+    long double candidates = 0.0L;
+    long double tCellProbability = 0.0L;
     for (int component = 0; component < componentCount; ++component) {
         const ShapeSolver::Distribution &distribution = distributions.list.data[ws.distributionIds.data[component]];
         ws.frontiers.push_back(Poly{distribution.start, span<const long double>(distributions.values.data.data + distribution.ways.offset, (int)distribution.ways.count)});
@@ -89,7 +92,7 @@ void Probability::analyze(const ObservedBoard::Result &board, const Basic::Resul
         const int *boxSizes = pool.shapes.boxSizes.data.data + shape.boxSizes.offset;
         const long double *ways = distributions.values.data.data + distribution.ways.offset;
         const long double *expectations = distributions.values.data.data + distribution.expectations.offset;
-        const Result::Component &componentResult = result.components.data[component];
+        const Result::Component &componentResult = results.components.data.data[components.offset + component];
         for (int i = 0; i < (int)distribution.ways.count; ++i) {
             if (ways[i] == 0.0L)
                 continue;
@@ -100,25 +103,27 @@ void Probability::analyze(const ObservedBoard::Result &board, const Basic::Resul
             const long double totalWays = ways[i] * outsideWays;
             // expectation 是该雷数档下 Box 中的期望雷数，除以 Box 大小后才是任一格概率的分子。
             for (int box = 0; box < boxCount; ++box)
-                result.boxProbabilities.data[componentResult.boxOffset + box] += totalWays * expectations[i * boxCount + box] / boxSizes[box];
+                probabilities[componentResult.boxOffset + box] += totalWays * expectations[i * boxCount + box] / boxSizes[box];
         }
     }, [&](const Poly &all) {
-        result.candidates = countWeightedWays(all, totalMines, tSum, ws.combination);
-        if (result.candidates == 0.0L)
+        candidates = countWeightedWays(all, totalMines, tSum, ws.combination);
+        if (candidates == 0.0L)
             return;
-        result.tCellProbability = limitProbability(countWeightedWays(all, totalMines - 1, tSum - 1, ws.combination) / result.candidates);
-        for (int box = 0; box < (int)result.boxProbabilities.size; ++box)
-            result.boxProbabilities.data[box] /= result.candidates;
+        tCellProbability = limitProbability(countWeightedWays(all, totalMines - 1, tSum - 1, ws.combination) / candidates);
+        for (int box = 0; box < boxOffset; ++box)
+            probabilities[box] /= candidates;
     });
+    return {components, boxProbabilities, candidates, tCellProbability};
 }
 
-void Probability::sampleMineBoard(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &pool, ShapeSolver::AssignmentPool &assignments, U128 seed, Grid<char> &result, Workspace &workspace) {
+void Probability::sampleMineBoard(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, ShapeSolver::AssignmentPool &assignments, U128 seed, Grid<char> &result, Workspace &workspace) {
+    const Structure::Pool &pool = assignments.shapes;
     Workspace &ws = workspace;
     const int componentCount = (int)structure.components.size;
     for (int component = 0; component < componentCount; ++component) {
         const Structure::Instance &instance = pool.instances.list.data[structure.components.data[component]];
         const Structure::Shape &shape = pool.shapes.list.data[instance.shape];
-        ShapeSolver::assignments(instance.shape, shape, pool, assignments, ws.shapeSolver);
+        ShapeSolver::assignments(instance.shape, shape, assignments, ws.shapeSolver);
     }
 
     // 后缀多项式：suffix[c] 是组件 c..n-1 的雷数分布乘积；suffix[n] 为常数 1。
@@ -286,7 +291,7 @@ long double Probability::analyzeLogicComponents(span<const LogicComponentInput> 
     return candidates;
 }
 
-long double Probability::mineProbability(const Result &result, ObservedBoard::CellId cell, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure) {
+long double Probability::mineProbability(const Result &result, const Pool &pool, ObservedBoard::CellId cell, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure) {
     const std::pair<int, int> position = board.pos(cell);
     const Basic::Mark mark = basic.marks[position.first][position.second];
     const Structure::Result::CellLocation &location = structure.cellLoc.data[cell];
@@ -299,8 +304,8 @@ long double Probability::mineProbability(const Result &result, ObservedBoard::Ce
     }
     if (location.box < 0)
         return 0.0L;
-    const Result::Component &component = result.components.data[location.component];
-    return limitProbability(result.boxProbabilities.data[component.boxOffset + location.box]);
+    const Result::Component &component = pool.components.data.data[result.components.offset + location.component];
+    return limitProbability(pool.boxProbabilities.data.data[result.boxProbabilities.offset + component.boxOffset + location.box]);
 }
 
 } // 命名空间 mss

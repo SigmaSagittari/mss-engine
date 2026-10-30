@@ -16,7 +16,7 @@ struct TemplateLongTermRiskEngine;
 struct TemplateLongTermRisk {
     struct Config {
         int eventLimit;
-        explicit Config(int eventLimit) : eventLimit(eventLimit) {}
+        Config(int eventLimit) : eventLimit(eventLimit) {}
     };
 
     struct Description {
@@ -134,7 +134,6 @@ struct TemplateLongTermRisk {
         FlatHashTable<unsigned long long, int> domainIndex;
         FlatHashTable<unsigned long long, int> tailIndex, nodeIndex, descriptionNodeIndex;
         vector<ObservedBoard::CellId> changedCells;
-        Probability::Result forcedProbability;
         PositionState::Reveal reveal;
         vector<unsigned short> countSignature;
         vector<int> order, pendingMatches, pendingEvents;
@@ -153,11 +152,11 @@ struct TemplateLongTermRisk {
     // 模板前缀范围为 1..maxPrefix()；事件上限必须为正数。
     static int maxPrefix();
     // 查询前须已更新至对应根盘面；更新会清空旧结果与缓存，Pool 中的模板表必须比 Result 活得久。
-    static void update(Result &result, PositionState &state, int prefix, const Config &config, Pool &pool, Workspace &workspace);
+    static void update(Result &result, PositionState &state, const Probability::Pool &probabilities, int prefix, const Config &config, Pool &pool, Workspace &workspace);
     // 返回归一化到全盘布局数的前N方向事件联合风险补偿；同组成员共享 Result 中的缓存。
-    static long double influence(ObservedBoard::CellId cell, PositionState &state, Result &result, const ShapeSolverConfig &shapeConfig, Workspace &workspace);
+    static long double influence(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, Result &result, const ShapeSolverConfig &shapeConfig, Workspace &workspace);
     // describe 使用条件 D=该格为雷，并按 influence 的互相必安组收集事件；返回值按 D 内布局数归一并缓存至下次 update。
-    static Description describe(ObservedBoard::CellId cell, PositionState &state, Result &result, const ShapeSolverConfig &shapeConfig, Workspace &workspace);
+    static Description describe(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, Result &result, const ShapeSolverConfig &shapeConfig, Workspace &workspace);
     // 读取 P(无body且恰有k个保留限制方向事件 | D)；须先对该格调用 describe，k 范围为 [0, bins)。
     static long double noBodyByRestrictionCount(const Result &result, ObservedBoard::CellId cell, int k);
 };

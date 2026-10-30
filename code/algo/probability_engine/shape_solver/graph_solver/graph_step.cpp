@@ -8,7 +8,7 @@
 
 namespace mss {
 
-using StepWorkspace = ShapeSolverGraphStep::Workspace;
+using OrderWorkspace = ShapeSolverGraphStep::Workspace::Order;
 using StepGenerator = ShapeSolverGraphStep;
 
 static int shapeBoxCount(const Structure::Shape &shape) { return (int)shape.boxSizes.count; }
@@ -31,7 +31,7 @@ static void copyOrder(span<const Structure::BoxId> source, vector<Structure::Box
         target.push_back(source[i]);
 }
 
-static std::pair<int, int> orderScore(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, span<const Structure::BoxId> order, StepWorkspace &workspace) {
+static std::pair<int, int> orderScore(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, span<const Structure::BoxId> order, OrderWorkspace::Score &workspace) {
     const int boxCount = order.size;
     workspace.remaining.resize(boxCount);
     workspace.selected.resize(boxCount);
@@ -58,7 +58,7 @@ static std::pair<int, int> orderScore(const vector<int> &offsets, const vector<S
     return {peak, area};
 }
 
-static Structure::BoxId farthestBox(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, Structure::BoxId source, StepWorkspace &workspace) {
+static Structure::BoxId farthestBox(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, Structure::BoxId source, OrderWorkspace::Bfs &workspace) {
     const int boxCount = (int)offsets.size - 1;
     workspace.distance.resize(boxCount);
     std::fill(workspace.distance.data, workspace.distance.data + boxCount, -1);
@@ -80,7 +80,7 @@ static Structure::BoxId farthestBox(const vector<int> &offsets, const vector<Str
     return farthest;
 }
 
-static void makeGreedyOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, Structure::BoxId first, vector<Structure::BoxId> &order, StepWorkspace &workspace) {
+static void makeGreedyOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, Structure::BoxId first, vector<Structure::BoxId> &order, OrderWorkspace::Score &workspace) {
     const int boxCount = (int)offsets.size - 1;
     order.resize(0);
     workspace.remaining.resize(boxCount);
@@ -118,7 +118,7 @@ static void makeGreedyOrder(const vector<int> &offsets, const vector<Structure::
     }
 }
 
-static void makeWindow3Order(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, vector<Structure::BoxId> &order, StepWorkspace &workspace) {
+static void makeWindow3Order(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, vector<Structure::BoxId> &order, OrderWorkspace::Score &workspace) {
     const int boxCount = (int)order.size;
     for (int start = 0; start < boxCount; start += 3) {
         const int length = (std::min)(3, boxCount - start);
@@ -158,8 +158,8 @@ static void makeWindow3Order(const vector<int> &offsets, const vector<Structure:
     }
 }
 
-// 从 seed 出发做模拟退火，最优顺序留在 workspace.best。
-static void makeSAOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, span<const Structure::BoxId> seed, const ShapeSolverConfig &config, StepWorkspace &workspace) {
+// 从 seed 出发做模拟退火，最优顺序写入 best。
+static void makeSAOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, span<const Structure::BoxId> seed, const ShapeSolverConfig &config, vector<Structure::BoxId> &best, OrderWorkspace &workspace) {
     const int boxCount = seed.size;
     auto nextRandom = [](std::uint64_t &state) {
         const std::uint64_t value = splitmix64(state);
@@ -169,13 +169,12 @@ static void makeSAOrder(const vector<int> &offsets, const vector<Structure::BoxI
     auto unitRandom = [&](std::uint64_t &state) { return (nextRandom(state) >> 11) * (1.0 / 9007199254740992.0); };
     auto energy = [](std::pair<int, int> score) { return score.first * 20000 + score.second; };
 
-    vector<Structure::BoxId> &best = workspace.best;
     vector<Structure::BoxId> &current = workspace.current;
     vector<Structure::BoxId> &candidate = workspace.candidate;
     copyOrder(seed, best);
     copyOrder(seed, current);
     copyOrder(seed, candidate);
-    std::pair<int, int> bestScore = orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(best.data, boxCount), workspace);
+    std::pair<int, int> bestScore = orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(best.data, boxCount), workspace.score);
     const double cooling = std::pow(config.saEndTemperature / config.saStartTemperature, 1.0 / (config.saIterations - 1));
     for (int round = 0; round < config.saRounds; ++round) {
         std::uint64_t state = 0x9e3779b97f4a7c15ULL + (std::uint64_t)round * 0x6a09e667f3bcc909ULL;
@@ -185,7 +184,7 @@ static void makeSAOrder(const vector<int> &offsets, const vector<Structure::BoxI
             const int right = (int)(nextRandom(state) % (std::uint64_t)boxCount);
             std::swap(current.data[left], current.data[right]);
         }
-        std::pair<int, int> currentScore = orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(current.data, boxCount), workspace);
+        std::pair<int, int> currentScore = orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(current.data, boxCount), workspace.score);
         int currentEnergy = energy(currentScore);
         double temperature = config.saStartTemperature;
         for (int iteration = 0; iteration < config.saIterations; ++iteration) {
@@ -206,7 +205,7 @@ static void makeSAOrder(const vector<int> &offsets, const vector<Structure::BoxI
                 }
                 candidate.data[right] = value;
             }
-            const std::pair<int, int> candidateScore = orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(candidate.data, boxCount), workspace);
+            const std::pair<int, int> candidateScore = orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(candidate.data, boxCount), workspace.score);
             const int candidateEnergy = energy(candidateScore);
             const int difference = currentEnergy - candidateEnergy;
             const bool accept = difference >= 0 || unitRandom(state) < std::exp(difference / temperature);
@@ -224,103 +223,105 @@ static void makeSAOrder(const vector<int> &offsets, const vector<Structure::BoxI
     }
 }
 
-static void makeAutoOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, const ShapeSolverConfig &config, vector<Structure::BoxId> &order, StepWorkspace &workspace) {
-    const Structure::BoxId initial = farthestBox(offsets, adjacentBoxes, 0, workspace);
-    makeGreedyOrder(offsets, adjacentBoxes, initial, order, workspace);
-    const std::pair<int, int> bestScore = orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(order.data, (int)order.size), workspace);
+static void makeAutoOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, const ShapeSolverConfig &config, vector<Structure::BoxId> &order, OrderWorkspace &workspace) {
+    const Structure::BoxId initial = farthestBox(offsets, adjacentBoxes, 0, workspace.bfs);
+    makeGreedyOrder(offsets, adjacentBoxes, initial, order, workspace.score);
+    const std::pair<int, int> bestScore = orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(order.data, (int)order.size), workspace.score);
     if (bestScore.first > config.window3Threshold) {
         copyOrder(span<const Structure::BoxId>(order.data, (int)order.size), workspace.candidate);
-        makeWindow3Order(offsets, adjacentBoxes, workspace.candidate, workspace);
-        if (orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(workspace.candidate.data, (int)workspace.candidate.size), workspace) < bestScore)
+        makeWindow3Order(offsets, adjacentBoxes, workspace.candidate, workspace.score);
+        if (orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(workspace.candidate.data, (int)workspace.candidate.size), workspace.score) < bestScore)
             copyOrder(span<const Structure::BoxId>(workspace.candidate.data, (int)workspace.candidate.size), order);
     }
 }
 
-static void makeAutoSAOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, const ShapeSolverConfig &config, vector<Structure::BoxId> &order, StepWorkspace &workspace) {
+static void makeAutoSAOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, const ShapeSolverConfig &config, vector<Structure::BoxId> &order, OrderWorkspace &workspace) {
     makeAutoOrder(offsets, adjacentBoxes, config, order, workspace);
-    const std::pair<int, int> bestScore = orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(order.data, (int)order.size), workspace);
+    const std::pair<int, int> bestScore = orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(order.data, (int)order.size), workspace.score);
     if (bestScore.first <= config.window3Threshold)
         return;
-    makeGreedyOrder(offsets, adjacentBoxes, -1, workspace.seed, workspace);
-    makeSAOrder(offsets, adjacentBoxes, span<const Structure::BoxId>(workspace.seed.data, (int)workspace.seed.size), config, workspace);
-    if (orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(workspace.best.data, (int)workspace.best.size), workspace) < bestScore)
+    makeGreedyOrder(offsets, adjacentBoxes, -1, workspace.seed, workspace.score);
+    makeSAOrder(offsets, adjacentBoxes, span<const Structure::BoxId>(workspace.seed.data, (int)workspace.seed.size), config, workspace.best, workspace);
+    if (orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(workspace.best.data, (int)workspace.best.size), workspace.score) < bestScore)
         copyOrder(span<const Structure::BoxId>(workspace.best.data, (int)workspace.best.size), order);
 }
 
 void ShapeSolverGraphStep::buildAdjacency(const Structure::Shape &shape, const Structure::Pool &shapes, vector<int> &offsets, vector<Structure::BoxId> &adjacent, StepGenerator::Workspace &workspace) {
+    Workspace::Adjacency::Build &build = workspace.adjacency.build;
     const int boxCount = shapeBoxCount(shape);
     const Structure::Shape::Constraint *records = shapeConstraints(shape, shapes);
     offsets.resize(boxCount + 1);
     std::fill(offsets.data, offsets.data + boxCount + 1, 0);
-    workspace.head.resize(boxCount);
-    std::fill(workspace.head.data, workspace.head.data + boxCount, -1);
-    workspace.to.resize(0);
-    workspace.next.resize(0);
-    workspace.marked.resize(boxCount);
-    std::fill(workspace.marked.data, workspace.marked.data + boxCount, 0);
+    build.head.resize(boxCount);
+    std::fill(build.head.data, build.head.data + boxCount, -1);
+    build.to.resize(0);
+    build.next.resize(0);
+    build.marked.resize(boxCount);
+    std::fill(build.marked.data, build.marked.data + boxCount, 0);
     for (int constraint = 0; constraint < (int)shape.constraints.count; ++constraint) {
         const Structure::BoxId *members = constraintMembers(records[constraint], shapes);
         const int memberCount = (int)records[constraint].boxIds.count;
         for (int i = 0; i < memberCount; ++i)
             for (int j = i + 1; j < memberCount; ++j) {
-                workspace.next.push_back(workspace.head.data[members[i]]);
-                workspace.to.push_back(members[j]);
-                workspace.head.data[members[i]] = (int)workspace.to.size - 1;
-                workspace.next.push_back(workspace.head.data[members[j]]);
-                workspace.to.push_back(members[i]);
-                workspace.head.data[members[j]] = (int)workspace.to.size - 1;
+                build.next.push_back(build.head.data[members[i]]);
+                build.to.push_back(members[j]);
+                build.head.data[members[i]] = (int)build.to.size - 1;
+                build.next.push_back(build.head.data[members[j]]);
+                build.to.push_back(members[i]);
+                build.head.data[members[j]] = (int)build.to.size - 1;
             }
     }
     for (int box = 0; box < boxCount; ++box) {
-        for (int edge = workspace.head.data[box]; edge >= 0; edge = workspace.next.data[edge]) {
-            const Structure::BoxId target = workspace.to.data[edge];
-            if (workspace.marked.data[target])
+        for (int edge = build.head.data[box]; edge >= 0; edge = build.next.data[edge]) {
+            const Structure::BoxId target = build.to.data[edge];
+            if (build.marked.data[target])
                 continue;
-            workspace.marked.data[target] = 1;
+            build.marked.data[target] = 1;
             offsets.data[box + 1] += 1;
         }
-        for (int edge = workspace.head.data[box]; edge >= 0; edge = workspace.next.data[edge])
-            workspace.marked.data[workspace.to.data[edge]] = 0;
+        for (int edge = build.head.data[box]; edge >= 0; edge = build.next.data[edge])
+            build.marked.data[build.to.data[edge]] = 0;
     }
     for (int box = 0; box < boxCount; ++box)
         offsets.data[box + 1] += offsets.data[box];
     adjacent.resize(offsets.data[boxCount]);
     for (int box = 0; box < boxCount; ++box) {
         int write = offsets.data[box];
-        for (int edge = workspace.head.data[box]; edge >= 0; edge = workspace.next.data[edge]) {
-            const Structure::BoxId target = workspace.to.data[edge];
-            if (workspace.marked.data[target])
+        for (int edge = build.head.data[box]; edge >= 0; edge = build.next.data[edge]) {
+            const Structure::BoxId target = build.to.data[edge];
+            if (build.marked.data[target])
                 continue;
-            workspace.marked.data[target] = 1;
+            build.marked.data[target] = 1;
             adjacent.data[write++] = target;
         }
-        for (int edge = workspace.head.data[box]; edge >= 0; edge = workspace.next.data[edge])
-            workspace.marked.data[workspace.to.data[edge]] = 0;
+        for (int edge = build.head.data[box]; edge >= 0; edge = build.next.data[edge])
+            build.marked.data[build.to.data[edge]] = 0;
     }
 }
 
 void ShapeSolverGraphStep::makeOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacent, const ShapeSolverConfig &config, vector<Structure::BoxId> &order, StepGenerator::Workspace &workspace) {
+    Workspace::Order &scratch = workspace.order;
     if (config.order == ShapeSolverConfig::Order::Adjacent) {
-        makeGreedyOrder(offsets, adjacent, farthestBox(offsets, adjacent, 0, workspace), order, workspace);
+        makeGreedyOrder(offsets, adjacent, farthestBox(offsets, adjacent, 0, scratch.bfs), order, scratch.score);
         return;
     }
     if (config.order == ShapeSolverConfig::Order::Window3) {
-        makeGreedyOrder(offsets, adjacent, farthestBox(offsets, adjacent, 0, workspace), order, workspace);
-        makeWindow3Order(offsets, adjacent, order, workspace);
+        makeGreedyOrder(offsets, adjacent, farthestBox(offsets, adjacent, 0, scratch.bfs), order, scratch.score);
+        makeWindow3Order(offsets, adjacent, order, scratch.score);
         return;
     }
     if (config.order == ShapeSolverConfig::Order::SA) {
-        makeGreedyOrder(offsets, adjacent, -1, workspace.seed, workspace);
-        makeSAOrder(offsets, adjacent, span<const Structure::BoxId>(workspace.seed.data, (int)workspace.seed.size), config, workspace);
-        copyOrder(span<const Structure::BoxId>(workspace.best.data, (int)workspace.best.size), order);
+        makeGreedyOrder(offsets, adjacent, -1, scratch.seed, scratch.score);
+        makeSAOrder(offsets, adjacent, span<const Structure::BoxId>(scratch.seed.data, (int)scratch.seed.size), config, scratch.best, scratch);
+        copyOrder(span<const Structure::BoxId>(scratch.best.data, (int)scratch.best.size), order);
         return;
     }
     if (config.order == ShapeSolverConfig::Order::Auto) {
-        makeAutoOrder(offsets, adjacent, config, order, workspace);
+        makeAutoOrder(offsets, adjacent, config, order, scratch);
         return;
     }
     if (config.order == ShapeSolverConfig::Order::AutoSA) {
-        makeAutoSAOrder(offsets, adjacent, config, order, workspace);
+        makeAutoSAOrder(offsets, adjacent, config, order, scratch);
         return;
     }
     assert_(false, "ShapeSolverGraphStep::makeOrder: 无效的消元顺序策略");

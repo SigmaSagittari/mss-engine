@@ -32,6 +32,8 @@ struct Position {
     const Structure::Result &structure();
     const Structure::Pool &shapePool();
     const Probability::Result &probability();
+    // 返回本局面的概率池及其依赖，供调用方绑定独立的结果池；不触发分析。
+    Probability::Pool &probabilityPool();
     // 状态引用；调用时确保结构已同步、概率已计算。winrate 可在此临时强制标记并恢复。
     PositionState &state();
 

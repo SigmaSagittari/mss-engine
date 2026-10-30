@@ -205,9 +205,9 @@ static int shapeBoxCount(const Structure::Shape &shape) { return (int)shape.boxS
 
 ShapeSolverType::Distribution ShapeSolverGraph::analyze(const Structure::Shape &shape, const Structure::Pool &shapes, const ShapeSolverConfig &config, vectorPool<long double> &values, Workspace &workspace) {
     const int boxCount = shapeBoxCount(shape);
-    vector<int> &offsets = workspace.steps.offsets;
-    vector<Structure::BoxId> &adjacent = workspace.steps.adjacent;
-    vector<Structure::BoxId> &order = workspace.steps.order;
+    vector<int> &offsets = workspace.steps.adjacency.offsets;
+    vector<Structure::BoxId> &adjacent = workspace.steps.adjacency.adjacent;
+    vector<Structure::BoxId> &order = workspace.steps.order.values;
     StepGenerator::buildAdjacency(shape, shapes, offsets, adjacent, workspace.steps);
     StepGenerator::makeOrder(offsets, adjacent, config, order, workspace.steps);
 
@@ -274,9 +274,9 @@ ShapeSolverType::Distribution ShapeSolverGraph::analyze(const Structure::Shape &
 }
 
 void ShapeSolverGraph::observe(const Structure::Shape &shape, const Structure::Pool &shapes, span<const int> adjacentBoxCells, Structure::BoxId xBox, const ShapeSolverConfig &config, ShapeSolverType::Observed &result, Workspace &workspace) {
-    vector<int> &offsets = workspace.steps.offsets;
-    vector<Structure::BoxId> &adjacent = workspace.steps.adjacent;
-    vector<Structure::BoxId> &order = workspace.steps.order;
+    vector<int> &offsets = workspace.steps.adjacency.offsets;
+    vector<Structure::BoxId> &adjacent = workspace.steps.adjacency.adjacent;
+    vector<Structure::BoxId> &order = workspace.steps.order.values;
     StepGenerator::buildAdjacency(shape, shapes, offsets, adjacent, workspace.steps);
     StepGenerator::makeOrder(offsets, adjacent, config, order, workspace.steps);
 

@@ -9,6 +9,10 @@
 
 namespace mss {
 
+void Basic::Pool::clear() {
+    changes.data.resize(0);
+}
+
 // 数字状态底层值连续为 0~8；下面两个判断只接收对应状态。
 static bool isNumber(ObservedBoard::CellState state) { return (int)state <= (int)ObservedBoard::CellState::Num8; }
 static int numberValue(ObservedBoard::CellState state) { return (int)state; }

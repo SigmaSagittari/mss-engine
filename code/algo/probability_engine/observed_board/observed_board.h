@@ -56,6 +56,8 @@ struct ObservedBoard {
     // Delta 记录池；池扩容后切片仍然有效，clear 或退尾使对应切片失效。
     struct Pool {
         vectorPool<Delta::Change> changes;
+
+        void clear();
     };
 
     // delta 必须来自 pool；pool 在应用期间不得 clear 或退尾。

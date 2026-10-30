@@ -43,10 +43,13 @@ struct Basic {
         vectorPool<Change>::vector changes;
     };
 
-    // Delta 记录池；按依赖树聚合下层 Pool，本层只认识自己和下面的。
+    // Delta 记录池；引用下层观测池，调用方保证观测池覆盖本池的使用期。
     struct Pool {
-        ObservedBoard::Pool board;
+        ObservedBoard::Pool &board;
         vectorPool<Delta::Change> changes;
+
+        Pool(ObservedBoard::Pool &board) : board(board) {}
+        void clear();
     };
 
     // 临时队列；一次调用返回后可顺序复用，不可并发共享。

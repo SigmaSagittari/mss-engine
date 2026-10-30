@@ -10,7 +10,7 @@ namespace mss {
 
 MonteCarlo::Candidate::Candidate(ObservedBoard::CellId cell, long double prior, const Config &config) : cell(cell), samples(0), wins(0), prior(prior), chanceSamples(-1), chanceTarget(0.0L), chanceLog(0.0L) { estimate(*this, config); }
 
-MonteCarlo::Result::Result(SuggestResult &root) : winrate(root.engine == SuggestResult::Engine::Safe || root.reason == SuggestResult::Reason::Finished), samples(0), wins(0), random(0xC0FFEE12345ULL, 0xD1B54A32D192ED03ULL) {
+MonteCarlo::Result::Result(SuggestResult &root, const Structure::Pool &shapes) : winrate(root.engine == SuggestResult::Engine::Safe || root.reason == SuggestResult::Reason::Finished), samples(0), wins(0), random(0xC0FFEE12345ULL, 0xD1B54A32D192ED03ULL), assignments(shapes) {
     if (root.engine == SuggestResult::Engine::BruteForce) exact.swap(root);
     else if (winrate) safeCells.swap(root.suggest);
 }
@@ -93,7 +93,7 @@ int MonteCarlo::select(Result &result, const Config &config) {
 MonteCarlo::Result MonteCarlo::analyze(GameControl::Position &position, const Config &config, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &pool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells) {
     SuggestResult evaluated;
     position.suggest(policy, fiftyPool, pool, workspace.anytimeSearch, workspace.bruteForce, evaluated, cells);
-    Result result(evaluated);
+    Result result(evaluated, position.probabilityPool().shapes);
     if (result.exact.engine == SuggestResult::Engine::BruteForce || result.winrate) return result;
     assert_(evaluated.candidates.size != 0, "MonteCarlo: 非终局没有首招候选");
     std::sort(evaluated.candidates.data, evaluated.candidates.data + evaluated.candidates.size, [](const SuggestResult::Candidate &left, const SuggestResult::Candidate &right) { return left.value > right.value; });
@@ -108,9 +108,9 @@ MonteCarlo::Result MonteCarlo::analyze(GameControl::Position &position, const Co
     return result;
 }
 
-bool MonteCarlo::simulate(Result &result, PositionState &state, long long sequence, ObservedBoard::CellId first, const ShapeSolverConfig &shapeConfig, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &pool, Workspace &workspace) {
+bool MonteCarlo::simulate(Result &result, PositionState &state, long long sequence, ObservedBoard::CellId first, const ShapeSolverConfig &shapeConfig, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, Workspace &workspace) {
     Grid<char> mines;
-    Probability::sampleMineBoard(state.board, state.basic, state.structure, state.shapes, result.assignments, U128(splitmix64(0x123456789ABCDEFULL + sequence), splitmix64(0xF123456789ABCDE0ULL + sequence)), mines, workspace.game.probability);
+    Probability::sampleMineBoard(state.board, state.basic, state.structure, result.assignments, U128(splitmix64(0x123456789ABCDEFULL + sequence), splitmix64(0xF123456789ABCDE0ULL + sequence)), mines, workspace.game.probability);
     ObservedBoard::Result observed = state.board;
     for (int i = 0; i < (int)result.safeCells.size; ++i) {
         const std::pair<int, int> position = observed.pos(result.safeCells.data[i]);
@@ -118,6 +118,10 @@ bool MonteCarlo::simulate(Result &result, PositionState &state, long long sequen
     }
     const GameControl::Config gameConfig{shapeConfig};
     GameControl::Game game(GameControl::MineBoard(mines), observed, workspace.game, gameConfig, result.suggestions);
+    // 搜索池绑定本次模拟的局面，在整局建议调用之间复用。
+    Probability::Pool pendingProbabilities(game.position().probabilityPool().shapes, game.position().probabilityPool().distributions);
+    JavaLite::Pool pending(pendingProbabilities);
+    AnytimeSearch::Pool pool(pending);
     if (game.state() == GameControl::Game::State::Running)
         game.play(result.winrate ? span<const ObservedBoard::CellId>(result.safeCells.data, (int)result.safeCells.size) : span<const ObservedBoard::CellId>(&first, 1));
     vector<ObservedBoard::CellId> suggestion;
@@ -129,11 +133,11 @@ bool MonteCarlo::simulate(Result &result, PositionState &state, long long sequen
     return game.state() == GameControl::Game::State::Won;
 }
 
-void MonteCarlo::update(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &pool, Workspace &workspace) {
+void MonteCarlo::update(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, Workspace &workspace) {
     if (result.exact.engine == SuggestResult::Engine::BruteForce) return;
     const int selected = result.winrate ? -1 : select(result, config);
     const long long sequence = result.winrate ? result.samples : result.candidates.data[selected].samples;
-    const bool won = simulate(result, state, sequence, result.winrate ? -1 : result.candidates.data[selected].cell, shapeConfig, policy, fiftyPool, pool, workspace);
+    const bool won = simulate(result, state, sequence, result.winrate ? -1 : result.candidates.data[selected].cell, shapeConfig, policy, fiftyPool, workspace);
     ++result.samples;
     result.wins += won;
     if (selected >= 0) {

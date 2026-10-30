@@ -40,7 +40,7 @@ struct BruteForce {
         BruteForceNormal::Workspace normal;
         BruteForceMultimask::Workspace multimask;
 
-        explicit Workspace(ShapeSolver::Workspace &shapeSolver) : shapeSolver(shapeSolver) {}
+        Workspace(ShapeSolver::Workspace &shapeSolver) : shapeSolver(shapeSolver) {}
     };
 
     // board/basic/structure/shapes 必须来自同一刷新；shapes 是 structure 所属的池。

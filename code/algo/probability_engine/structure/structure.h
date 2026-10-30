@@ -75,10 +75,10 @@ struct Structure {
         vectorPool<InstanceId>::vector added;
     };
 
-    // 池：一个 Structure 的全部存储。数据、索引和 Delta 记录共用一个池，生命周期一致；
-    // ID 只在池未清空时有效，切片在池扩容后仍有效。
+    // 本层的数据、索引和 Delta 记录共用一个池，引用的 Basic 池须覆盖本池的使用期。
+    // ID 只在本池未清空时有效，切片在池扩容后仍有效。
     struct Pool {
-        Basic::Pool basic;
+        Basic::Pool &basic;
 
         // Shape 内容、本体与去重索引
         struct Shapes {
@@ -109,6 +109,10 @@ struct Structure {
             vectorPool<Delta::Change> removed;
             vectorPool<InstanceId> added;
         } deltas;
+
+        Pool(Basic::Pool &basic) : basic(basic) {}
+        // 只清空本层存储；调用方同步清空依赖这些 Shape/Instance 的缓存和结果。
+        void clear();
     };
 
     // 临时空间：analyze 和 update 各用一套遍历区，互不依赖上次调用留下的状态。
@@ -150,7 +154,7 @@ struct Structure {
     static Delta update(Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool, const CellId *changedCells, int changedCount, Workspace &workspace);
 
     // 正向时 result 对应更新前状态；reverse 时对应更新后状态且必须后进先出。池不得清空。
-    static void applyDelta(Result &result, const Pool &pool, const Delta &delta, bool reverse = false);
+    static void applyDelta(Result &result, const Delta &delta, const Pool &pool, bool reverse = false);
 };
 
 } // 命名空间 mss

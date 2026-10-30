@@ -22,7 +22,14 @@ struct FiftyFifty {
         Config(Algorithm algorithm, const LongTermRisk::Config *oldJava, const TemplateConfig *templates) : algorithm(algorithm), oldJava(oldJava), templates(templates) {}
     };
     struct Pool {
-        struct Templates { TemplateSemi::Pool semi; TemplateLongTermRisk::Pool risk; } templates;
+        // 模板池由调用方持有，须覆盖本池及借用模板表的结果的使用期。
+        struct Templates {
+            TemplateSemi::Pool &semi;
+            TemplateLongTermRisk::Pool &risk;
+            Templates(TemplateSemi::Pool &semi, TemplateLongTermRisk::Pool &risk) : semi(semi), risk(risk) {}
+        } templates;
+
+        Pool(TemplateSemi::Pool &semi, TemplateLongTermRisk::Pool &risk) : templates(semi, risk) {}
     };
     struct Result {
         Semi::Result semi;
@@ -45,12 +52,12 @@ struct FiftyFifty {
     };
 
     static int templateCount();
-    static void detect(Semi::Result &result, const PositionState &state, const Config &config, Pool &pool, Workspace &workspace);
+    static void detect(Semi::Result &result, const PositionState &state, const Probability::Pool &probabilities, const Config &config, Pool &pool, Workspace &workspace);
     // 同一根盘面先准备所选路线的风险；OldJava 可同时补找 Semi。
-    static void prepareRisk(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, Pool &pool, Workspace &workspace, bool collectSemi);
+    static void prepareRisk(Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, Pool &pool, Workspace &workspace, bool collectSemi);
     // 两条路线均返回除以全盘布局数后的无条件风险量。
-    static long double influence(ObservedBoard::CellId cell, PositionState &state, Result &result, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace);
-    static LongTermRisk::Details describeOldJava(ObservedBoard::CellId cell, PositionState &state, const ShapeSolverConfig &shapeConfig, const LongTermRisk::Config &config, Workspace::OldJava &workspace);
+    static long double influence(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, Result &result, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace);
+    static LongTermRisk::Details describeOldJava(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const LongTermRisk::Config &config, Workspace::OldJava &workspace);
 };
 
 } // 命名空间 mss

@@ -103,13 +103,17 @@ void runGames(const Config &config, const mss::MovePolicy &policy, mss::U128 see
     const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
     mss::GameControl::Workspace workspace;
     mss::GameControl::SuggestPool suggestions;
-    mss::FiftyFifty::Pool fiftyPool;
-    mss::AnytimeSearch::Pool searchPool;
+    mss::TemplateSemi::Pool semiPool;
+    mss::TemplateLongTermRisk::Pool riskPool;
+    mss::FiftyFifty::Pool fiftyPool(semiPool, riskPool);
     mss::AnytimeSearch::Workspace searchWorkspace(workspace.basic, workspace.structure, workspace.probability);
     mss::BruteForce::Workspace bruteForce(workspace.probability.shapeSolver);
     mss::vector<mss::ObservedBoard::CellId> moves;
     mss::Random random(seed.lo, seed.hi);
     Game game(config.rows, config.cols, config.mines, {random.next(), random.next()}, workspace, gameConfig, suggestions);
+    mss::Probability::Pool pendingProbabilities(game.position().probabilityPool().shapes, game.position().probabilityPool().distributions);
+    mss::JavaLite::Pool pending(pendingProbabilities);
+    mss::AnytimeSearch::Pool searchPool(pending);
     const mss::ObservedBoard::CellId first = config.cols - 1;
     for (int games = 0; games < config.games && std::chrono::duration<long double>(std::chrono::steady_clock::now() - start).count() < config.time; ++games) {
         if (games != 0) game.reset({random.next(), random.next()});

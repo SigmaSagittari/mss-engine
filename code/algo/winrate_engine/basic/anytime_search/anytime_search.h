@@ -14,7 +14,7 @@ struct AnytimeSearch {
     struct Config {
         Selection::Config selection;
         // 续搜的全盘概率分析与 Observe 次数预算；每次各计 1，0 不续搜，根层初始化另算。
-        // 候选观察批次和单格数字结局各自完整计算，可超支，下一阶段开始前检查预算。
+        // 一次局面到招法的评估、筛选及转存完整执行，可超支；开始下一局面前检查预算。
         long long nodeLimit;
         // 根层、第二步、更深层分别保留多少个候选；指定首招时根层不截断。
         int width[3];
@@ -40,6 +40,8 @@ struct AnytimeSearch {
                 ObservedBoard::CellId cell;
                 int deltaIndex; // 对应 Pool::deltas 中的一条揭格增量。
             };
+            // 未准备局面索引本层概率结果；招法为 -1，局面准备或终结后不再读取。
+            int probabilityIndex;
             // depth 是当前点击步数；expandedDepth 是已完成评分的最深步数，根从 0 开始。
             int depth;
             int expandedDepth;
@@ -49,7 +51,7 @@ struct AnytimeSearch {
             bool root;
             // 分支位置是否已准备候选；expandedDepth 是该候选/位置已展开到的最大深度。
             bool prepared;
-            Node(int item, int depth, bool isPosition) : value(0.0L), progressMultiplier(1.0L), child{}, depth(depth), expandedDepth(0), finished(false), root(false), prepared(false) {
+            Node(int item, int probabilityIndex, int depth, bool isPosition) : value(0.0L), progressMultiplier(1.0L), child{}, probabilityIndex(probabilityIndex), depth(depth), expandedDepth(0), finished(false), root(false), prepared(false) {
                 if (isPosition) deltaIndex = item;
                 else cell = item;
             }
@@ -61,6 +63,16 @@ struct AnytimeSearch {
         vector<long double> rootCompensations;
         // 每个数字结局的概率及状态增量；其中切片借用 analyze 输入的 PositionState 记录池。
         vector<JavaLite::Delta> deltas;
+        // 每层独立持有概率数组；节点只保存本层结果下标，释放不影响节点和分支权重。
+        struct ProbabilityLayer {
+            Probability::Pool pool;
+            vector<Probability::Result> results;
+            int remaining; // 还没有完成招法生成、也未永久终结的局面数。
+
+            ProbabilityLayer(const Structure::Pool &shapes, ShapeSolver::DistributionPool &distributions) : pool(shapes, distributions), remaining(0) {}
+        };
+        // 按局面深度索引，0 不使用；每层通过 new/delete 独立创建和释放。
+        vector<ProbabilityLayer *> probabilities;
         // 每个搜索深度一份续算游标；预算耗尽后保留顺序、下一结局及未完成的概率合计。
         struct Frame {
             vector<int> order; // 这一层候选的 Node 下标，按选招分排序后冻结。
@@ -73,13 +85,19 @@ struct AnytimeSearch {
             Frame() : next(0), nextOutcome(0), value(0.0L), settled(true), active(false) {}
         };
         std::deque<Frame> frames;
-        // 同时最多准备一个新位置；安全假设、数字结局与 Observe 按实际调用次数扣节点。
+        // 同时最多准备一个新位置；一个局面的候选必须完整评估、筛选及转存后才检查预算。
         Selection::Result selected;
         vector<Selection::Evaluation> evaluatedMoves;
-        vectorPool<JavaLite::Delta> pendingDeltas; // 当前新局面的评分暂存，建好子节点后转存到 deltas。
-        bool preparing; // 当前局面的候选尚未算完，update 从 selected.next 接着算。
+        JavaLite::Pool &pending; // 调用方持有的小池；只转存保留招法，须覆盖搜索池使用期。
 
-        Pool() : preparing(false) {}
+        Pool(JavaLite::Pool &pending) : pending(pending) {}
+        ~Pool();
+        Pool(const Pool &) = delete;
+        Pool &operator=(const Pool &) = delete;
+        void clear();
+        void clearProbabilities();
+        // 只在递归已经退出、state.probability 恢复根结果后调用。
+        void releaseProbabilities();
         long double score(int index) const { const Node &candidate = nodes.data.data[index]; return candidate.score() + (candidate.root ? rootCompensations.data[index] : 0.0L); }
     };
 
@@ -105,6 +123,7 @@ struct AnytimeSearch {
     };
 
     // analyze/update 期间及续搜前不得改变根盘面或清空 state 的池；Workspace 可顺序复用。
+    // pool.pending 引用的概率池须绑定 state 的结构池和分布缓存。
     // cells=nullptr 要求入口已排除安全格，自动选根；否则按给定顺序保留全部根，内层仍自动选点。
     // 每次 update 从 config.nodeLimit 读取本次计算节点预算；analyze 先完成根层评分，再使用预算。
     // 续搜只允许调整预算；显式首招按输入顺序全部保留，内层照常剪枝和限制宽度。
@@ -113,22 +132,15 @@ struct AnytimeSearch {
     static void update(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, SuggestResult::Details *details = nullptr);
 
   private:
-    // 一次 analyze/update 持有的中间结果；各节点显式覆写并消费，容量在本次遍历复用。
-    struct Evaluation {
-        // 扩展 deque 不移动祖先帧保存的概率结果。
-        std::deque<Probability::Result> probabilities;
-    };
-
-    static void swapProbability(Probability::Result &left, Probability::Result &right);
     static void selectCandidates(vector<Selection::Evaluation> &evaluatedMoves, int limit);
     static void selectRoot(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details);
-    static bool prepareNode(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, int width, long long &budget, long long &nodeCount);
+    static long long prepareNode(PositionState &state, const Probability::Pool &probabilities, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, int width);
     static void orderMoves(Pool &pool, vectorPool<Pool::Node>::vector children, Pool::Frame &frame);
-    static void appendDeltas(Pool &pool, int index, const JavaLite::Result &evaluated, const vectorPool<JavaLite::Delta> &deltas);
+    static void appendDeltas(Pool &pool, int index, const JavaLite::Result &evaluated, const JavaLite::Pool &values);
     static Result buildRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details);
-    static long long extend(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, Evaluation &evaluation, long long nodeBudget, int maxDepth, SuggestResult::Details *details);
-    static void extendPosition(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, Evaluation &evaluation, long long &budget, long long &nodeCount, bool &complete);
-    static void extendCandidate(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, Evaluation &evaluation, long long &budget, long long &nodeCount, bool &complete);
+    static long long extend(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, long long nodeBudget, int maxDepth, SuggestResult::Details *details);
+    static void extendPosition(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, long long &budget, bool &complete);
+    static void extendCandidate(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Workspace &workspace, long long &budget, bool &complete);
 };
 
 } // 命名空间 mss

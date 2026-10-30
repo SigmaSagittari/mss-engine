@@ -14,7 +14,7 @@
 namespace mss::UI {
 
 struct Session {
-    explicit Session(const Config &config);
+    Session(const Config &config);
     const std::string &token() const;
     bool stopped() const;
     std::string handle(const std::string &path, const std::string &body);
@@ -38,10 +38,12 @@ struct Session {
         GameControl::Workspace game;
         BruteForce::Workspace bruteForce;
         AnytimeSearch::Workspace anytimeSearch;
-        AnytimeSearch::Pool searchPool;
         MonteCarlo::Workspace monteCarlo;
         GameControl::Position position;
-        Analysis(int id, const GameControl::Config &config, const ObservedBoard::Result &board) : id(id), config(config), bruteForce(game.probability.shapeSolver), anytimeSearch(game.basic, game.structure, game.probability), position(GameControl::Position::fromUserInput(board, game, config)) {}
+        Probability::Pool pendingProbabilities;
+        JavaLite::Pool pending;
+        AnytimeSearch::Pool searchPool;
+        Analysis(int id, const GameControl::Config &config, const ObservedBoard::Result &board) : id(id), config(config), bruteForce(game.probability.shapeSolver), anytimeSearch(game.basic, game.structure, game.probability), position(GameControl::Position::fromUserInput(board, game, config)), pendingProbabilities(position.probabilityPool().shapes, position.probabilityPool().distributions), pending(pendingProbabilities), searchPool(pending) {}
     };
 
     static std::vector<FormField> parseForm(const std::string &body);
@@ -67,6 +69,8 @@ struct Session {
     void writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config);
 
     // 普通分析串行复用模板编译表；先声明以覆盖 analysis_ 中借用表的结果的生命周期。
+    TemplateSemi::Pool semiPool_;
+    TemplateLongTermRisk::Pool riskPool_;
     FiftyFifty::Pool fiftyPool_;
     // 普通计算由 HTTP 请求串行访问；仅保留最近一次计算，前端负责串行引用其 id。
     std::unique_ptr<Analysis> analysis_;

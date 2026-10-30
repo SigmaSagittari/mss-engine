@@ -49,27 +49,33 @@ struct ShapeSolverGraphStep {
         vector<Closing> closings;
     };
     struct Workspace {
-        // 邻接图和消元顺序的数组由工作区直接持有并跨调用复用。
-        vector<int> offsets;
-        vector<Structure::BoxId> adjacent;
-        // 建图暂存：head/to/next 是按边组织的链表，marked 做邻居去重。
-        vector<int> head;
-        vector<int> next;
-        vector<Structure::BoxId> to;
-        vector<char> marked;
-        vector<Structure::BoxId> order;
-        // 搜索临时副本。
-        vector<Structure::BoxId> candidate;
-        vector<Structure::BoxId> best;
-        vector<Structure::BoxId> current;
-        // SA 的初始顺序，与 current/candidate 分开。
-        vector<Structure::BoxId> seed;
-        // 打分与 BFS 暂存。
-        vector<int> remaining;
-        vector<char> selected;
-        vector<int> distance;
-        vector<Structure::BoxId> queue;
-        // 步骤计划数组跨调用复用。
+        struct Adjacency {
+            vector<int> offsets;
+            vector<Structure::BoxId> adjacent;
+            struct Build {
+                // head/to/next 是按边组织的链表，marked 做邻居去重。
+                vector<int> head;
+                vector<int> next;
+                vector<Structure::BoxId> to;
+                vector<char> marked;
+            } build;
+        } adjacency;
+        struct Order {
+            vector<Structure::BoxId> values;
+            vector<Structure::BoxId> candidate;
+            vector<Structure::BoxId> best;
+            vector<Structure::BoxId> current;
+            // SA 的初始顺序，与 current/candidate 分开。
+            vector<Structure::BoxId> seed;
+            struct Score {
+                vector<int> remaining;
+                vector<char> selected;
+            } score;
+            struct Bfs {
+                vector<int> distance;
+                vector<Structure::BoxId> queue;
+            } bfs;
+        } order;
         Sequence sequence;
     };
 

@@ -61,18 +61,18 @@ struct Semi {
     };
 
     // 输入来自同一有效盘面，probability.candidates > 0；dead 使用同盘面编号。
-    static Result analyze(const PositionState &state, span<const ObservedBoard::CellId> dead, Workspace &workspace);
+    static Result analyze(const PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, Workspace &workspace);
     // 按当前全部约束刷新结果并保留容量；target=-1 选首组，否则只返回包含该格的结果。
-    static Kind update(Result &result, const PositionState &state, span<const ObservedBoard::CellId> dead, Workspace &workspace, ObservedBoard::CellId target = -1);
+    static Kind update(Result &result, const PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, Workspace &workspace, ObservedBoard::CellId target = -1);
 
   private:
-    static void collectLinks(const PositionState &state, span<const ObservedBoard::CellId> dead, vector<Link> &links, int &linkCount, std::deque<vector<ObservedBoard::CellId>> &witnesses, int &witnessCount, Workspace &workspace);
-    static Kind extendChains(Result &result, const PositionState &state, span<Link> links, std::deque<Chain> &chains, int &chainCount, ObservedBoard::CellId target);
-    static Kind connectChains(Result &result, const PositionState &state, span<const ObservedBoard::CellId> dead, std::deque<Chain> &chains, int chainCount, const std::deque<vector<ObservedBoard::CellId>> &witnesses, int witnessCount, Workspace &workspace, ObservedBoard::CellId target);
+    static void collectLinks(const PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, vector<Link> &links, int &linkCount, std::deque<vector<ObservedBoard::CellId>> &witnesses, int &witnessCount, Workspace &workspace);
+    static Kind extendChains(Result &result, const PositionState &state, const Probability::Pool &probabilities, span<Link> links, std::deque<Chain> &chains, int &chainCount, ObservedBoard::CellId target);
+    static Kind connectChains(Result &result, const PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, std::deque<Chain> &chains, int chainCount, const std::deque<vector<ObservedBoard::CellId>> &witnesses, int witnessCount, Workspace &workspace, ObservedBoard::CellId target);
     static bool semiContains(span<const ObservedBoard::CellId> cells, ObservedBoard::CellId cell);
     static bool adjacent(const ObservedBoard::Result &board, ObservedBoard::CellId lhs, ObservedBoard::CellId rhs);
-    static void assess(Link &link, const PositionState &state);
-    static void findRootedLinks(span<const ObservedBoard::CellId> cells, const PositionState &state, span<const ObservedBoard::CellId> dead, int witnessSize, vector<Link> &links, int &linkCount);
+    static void assess(Link &link, const PositionState &state, const Probability::Pool &probabilities);
+    static void findRootedLinks(span<const ObservedBoard::CellId> cells, const PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, int witnessSize, vector<Link> &links, int &linkCount);
     static bool noTrouble(const ObservedBoard::Result &board, span<const ObservedBoard::CellId> trouble, span<const ObservedBoard::CellId> chain);
     static bool linkLess(const Link &lhs, const Link &rhs);
 };

@@ -39,7 +39,6 @@ struct Selection {
         int remainingSafe, forcedSafes;
         Mode mode;
         bool direct;
-        vectorPool<JavaLite::Delta> *deltas; // 借用调用方的池；为空时只评分。
         FiftyFifty::Result fiftyFifty;
 
         SuggestResult::Reason reason() const { return source == Source::Forced ? SuggestResult::Reason::Forced : source == Source::Semi ? SuggestResult::Reason::Semi : SuggestResult::Reason::ScoreWins; }
@@ -85,6 +84,7 @@ struct Selection {
         Basic::Workspace &basic;
         Structure::Workspace &structure;
         Probability::Workspace &probability;
+        Observe::Workspace observe;
         PositionState::Reveal reveal;
         JavaLite::Workspace javaLite;
         Grid<unsigned> visited;
@@ -96,28 +96,28 @@ struct Selection {
         vector<ObservedBoard::CellId> offEdge;
         vector<ObservedBoard::CellId> witnesses;
 
-        Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) : fiftyFifty(basic, structure, probability), basic(basic), structure(structure), probability(probability), javaLite(basic, structure, probability), visit(0) {}
+        Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) : fiftyFifty(basic, structure, probability), basic(basic), structure(structure), probability(probability), observe(probability.shapeSolver, probability.combination), javaLite(basic, structure, probability), visit(0) {}
     };
 
-    // state 已同步且概率有效；初始化候选与根层风险，返回实际 Observe 次数。
+    // state 已同步且概率有效，probabilities 为 state.probability 所属池；初始化候选与根层风险，返回实际 Observe 次数。
     // cells 非空时格子互异且未揭开，保持输入顺序并关闭评分前剪枝；空数组得到空结果。
-    // mode 决定评分规则；deltas 非空时向调用方的池写入数字结局增量，快捷评分没有增量。
-    // Result 和池须持续存活，每次 next 的 state 须回到 begin 的局面。
-    static int begin(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, Workspace &workspace, Mode mode, vectorPool<JavaLite::Delta> *deltas, const vector<ObservedBoard::CellId> *cells = nullptr);
+    // mode 决定评分规则；Result 须持续存活，每次 next 的 state 须回到 begin 的局面。
+    static int begin(PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, Workspace &workspace, Mode mode, const vector<ObservedBoard::CellId> *cells = nullptr);
     // 消费一个候选并返回评分；被剪掉时 javaLite.valid=false，nodes() 仍包含本次实际工作量。
-    // 调用前 next<cells.size；每个候选完整计算后才返回，预算由调用方在候选之间检查。
+    // pool 非空时保存数字结局增量及完整概率，切片借用该池；快捷评分没有增量。
+    // 调用前 next<cells.size；每个候选完整计算后才返回，Anytime 完成本局面的全部候选后才因预算暂停。
     // 只有 Inner 允许剪枝，floor 提供比较下界；负数表示尚无下界，根层忽略 floor。
-    static Evaluation next(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, Workspace &workspace, long double floor, SuggestResult::Details *details = nullptr);
+    static Evaluation next(Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, Workspace &workspace, JavaLite::Pool *pool, long double floor, SuggestResult::Details *details = nullptr);
     static bool offEdgeCandidate(const ObservedBoard::Result &board, ObservedBoard::CellId cell);
 
   private:
-    static Result::Source find(PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, Workspace &workspace, bool useRisk, const vector<ObservedBoard::CellId> *cells);
-    static int removeDead(Result &result, Result::Source source, PositionState &state, const ShapeSolverConfig &shapeConfig, Probability::Workspace &probabilityWorkspace);
-    static bool prepare(Result &result, int index, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, int &linkedClears, int &nodes, Workspace &workspace);
-    static bool interchangeable(const PositionState &state, ObservedBoard::CellId lhs, ObservedBoard::CellId rhs);
+    static Result::Source find(PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, Workspace &workspace, bool useRisk, const vector<ObservedBoard::CellId> *cells);
+    static int removeDead(Result &result, Result::Source source, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, Observe::Workspace &workspace);
+    static bool prepare(Result &result, int index, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, int &linkedClears, int &nodes, Workspace &workspace);
+    static bool interchangeable(const PositionState &state, const Probability::Pool &probabilities, ObservedBoard::CellId lhs, ObservedBoard::CellId rhs);
     static bool contains(span<const ObservedBoard::CellId> cells, ObservedBoard::CellId cell);
-    static bool meetsSpaceThreshold(int startRow, int startCol, const PositionState &state, int threshold, Workspace &workspace);
-    static void selectOrdinary(vector<ObservedBoard::CellId> &result, const PositionState &state, const LongTermRisk::Result *risk, span<const ObservedBoard::CellId> offEdge, span<const ObservedBoard::CellId> witnesses, ObservedBoard::CellId firstOffEdge, const Config &config, Workspace &workspace);
+    static bool meetsSpaceThreshold(int startRow, int startCol, const PositionState &state, const Probability::Pool &probabilities, int threshold, Workspace &workspace);
+    static void selectOrdinary(vector<ObservedBoard::CellId> &result, const PositionState &state, const Probability::Pool &probabilities, const LongTermRisk::Result *risk, span<const ObservedBoard::CellId> offEdge, span<const ObservedBoard::CellId> witnesses, ObservedBoard::CellId firstOffEdge, const Config &config, Workspace &workspace);
     static bool isDead(const Observe::Result &observation);
 };
 

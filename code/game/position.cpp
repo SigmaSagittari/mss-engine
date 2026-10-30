@@ -14,9 +14,10 @@ void GameControl::Position::initialize() {
     state_.probabilityValid = false;
     state_.structureLazyUpdate.resize(0);
     safeCells_.resize(0);
-    state_.shapes = Structure::Pool();
+    state_.shapes.clear();
     state_.distributions.clear();
-    state_.basicPool = Basic::Pool();
+    state_.basicPool.clear();
+    state_.boardPool.clear();
     Structure::analyze(state_.structure, state_.board, state_.basic, state_.shapes, workspace_.structure);
     basicSafeCells_.resize(0);
     basicSafeSeen_.resize(state_.board.cells.rows() * state_.board.cells.cols());
@@ -80,7 +81,7 @@ GameControl::Position::Position(const ObservedBoard::Result &board, Workspace &w
         for (int component = 0; component < (int)state_.structure.components.size; ++component) {
             const Structure::Instance &instance = state_.shapes.instances.list.data[state_.structure.components.data[component]];
             const Structure::Shape &shape = state_.shapes.shapes.list.data[instance.shape];
-            const ShapeSolver::DistributionId id = ShapeSolver::analyze(shape, state_.shapes, config_.shapeSolver, state_.distributions, workspace_.probability.shapeSolver);
+            const ShapeSolver::DistributionId id = ShapeSolver::analyze(shape, config_.shapeSolver, state_.distributions, workspace_.probability.shapeSolver);
             if (state_.distributions.list.data[id].ways.count == 0) {
                 error_ = "某连通块无解";
                 return;
@@ -128,11 +129,14 @@ const Structure::Pool &GameControl::Position::shapePool() {
 const Probability::Result &GameControl::Position::probability() {
     if (!state_.probabilityValid) {
         updateStructure();
-        Probability::analyze(state_.board, state_.basic, state_.structure, state_.shapes, config_.shapeSolver, state_.distributions, state_.probability, workspace_.probability);
+        state_.probabilityPool.clear();
+        state_.probability = Probability::analyze(state_.board, state_.basic, state_.structure, config_.shapeSolver, state_.probabilityPool, workspace_.probability);
         state_.probabilityValid = true;
     }
     return state_.probability;
 }
+
+Probability::Pool &GameControl::Position::probabilityPool() { return state_.probabilityPool; }
 
 PositionState &GameControl::Position::state() {
     probability();
@@ -146,12 +150,12 @@ long double GameControl::Position::mineProbability(ObservedBoard::CellId cell) {
         return 0.0L;
     if (mark == Basic::Mark::F)
         return 1.0L;
-    return Probability::mineProbability(probability(), cell, state_.board, state_.basic, state_.structure);
+    return Probability::mineProbability(probability(), state_.probabilityPool, cell, state_.board, state_.basic, state_.structure);
 }
 
 void GameControl::Position::observe(ObservedBoard::CellId cell, Observe::Result &result) {
     const Probability::Result &currentProbability = probability();
-    Observe::observe(state_.board, state_.basic, state_.structure, state_.shapes, currentProbability, state_.distributions, config_.shapeSolver, cell, result, workspace_.probability);
+    Observe::observe(state_.board, state_.basic, state_.structure, currentProbability, state_.probabilityPool, config_.shapeSolver, cell, result, workspace_.observe);
 }
 
 span<const ObservedBoard::CellId> GameControl::Position::safeMoves() {
@@ -168,7 +172,7 @@ span<const ObservedBoard::CellId> GameControl::Position::safeMoves() {
         return span<const ObservedBoard::CellId>(safeCells_.data, (int)safeCells_.size);
 
     const Probability::Result &currentProbability = probability();
-    currentProbability.frontierCells(state_.structure, state_.shapes, [&](ObservedBoard::CellId cell, long double risk) {
+    currentProbability.frontierCells(state_.probabilityPool, state_.structure, [&](ObservedBoard::CellId cell, long double risk) {
         if (risk == 0.0L)
             safeCells_.push_back(cell);
     });

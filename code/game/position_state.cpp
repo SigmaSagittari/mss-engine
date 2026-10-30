@@ -4,7 +4,7 @@
 
 namespace mss {
 
-long double PositionState::countCandidatesWithForces(span<const ObservedBoard::CellId> mines, span<const ObservedBoard::CellId> safes, const ShapeSolverConfig &config, Basic::Workspace &basicWorkspace, Structure::Workspace &structureWorkspace, Probability::Workspace &probabilityWorkspace, vector<ObservedBoard::CellId> &changedCells, Probability::Result &forced) {
+long double PositionState::countCandidatesWithForces(span<const ObservedBoard::CellId> mines, span<const ObservedBoard::CellId> safes, const ShapeSolverConfig &config, Basic::Workspace &basicWorkspace, Structure::Workspace &structureWorkspace, Probability::Workspace &probabilityWorkspace, vector<ObservedBoard::CellId> &changedCells) {
     ObservedBoard::Delta updates;
     updates.changes = basicPool.board.changes.push_back();
     changedCells.resize(0);
@@ -51,9 +51,11 @@ long double PositionState::countCandidatesWithForces(span<const ObservedBoard::C
     long double candidates = 0.0L;
     if (valid) {
         const Structure::Delta structureDelta = Structure::update(structure, board, basic, shapes, changedCells.data, (int)changedCells.size, structureWorkspace);
-        Probability::analyze(board, basic, structure, shapes, config, distributions, forced, probabilityWorkspace);
+        const Probability::Result forced = Probability::analyze(board, basic, structure, config, probabilityPool, probabilityWorkspace);
         candidates = forced.candidates;
-        Structure::applyDelta(structure, shapes, structureDelta, true);
+        probabilityPool.boxProbabilities.pop_back(forced.boxProbabilities);
+        probabilityPool.components.pop_back(forced.components);
+        Structure::applyDelta(structure, structureDelta, shapes, true);
         shapes.deltas.removed.pop_back(structureDelta.removed);
         shapes.deltas.added.pop_back(structureDelta.added);
     }
@@ -65,7 +67,7 @@ long double PositionState::countCandidatesWithForces(span<const ObservedBoard::C
     return candidates;
 }
 
-void PositionState::applyReveal(ObservedBoard::CellId cell, ObservedBoard::CellState next, const ShapeSolverConfig &config, Basic::Workspace &basicWorkspace, Structure::Workspace &structureWorkspace, Probability::Workspace &probabilityWorkspace, Reveal &reveal) {
+void PositionState::applyReveal(ObservedBoard::CellId cell, ObservedBoard::CellState next, const ShapeSolverConfig &config, Basic::Workspace &basicWorkspace, Structure::Workspace &structureWorkspace, Probability::Workspace &probabilityWorkspace, Reveal &reveal, Probability::Pool &results) {
     reveal.cell = cell;
     const std::pair<int, int> position = board.pos(cell);
     reveal.previous = board.cells[position.first][position.second];
@@ -74,11 +76,13 @@ void PositionState::applyReveal(ObservedBoard::CellId cell, ObservedBoard::CellS
     ObservedBoard::apply(board, reveal.board, basicPool.board);
     reveal.basic = Basic::update(basic, board, reveal.board, basicPool, basicWorkspace);
     reveal.structure = Structure::update(structure, board, basic, shapes, &cell, 1, structureWorkspace);
-    Probability::analyze(board, basic, structure, shapes, config, distributions, reveal.probability, probabilityWorkspace);
+    reveal.probability = Probability::analyze(board, basic, structure, config, results, probabilityWorkspace);
 }
 
-void PositionState::undoReveal(Reveal &reveal) {
-    Structure::applyDelta(structure, shapes, reveal.structure, true);
+void PositionState::undoReveal(Reveal &reveal, Probability::Pool &results) {
+    results.boxProbabilities.pop_back(reveal.probability.boxProbabilities);
+    results.components.pop_back(reveal.probability.components);
+    Structure::applyDelta(structure, reveal.structure, shapes, true);
     shapes.deltas.removed.pop_back(reveal.structure.removed);
     shapes.deltas.added.pop_back(reveal.structure.added);
     Basic::applyDelta(basic, reveal.basic, basicPool, true);

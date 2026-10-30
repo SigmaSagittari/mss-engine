@@ -428,7 +428,7 @@ struct TemplateLongTermRiskEngine {
         return hash;
     }
 
-    static long double countForces(TemplateLongTermRisk::Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Probability::Result &forcedProbability, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) {
+    static long double countForces(TemplateLongTermRisk::Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) {
         int used = 0;
         for (int i = 0; i < (int)mines.size; ++i) {
             const int id = mines.data[i];
@@ -445,7 +445,7 @@ struct TemplateLongTermRiskEngine {
             if (mark != Basic::Mark::S) safes.data[used++] = id;
         }
         safes.resize(used);
-        const int signatureSize = 2 * ((int)state.probability.boxProbabilities.size + 1);
+        const int signatureSize = 2 * ((int)state.probability.boxProbabilities.count + 1);
         countSignature.resize(signatureSize);
         for (int i = 0; i < signatureSize; ++i) countSignature.data[i] = 0;
         for (int side = 0; side < 2; ++side) {
@@ -453,7 +453,7 @@ struct TemplateLongTermRiskEngine {
             for (int i = 0; i < (int)cells.size; ++i) {
                 const int id = cells.data[i];
                 const Structure::Result::CellLocation &where = state.structure.cellLoc.data[id];
-                const int box = where.box < 0 ? 0 : state.probability.components.data[where.component].boxOffset + where.box + 1;
+                const int box = where.box < 0 ? 0 : probabilities.components.data.data[state.probability.components.offset + where.component].boxOffset + where.box + 1;
                 ++countSignature.data[2 * box + side];
             }
         }
@@ -466,7 +466,7 @@ struct TemplateLongTermRiskEngine {
             for (int i = 0; i < signatureSize; ++i) if (result.countKeys.data[entry.keyBegin + i] != countSignature.data[i]) { same = false; break; }
             if (same) return entry.value;
         }
-        const long double value = state.countCandidatesWithForces({mines.data, (int)mines.size}, {safes.data, (int)safes.size}, shapeConfig, basic, structure, probability, changedCells, forcedProbability);
+        const long double value = state.countCandidatesWithForces({mines.data, (int)mines.size}, {safes.data, (int)safes.size}, shapeConfig, basic, structure, probability, changedCells);
         const int keyBegin = (int)result.countKeys.size, next = head == nullptr ? -1 : *head;
         for (int i = 0; i < signatureSize; ++i) result.countKeys.push_back(countSignature.data[i]);
         const int index = (int)result.counts.size;
@@ -475,7 +475,7 @@ struct TemplateLongTermRiskEngine {
         return value;
     }
 
-    static long double eventProbability(TemplateLongTermRisk::Result &result, int eventIndex, PositionState &state, const ShapeSolverConfig &shapeConfig, int boardWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<TemplateLongTermRisk::Workspace::BlockerWork> &eventBlockers, vector<ObservedBoard::CellId> &eventBlockerCells, vector<int> &expressions, vector<int> &nextExpressions, vector<unsigned long long> &expressionWords, vector<unsigned long long> &nextExpressionWords, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Probability::Result &forcedProbability, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) {
+    static long double eventProbability(TemplateLongTermRisk::Result &result, int eventIndex, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, int boardWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<TemplateLongTermRisk::Workspace::BlockerWork> &eventBlockers, vector<ObservedBoard::CellId> &eventBlockerCells, vector<int> &expressions, vector<int> &nextExpressions, vector<unsigned long long> &expressionWords, vector<unsigned long long> &nextExpressionWords, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) {
         TemplateLongTermRisk::Result::Event &event = result.events.data[eventIndex];
         if (event.probabilityValid) return event.probability;
         prepareEvent(result, eventIndex, mines, safes, eventBlockers, eventBlockerCells);
@@ -484,7 +484,7 @@ struct TemplateLongTermRiskEngine {
             mines.resize(0); safes.resize(0);
             for (int i = 0; i < event.baseMineCount; ++i) mines.push_back(result.eventCells.data[event.baseMineBegin + i]);
             for (int i = 0; i < event.baseSafeCount; ++i) safes.push_back(result.eventCells.data[event.baseSafeBegin + i]);
-            event.probability = countForces(result, state, shapeConfig, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability);
+            event.probability = countForces(result, state, probabilities, shapeConfig, mines, safes, countSignature, changedCells, basic, structure, probability);
             event.probabilityValid = true;
             return event.probability;
         }
@@ -535,7 +535,7 @@ struct TemplateLongTermRiskEngine {
             for (int j = 0; j < event.baseMineCount; ++j) mines.push_back(result.eventCells.data[event.baseMineBegin + j]);
             for (int j = 0; j < event.baseSafeCount; ++j) safes.push_back(result.eventCells.data[event.baseSafeBegin + j]);
             for (int word = 0; word < boardWords; ++word) for (unsigned long long bits = expressionWords.data[i * boardWords + word]; bits; bits &= bits - 1) mines.push_back(word * 64 + std::countr_zero(bits));
-            total += coefficient * countForces(result, state, shapeConfig, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability);
+            total += coefficient * countForces(result, state, probabilities, shapeConfig, mines, safes, countSignature, changedCells, basic, structure, probability);
         }
         event.probability = total;
         event.probabilityValid = true;
@@ -547,7 +547,7 @@ struct TemplateLongTermRiskEngine {
         return false;
     }
 
-    static void gatherTerms(TemplateLongTermRisk::Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, int boardWords, const vector<ObservedBoard::CellId> &groupCells, vector<int> &pendingMatches, vector<TemplateLongTermRisk::Workspace::Term> &terms, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<TemplateLongTermRisk::Workspace::BlockerWork> &eventBlockers, vector<ObservedBoard::CellId> &eventBlockerCells, vector<int> &expressions, vector<int> &nextExpressions, vector<unsigned long long> &expressionWords, vector<unsigned long long> &nextExpressionWords, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Probability::Result &forcedProbability, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) {
+    static void gatherTerms(TemplateLongTermRisk::Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, int boardWords, const vector<ObservedBoard::CellId> &groupCells, vector<int> &pendingMatches, vector<TemplateLongTermRisk::Workspace::Term> &terms, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<TemplateLongTermRisk::Workspace::BlockerWork> &eventBlockers, vector<ObservedBoard::CellId> &eventBlockerCells, vector<int> &expressions, vector<int> &nextExpressions, vector<unsigned long long> &expressionWords, vector<unsigned long long> &nextExpressionWords, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) {
         pendingMatches.resize(0); terms.resize(0);
         for (int i = 0; i < (int)groupCells.size; ++i) {
             const int id = groupCells.data[i];
@@ -574,10 +574,10 @@ struct TemplateLongTermRiskEngine {
                 if (slot < pattern.coreCount) {
                     const int direction = slot < pattern.aCount ? 0 : 1;
                     const int event = match.eventBegin + direction * 2;
-                    terms.push_back({event, matchIndex, 1.0L, eventProbability(result, event, state, shapeConfig, boardWords, mines, safes, eventBlockers, eventBlockerCells, expressions, nextExpressions, expressionWords, nextExpressionWords, countSignature, changedCells, forcedProbability, basic, structure, probability)});
+                    terms.push_back({event, matchIndex, 1.0L, eventProbability(result, event, state, probabilities, shapeConfig, boardWords, mines, safes, eventBlockers, eventBlockerCells, expressions, nextExpressions, expressionWords, nextExpressionWords, countSignature, changedCells, basic, structure, probability)});
                 } else for (int direction = 0; direction < 2; ++direction) {
                     const int event = match.eventBegin + direction * 2 + 1;
-                    terms.push_back({event, matchIndex, 0.5L, eventProbability(result, event, state, shapeConfig, boardWords, mines, safes, eventBlockers, eventBlockerCells, expressions, nextExpressions, expressionWords, nextExpressionWords, countSignature, changedCells, forcedProbability, basic, structure, probability)});
+                    terms.push_back({event, matchIndex, 0.5L, eventProbability(result, event, state, probabilities, shapeConfig, boardWords, mines, safes, eventBlockers, eventBlockerCells, expressions, nextExpressions, expressionWords, nextExpressionWords, countSignature, changedCells, basic, structure, probability)});
                 }
             }
         }
@@ -676,21 +676,21 @@ struct TemplateLongTermRiskEngine {
         return true;
     }
 
-    static long double countDomain(TemplateLongTermRisk::Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Probability::Result &forcedProbability, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, const vector<unsigned long long> &mineBits, const vector<unsigned long long> &safeBits) {
+    static long double countDomain(TemplateLongTermRisk::Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, const vector<unsigned long long> &mineBits, const vector<unsigned long long> &safeBits) {
         mines.resize(0); safes.resize(0);
         for (int word = 0; word < words; ++word) {
             for (unsigned long long bits = mineBits.data[word]; bits; bits &= bits - 1) mines.push_back(originalCells.data[word * 64 + std::countr_zero(bits)]);
             for (unsigned long long bits = safeBits.data[word]; bits; bits &= bits - 1) safes.push_back(originalCells.data[word * 64 + std::countr_zero(bits)]);
         }
-        return countForces(result, state, shapeConfig, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability);
+        return countForces(result, state, probabilities, shapeConfig, mines, safes, countSignature, changedCells, basic, structure, probability);
     }
 
-    static int internDomain(TemplateLongTermRisk::Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Probability::Result &forcedProbability, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, const vector<unsigned long long> &mineBits, const vector<unsigned long long> &safeBits) {
+    static int internDomain(TemplateLongTermRisk::Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, const vector<unsigned long long> &mineBits, const vector<unsigned long long> &safeBits) {
         for (int i = 0; i < words; ++i) if (mineBits.data[i] & safeBits.data[i]) return 0;
         const unsigned long long hash = domainHash(words, mineBits, safeBits);
         int *head = domainIndex.find(hash);
         if (head != nullptr) for (int index = *head; index != -1; index = domains.data[index].next) if (sameDomain(words, domainMineWords, domainSafeWords, index, mineBits, safeBits)) return index;
-        const long double mass = countDomain(result, state, shapeConfig, words, originalCells, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, mineBits, safeBits);
+        const long double mass = countDomain(result, state, probabilities, shapeConfig, words, originalCells, mines, safes, countSignature, changedCells, basic, structure, probability, mineBits, safeBits);
         if (mass == 0.0L) return 0;
         const int index = (int)domains.size, begin = index * words;
         domainMineWords.resize(begin + words); domainSafeWords.resize(begin + words);
@@ -700,7 +700,7 @@ struct TemplateLongTermRiskEngine {
         return index;
     }
 
-    static int mergeDomain(TemplateLongTermRisk::Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mergeMineWords, vector<unsigned long long> &mergeSafeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Probability::Result &forcedProbability, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, int first, int second) {
+    static int mergeDomain(TemplateLongTermRisk::Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mergeMineWords, vector<unsigned long long> &mergeSafeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, int first, int second) {
         const int a = first * words, b = second * words;
         mergeMineWords.resize(words); mergeSafeWords.resize(words);
         for (int i = 0; i < words; ++i) {
@@ -709,23 +709,23 @@ struct TemplateLongTermRiskEngine {
             if (joinedMines & joinedSafes) return 0;
             mergeMineWords.data[i] = joinedMines; mergeSafeWords.data[i] = joinedSafes;
         }
-        return internDomain(result, state, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, mergeMineWords, mergeSafeWords);
+        return internDomain(result, state, probabilities, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mines, safes, countSignature, changedCells, basic, structure, probability, mergeMineWords, mergeSafeWords);
     }
 
-    static int packEvent(TemplateLongTermRisk::Result &result, int eventIndex, PositionState &state, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, const vector<int> &denseCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mineWords, vector<unsigned long long> &safeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Probability::Result &forcedProbability, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) {
+    static int packEvent(TemplateLongTermRisk::Result &result, int eventIndex, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, const vector<int> &denseCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mineWords, vector<unsigned long long> &safeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) {
         const TemplateLongTermRisk::Result::Event &event = result.events.data[eventIndex];
         mineWords.resize(words); safeWords.resize(words);
         for (int i = 0; i < words; ++i) { mineWords.data[i] = 0; safeWords.data[i] = 0; }
         for (int i = 0; i < event.baseMineCount; ++i) { const int dense = denseCells.data[result.eventCells.data[event.baseMineBegin + i]]; mineWords.data[dense / 64] |= 1ULL << (dense % 64); }
         for (int i = 0; i < event.baseSafeCount; ++i) { const int dense = denseCells.data[result.eventCells.data[event.baseSafeBegin + i]]; safeWords.data[dense / 64] |= 1ULL << (dense % 64); }
-        return internDomain(result, state, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, mineWords, safeWords);
+        return internDomain(result, state, probabilities, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mines, safes, countSignature, changedCells, basic, structure, probability, mineWords, safeWords);
     }
 
-    static int packBlocker(TemplateLongTermRisk::Result &result, const TemplateLongTermRisk::Result::BlockerSet &blocker, PositionState &state, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, const vector<int> &denseCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mineWords, vector<unsigned long long> &safeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Probability::Result &forcedProbability, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) {
+    static int packBlocker(TemplateLongTermRisk::Result &result, const TemplateLongTermRisk::Result::BlockerSet &blocker, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, const vector<int> &denseCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mineWords, vector<unsigned long long> &safeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) {
         mineWords.resize(words); safeWords.resize(words);
         for (int i = 0; i < words; ++i) { mineWords.data[i] = 0; safeWords.data[i] = 0; }
         for (int i = 0; i < blocker.cellCount; ++i) { const int dense = denseCells.data[result.blockerCells.data[blocker.cellBegin + i]]; mineWords.data[dense / 64] |= 1ULL << (dense % 64); }
-        return internDomain(result, state, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, mineWords, safeWords);
+        return internDomain(result, state, probabilities, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mines, safes, countSignature, changedCells, basic, structure, probability, mineWords, safeWords);
     }
 
     static bool sameFactor(const vector<int> &factorBlockers, const TemplateLongTermRisk::Workspace::Factor &a, int base, const vector<int> &blockers, int blockerCount) {
@@ -734,13 +734,13 @@ struct TemplateLongTermRiskEngine {
         return true;
     }
 
-    static void appendFactor(TemplateLongTermRisk::Result &result, int eventIndex, long double weight, PositionState &state, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, const vector<int> &denseCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mineWords, vector<unsigned long long> &safeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Probability::Result &forcedProbability, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, vector<TemplateLongTermRisk::Workspace::Factor> &factors, vector<int> &factorBlockers, vector<int> &pendingEvents) {
+    static void appendFactor(TemplateLongTermRisk::Result &result, int eventIndex, long double weight, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, const vector<int> &denseCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mineWords, vector<unsigned long long> &safeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, vector<TemplateLongTermRisk::Workspace::Factor> &factors, vector<int> &factorBlockers, vector<int> &pendingEvents) {
         const TemplateLongTermRisk::Result::Event &event = result.events.data[eventIndex];
-        const int base = packEvent(result, eventIndex, state, shapeConfig, words, originalCells, denseCells, domains, domainMineWords, domainSafeWords, domainIndex, mineWords, safeWords, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability);
+        const int base = packEvent(result, eventIndex, state, probabilities, shapeConfig, words, originalCells, denseCells, domains, domainMineWords, domainSafeWords, domainIndex, mineWords, safeWords, mines, safes, countSignature, changedCells, basic, structure, probability);
         pendingEvents.resize(0);
         for (int i = 0; i < event.blockerCount; ++i) {
             const TemplateLongTermRisk::Result::BlockerSet &blocker = result.blockerSets.data[event.blockerBegin + i];
-            const int key = packBlocker(result, blocker, state, shapeConfig, words, originalCells, denseCells, domains, domainMineWords, domainSafeWords, domainIndex, mineWords, safeWords, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability);
+            const int key = packBlocker(result, blocker, state, probabilities, shapeConfig, words, originalCells, denseCells, domains, domainMineWords, domainSafeWords, domainIndex, mineWords, safeWords, mines, safes, countSignature, changedCells, basic, structure, probability);
             if (key) pendingEvents.push_back(key);
         }
         for (int i = 1; i < (int)pendingEvents.size; ++i) {
@@ -818,7 +818,7 @@ struct TemplateLongTermRiskEngine {
         return tail;
     }
 
-    static long double evaluateTree(TemplateLongTermRisk::Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mergeMineWords, vector<unsigned long long> &mergeSafeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Probability::Result &forcedProbability, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, vector<TemplateLongTermRisk::Workspace::Factor> &factors, vector<int> &factorBlockers, vector<int> &pendingEvents, vector<TemplateLongTermRisk::Workspace::Tail> &tails, FlatHashTable<unsigned long long, int> &tailIndex, vector<TemplateLongTermRisk::Workspace::Node> &nodes, FlatHashTable<unsigned long long, int> &nodeIndex, int domain, int tailId) {
+    static long double evaluateTree(TemplateLongTermRisk::Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mergeMineWords, vector<unsigned long long> &mergeSafeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, vector<TemplateLongTermRisk::Workspace::Factor> &factors, vector<int> &factorBlockers, vector<int> &pendingEvents, vector<TemplateLongTermRisk::Workspace::Tail> &tails, FlatHashTable<unsigned long long, int> &tailIndex, vector<TemplateLongTermRisk::Workspace::Node> &nodes, FlatHashTable<unsigned long long, int> &nodeIndex, int domain, int tailId) {
         if (!domain) return 0.0L;
         if (!tailId) return domains.data[domain].mass;
         const unsigned long long key = ((unsigned long long)(unsigned int)domain << 32) | (unsigned int)tailId;
@@ -828,15 +828,15 @@ struct TemplateLongTermRiskEngine {
         const TemplateLongTermRisk::Workspace::Factor factor = factors.data[tail.factor];
         const int status = factorStatus(words, domainMineWords, domainSafeWords, factorBlockers, domain, factor.baseKey, factor.blockerBegin, factor.blockerCount);
         long double value = 0.0L;
-        if (status == 0) value = evaluateTree(result, state, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, factors, factorBlockers, pendingEvents, tails, tailIndex, nodes, nodeIndex, domain, tail.next);
-        else if (status == 2) value = (1.0L - factor.weight) * evaluateTree(result, state, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, factors, factorBlockers, pendingEvents, tails, tailIndex, nodes, nodeIndex, domain, tail.next);
+        if (status == 0) value = evaluateTree(result, state, probabilities, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, basic, structure, probability, factors, factorBlockers, pendingEvents, tails, tailIndex, nodes, nodeIndex, domain, tail.next);
+        else if (status == 2) value = (1.0L - factor.weight) * evaluateTree(result, state, probabilities, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, basic, structure, probability, factors, factorBlockers, pendingEvents, tails, tailIndex, nodes, nodeIndex, domain, tail.next);
         else {
-            const int joined = mergeDomain(result, state, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, domain, factor.baseKey);
-            const long double without = evaluateTree(result, state, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, factors, factorBlockers, pendingEvents, tails, tailIndex, nodes, nodeIndex, domain, tail.next);
+            const int joined = mergeDomain(result, state, probabilities, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, basic, structure, probability, domain, factor.baseKey);
+            const long double without = evaluateTree(result, state, probabilities, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, basic, structure, probability, factors, factorBlockers, pendingEvents, tails, tailIndex, nodes, nodeIndex, domain, tail.next);
             if (!joined) value = without;
             else {
                 const int included = includeTail(domains, factors, factorBlockers, pendingEvents, tails, tailIndex, tail.next, factor);
-                value = without - factor.weight * evaluateTree(result, state, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, factors, factorBlockers, pendingEvents, tails, tailIndex, nodes, nodeIndex, joined, included);
+                value = without - factor.weight * evaluateTree(result, state, probabilities, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, basic, structure, probability, factors, factorBlockers, pendingEvents, tails, tailIndex, nodes, nodeIndex, joined, included);
             }
         }
         const int index = (int)nodes.size;
@@ -851,13 +851,13 @@ struct TemplateLongTermRiskEngine {
         return true;
     }
 
-    static void appendDescriptionFactor(TemplateLongTermRisk::Result &result, const TemplateLongTermRisk::Workspace::Term &term, PositionState &state, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, const vector<int> &denseCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mineWords, vector<unsigned long long> &safeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Probability::Result &forcedProbability, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, vector<TemplateLongTermRisk::Workspace::DescriptionFactor> &descriptionFactors, vector<int> &factorBlockers, vector<int> &pendingEvents) {
+    static void appendDescriptionFactor(TemplateLongTermRisk::Result &result, const TemplateLongTermRisk::Workspace::Term &term, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, const vector<int> &denseCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mineWords, vector<unsigned long long> &safeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, vector<TemplateLongTermRisk::Workspace::DescriptionFactor> &descriptionFactors, vector<int> &factorBlockers, vector<int> &pendingEvents) {
         const TemplateLongTermRisk::Result::Event &event = result.events.data[term.event];
-        const int base = packEvent(result, term.event, state, shapeConfig, words, originalCells, denseCells, domains, domainMineWords, domainSafeWords, domainIndex, mineWords, safeWords, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability);
+        const int base = packEvent(result, term.event, state, probabilities, shapeConfig, words, originalCells, denseCells, domains, domainMineWords, domainSafeWords, domainIndex, mineWords, safeWords, mines, safes, countSignature, changedCells, basic, structure, probability);
         pendingEvents.resize(0);
         for (int i = 0; i < event.blockerCount; ++i) {
             const TemplateLongTermRisk::Result::BlockerSet &blocker = result.blockerSets.data[event.blockerBegin + i];
-            const int key = packBlocker(result, blocker, state, shapeConfig, words, originalCells, denseCells, domains, domainMineWords, domainSafeWords, domainIndex, mineWords, safeWords, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability);
+            const int key = packBlocker(result, blocker, state, probabilities, shapeConfig, words, originalCells, denseCells, domains, domainMineWords, domainSafeWords, domainIndex, mineWords, safeWords, mines, safes, countSignature, changedCells, basic, structure, probability);
             if (key) pendingEvents.push_back(key);
         }
         for (int i = 1; i < (int)pendingEvents.size; ++i) {
@@ -908,7 +908,7 @@ struct TemplateLongTermRiskEngine {
         return tail;
     }
 
-    static int evaluateDescriptionTree(TemplateLongTermRisk::Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mergeMineWords, vector<unsigned long long> &mergeSafeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Probability::Result &forcedProbability, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, vector<TemplateLongTermRisk::Workspace::DescriptionFactor> &descriptionFactors, vector<int> &factorBlockers, vector<int> &pendingEvents, vector<TemplateLongTermRisk::Workspace::Tail> &tails, FlatHashTable<unsigned long long, int> &tailIndex, vector<TemplateLongTermRisk::Workspace::DescriptionNode> &descriptionNodes, vector<long double> &descriptionValues, FlatHashTable<unsigned long long, int> &descriptionNodeIndex, int domain, int tailId, int bins) {
+    static int evaluateDescriptionTree(TemplateLongTermRisk::Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, int words, const vector<ObservedBoard::CellId> &originalCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mergeMineWords, vector<unsigned long long> &mergeSafeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, vector<TemplateLongTermRisk::Workspace::DescriptionFactor> &descriptionFactors, vector<int> &factorBlockers, vector<int> &pendingEvents, vector<TemplateLongTermRisk::Workspace::Tail> &tails, FlatHashTable<unsigned long long, int> &tailIndex, vector<TemplateLongTermRisk::Workspace::DescriptionNode> &descriptionNodes, vector<long double> &descriptionValues, FlatHashTable<unsigned long long, int> &descriptionNodeIndex, int domain, int tailId, int bins) {
         if (!domain) return -1;
         const unsigned long long key = ((unsigned long long)(unsigned int)domain << 32) | (unsigned int)tailId;
         const int *cached = descriptionNodeIndex.find(key);
@@ -921,10 +921,10 @@ struct TemplateLongTermRiskEngine {
             const TemplateLongTermRisk::Workspace::DescriptionFactor factor = descriptionFactors.data[tail.factor];
             status = factorStatus(words, domainMineWords, domainSafeWords, factorBlockers, domain, factor.baseKey, factor.blockerBegin, factor.blockerCount);
             restrictionCount = factor.restrictionCount;
-            restNode = evaluateDescriptionTree(result, state, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, descriptionFactors, factorBlockers, pendingEvents, tails, tailIndex, descriptionNodes, descriptionValues, descriptionNodeIndex, domain, tail.next, bins);
+            restNode = evaluateDescriptionTree(result, state, probabilities, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, basic, structure, probability, descriptionFactors, factorBlockers, pendingEvents, tails, tailIndex, descriptionNodes, descriptionValues, descriptionNodeIndex, domain, tail.next, bins);
             if (status == 1) {
-                const int joined = mergeDomain(result, state, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, domain, factor.baseKey);
-                if (joined) includedNode = evaluateDescriptionTree(result, state, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, descriptionFactors, factorBlockers, pendingEvents, tails, tailIndex, descriptionNodes, descriptionValues, descriptionNodeIndex, joined, descriptionIncludeTail(domains, descriptionFactors, factorBlockers, pendingEvents, tails, tailIndex, tail.next, factor), bins);
+                const int joined = mergeDomain(result, state, probabilities, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, basic, structure, probability, domain, factor.baseKey);
+                if (joined) includedNode = evaluateDescriptionTree(result, state, probabilities, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, basic, structure, probability, descriptionFactors, factorBlockers, pendingEvents, tails, tailIndex, descriptionNodes, descriptionValues, descriptionNodeIndex, joined, descriptionIncludeTail(domains, descriptionFactors, factorBlockers, pendingEvents, tails, tailIndex, tail.next, factor), bins);
             }
         }
         const int index = (int)descriptionNodes.size;
@@ -967,10 +967,10 @@ struct TemplateLongTermRiskEngine {
         }
     }
 
-    static long double buildFactors(TemplateLongTermRisk::Result &result, int rootCell, int selectedCount, PositionState &state, const ShapeSolverConfig &shapeConfig, int words, const vector<TemplateLongTermRisk::Workspace::Term> &terms, vector<int> &order, const vector<ObservedBoard::CellId> &originalCells, const vector<int> &denseCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mergeMineWords, vector<unsigned long long> &mergeSafeWords, vector<unsigned long long> &mineWords, vector<unsigned long long> &safeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Probability::Result &forcedProbability, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, vector<TemplateLongTermRisk::Workspace::Factor> &factors, vector<int> &factorBlockers, vector<int> &pendingEvents, vector<TemplateLongTermRisk::Workspace::Tail> &tails, FlatHashTable<unsigned long long, int> &tailIndex, vector<TemplateLongTermRisk::Workspace::Node> &nodes, FlatHashTable<unsigned long long, int> &nodeIndex) {
+    static long double buildFactors(TemplateLongTermRisk::Result &result, int rootCell, int selectedCount, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, int words, const vector<TemplateLongTermRisk::Workspace::Term> &terms, vector<int> &order, const vector<ObservedBoard::CellId> &originalCells, const vector<int> &denseCells, vector<TemplateLongTermRisk::Workspace::Domain> &domains, vector<unsigned long long> &domainMineWords, vector<unsigned long long> &domainSafeWords, FlatHashTable<unsigned long long, int> &domainIndex, vector<unsigned long long> &mergeMineWords, vector<unsigned long long> &mergeSafeWords, vector<unsigned long long> &mineWords, vector<unsigned long long> &safeWords, vector<ObservedBoard::CellId> &mines, vector<ObservedBoard::CellId> &safes, vector<unsigned short> &countSignature, vector<ObservedBoard::CellId> &changedCells, Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability, vector<TemplateLongTermRisk::Workspace::Factor> &factors, vector<int> &factorBlockers, vector<int> &pendingEvents, vector<TemplateLongTermRisk::Workspace::Tail> &tails, FlatHashTable<unsigned long long, int> &tailIndex, vector<TemplateLongTermRisk::Workspace::Node> &nodes, FlatHashTable<unsigned long long, int> &nodeIndex) {
         for (int rank = 0; rank < selectedCount; ++rank) {
             const TemplateLongTermRisk::Workspace::Term &term = terms.data[order.data[rank]];
-            appendFactor(result, term.event, term.weight, state, shapeConfig, words, originalCells, denseCells, domains, domainMineWords, domainSafeWords, domainIndex, mineWords, safeWords, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, factors, factorBlockers, pendingEvents);
+            appendFactor(result, term.event, term.weight, state, probabilities, shapeConfig, words, originalCells, denseCells, domains, domainMineWords, domainSafeWords, domainIndex, mineWords, safeWords, mines, safes, countSignature, changedCells, basic, structure, probability, factors, factorBlockers, pendingEvents);
         }
         order.resize(factors.size);
         for (int i = 0; i < (int)factors.size; ++i) {
@@ -993,10 +993,10 @@ struct TemplateLongTermRiskEngine {
         for (int i = 0; i < words; ++i) { mineWords.data[i] = 0; safeWords.data[i] = 0; }
         const int dense = denseCells.data[rootCell];
         mineWords.data[dense / 64] |= 1ULL << (dense % 64);
-        const int domain = internDomain(result, state, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, mineWords, safeWords);
+        const int domain = internDomain(result, state, probabilities, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mines, safes, countSignature, changedCells, basic, structure, probability, mineWords, safeWords);
         if (!domain) return 0.0L;
         const long double rootMass = domains.data[domain].mass;
-        const long double remainder = evaluateTree(result, state, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, forcedProbability, basic, structure, probability, factors, factorBlockers, pendingEvents, tails, tailIndex, nodes, nodeIndex, domain, tail);
+        const long double remainder = evaluateTree(result, state, probabilities, shapeConfig, words, originalCells, domains, domainMineWords, domainSafeWords, domainIndex, mergeMineWords, mergeSafeWords, mines, safes, countSignature, changedCells, basic, structure, probability, factors, factorBlockers, pendingEvents, tails, tailIndex, nodes, nodeIndex, domain, tail);
         return (rootMass - remainder) / state.probability.candidates;
     }
 
@@ -1022,7 +1022,7 @@ int TemplateLongTermRisk::maxPrefix() {
     return (int)(sizeof(FiftyFiftyData::patterns) / sizeof(FiftyFiftyData::patterns[0]));
 }
 
-void TemplateLongTermRisk::update(Result &result, PositionState &state, int prefix, const Config &config, Pool &pool, Workspace &workspace) {
+void TemplateLongTermRisk::update(Result &result, PositionState &state, const Probability::Pool &probabilities, int prefix, const Config &config, Pool &pool, Workspace &workspace) {
     assert_(prefix >= 1 && prefix <= maxPrefix(), "LTR模板前缀超出目录范围");
     assert_(config.eventLimit > 0, "LTR方向事件上限必须为正数");
     result.pool = &pool; result.tableIndex = TemplateLongTermRiskEngine::getTable(pool, workspace.buildNodes, workspace.buildOutputs, workspace.buildChildren, workspace.buildChildWalls, prefix);
@@ -1032,7 +1032,7 @@ void TemplateLongTermRisk::update(Result &result, PositionState &state, int pref
     const int size = result.rows * result.cols;
     result.probabilities.resize(size); result.hidden.resize(size);
     for (int id = 0; id < size; ++id) {
-        const long double probability = Probability::mineProbability(state.probability, id, state.board, state.basic, state.structure);
+        const long double probability = Probability::mineProbability(state.probability, probabilities, id, state.board, state.basic, state.structure);
         result.probabilities.data[id] = probability;
         result.hidden.data[id] = probability > 0.01L && probability < 0.99L;
     }
@@ -1077,7 +1077,7 @@ void TemplateLongTermRisk::update(Result &result, PositionState &state, int pref
     }
 }
 
-long double TemplateLongTermRisk::influence(ObservedBoard::CellId cell, PositionState &state, Result &result, const ShapeSolverConfig &shapeConfig, Workspace &workspace) {
+long double TemplateLongTermRisk::influence(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, Result &result, const ShapeSolverConfig &shapeConfig, Workspace &workspace) {
     Result::CellCache &cache = result.cells.data[cell];
     if (cache.valid) return cache.influence;
     const int boardWords = (result.rows * result.cols + 63) / 64;
@@ -1088,15 +1088,16 @@ long double TemplateLongTermRisk::influence(ObservedBoard::CellId cell, Position
     }
     workspace.groupCells.resize(0);
     workspace.groupCells.push_back(cell);
-    state.applyReveal(cell, ObservedBoard::CellState::ForcedSafe, shapeConfig, workspace.basic, workspace.structure, workspace.probability, workspace.reveal);
+    Probability::Pool &conditionalPool = state.probabilityPool;
+    state.applyReveal(cell, ObservedBoard::CellState::ForcedSafe, shapeConfig, workspace.basic, workspace.structure, workspace.probability, workspace.reveal, conditionalPool);
     for (int id = 0; id < (int)result.probabilities.size; ++id) {
         if (id == cell) continue;
         const long double candidateProbability = result.probabilities.data[id];
         const long double tolerance = 1e-9L * (std::min)(probability, 1.0L - probability);
-        if (std::abs(candidateProbability - probability) <= tolerance && Probability::mineProbability(workspace.reveal.probability, id, state.board, state.basic, state.structure) == 0.0L) workspace.groupCells.push_back(id);
+        if (std::abs(candidateProbability - probability) <= tolerance && Probability::mineProbability(workspace.reveal.probability, conditionalPool, id, state.board, state.basic, state.structure) == 0.0L) workspace.groupCells.push_back(id);
     }
-    state.undoReveal(workspace.reveal);
-    TemplateLongTermRiskEngine::gatherTerms(result, state, shapeConfig, boardWords, workspace.groupCells, workspace.pendingMatches, workspace.terms, workspace.mines, workspace.safes, workspace.eventBlockers, workspace.eventBlockerCells, workspace.expressions, workspace.nextExpressions, workspace.expressionWords, workspace.nextExpressionWords, workspace.countSignature, workspace.changedCells, workspace.forcedProbability, workspace.basic, workspace.structure, workspace.probability);
+    state.undoReveal(workspace.reveal, conditionalPool);
+    TemplateLongTermRiskEngine::gatherTerms(result, state, probabilities, shapeConfig, boardWords, workspace.groupCells, workspace.pendingMatches, workspace.terms, workspace.mines, workspace.safes, workspace.eventBlockers, workspace.eventBlockerCells, workspace.expressions, workspace.nextExpressions, workspace.expressionWords, workspace.nextExpressionWords, workspace.countSignature, workspace.changedCells, workspace.basic, workspace.structure, workspace.probability);
     TemplateLongTermRiskEngine::pruneTerms(result, workspace.terms, workspace.pendingEvents);
     const int positiveCount = TemplateLongTermRiskEngine::buildRankOrder(workspace.terms, workspace.order);
     if (!positiveCount) {
@@ -1105,12 +1106,12 @@ long double TemplateLongTermRisk::influence(ObservedBoard::CellId cell, Position
     }
     const int selectedCount = (std::min)(result.eventLimit, positiveCount);
     const int words = TemplateLongTermRiskEngine::buildSupport(result, workspace.terms, workspace.order, workspace.denseCells, workspace.originalCells, workspace.domains, workspace.domainMineWords, workspace.domainSafeWords, workspace.domainIndex, workspace.nodes, workspace.nodeIndex, workspace.tails, workspace.tailIndex, workspace.factors, workspace.factorBlockers, cell, selectedCount);
-    const long double value = TemplateLongTermRiskEngine::buildFactors(result, cell, selectedCount, state, shapeConfig, words, workspace.terms, workspace.order, workspace.originalCells, workspace.denseCells, workspace.domains, workspace.domainMineWords, workspace.domainSafeWords, workspace.domainIndex, workspace.mergeMineWords, workspace.mergeSafeWords, workspace.mineWords, workspace.safeWords, workspace.mines, workspace.safes, workspace.countSignature, workspace.changedCells, workspace.forcedProbability, workspace.basic, workspace.structure, workspace.probability, workspace.factors, workspace.factorBlockers, workspace.pendingEvents, workspace.tails, workspace.tailIndex, workspace.nodes, workspace.nodeIndex);
+    const long double value = TemplateLongTermRiskEngine::buildFactors(result, cell, selectedCount, state, probabilities, shapeConfig, words, workspace.terms, workspace.order, workspace.originalCells, workspace.denseCells, workspace.domains, workspace.domainMineWords, workspace.domainSafeWords, workspace.domainIndex, workspace.mergeMineWords, workspace.mergeSafeWords, workspace.mineWords, workspace.safeWords, workspace.mines, workspace.safes, workspace.countSignature, workspace.changedCells, workspace.basic, workspace.structure, workspace.probability, workspace.factors, workspace.factorBlockers, workspace.pendingEvents, workspace.tails, workspace.tailIndex, workspace.nodes, workspace.nodeIndex);
     TemplateLongTermRiskEngine::cacheGroup(result, workspace.groupCells, value);
     return value;
 }
 
-TemplateLongTermRisk::Description TemplateLongTermRisk::describe(ObservedBoard::CellId cell, PositionState &state, Result &result, const ShapeSolverConfig &shapeConfig, Workspace &workspace) {
+TemplateLongTermRisk::Description TemplateLongTermRisk::describe(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, Result &result, const ShapeSolverConfig &shapeConfig, Workspace &workspace) {
     Result::CellCache &cache = result.cells.data[cell];
     if (cache.descriptionValid) return Description(cache.bodyUnion, cache.noBodyRestrictionBins);
     const long double probability = result.probabilities.data[cell];
@@ -1119,16 +1120,17 @@ TemplateLongTermRisk::Description TemplateLongTermRisk::describe(ObservedBoard::
     workspace.groupCells.resize(0);
     workspace.groupCells.push_back(cell);
     if (probability < 1.0L) {
-        state.applyReveal(cell, ObservedBoard::CellState::ForcedSafe, shapeConfig, workspace.basic, workspace.structure, workspace.probability, workspace.reveal);
+        Probability::Pool &conditionalPool = state.probabilityPool;
+        state.applyReveal(cell, ObservedBoard::CellState::ForcedSafe, shapeConfig, workspace.basic, workspace.structure, workspace.probability, workspace.reveal, conditionalPool);
         for (int id = 0; id < (int)result.probabilities.size; ++id) {
             if (id == cell) continue;
             const long double candidateProbability = result.probabilities.data[id];
             const long double tolerance = 1e-9L * (std::min)(probability, 1.0L - probability);
-            if (std::abs(candidateProbability - probability) <= tolerance && Probability::mineProbability(workspace.reveal.probability, id, state.board, state.basic, state.structure) == 0.0L) workspace.groupCells.push_back(id);
+            if (std::abs(candidateProbability - probability) <= tolerance && Probability::mineProbability(workspace.reveal.probability, conditionalPool, id, state.board, state.basic, state.structure) == 0.0L) workspace.groupCells.push_back(id);
         }
-        state.undoReveal(workspace.reveal);
+        state.undoReveal(workspace.reveal, conditionalPool);
     }
-    TemplateLongTermRiskEngine::gatherTerms(result, state, shapeConfig, boardWords, workspace.groupCells, workspace.pendingMatches, workspace.terms, workspace.mines, workspace.safes, workspace.eventBlockers, workspace.eventBlockerCells, workspace.expressions, workspace.nextExpressions, workspace.expressionWords, workspace.nextExpressionWords, workspace.countSignature, workspace.changedCells, workspace.forcedProbability, workspace.basic, workspace.structure, workspace.probability);
+    TemplateLongTermRiskEngine::gatherTerms(result, state, probabilities, shapeConfig, boardWords, workspace.groupCells, workspace.pendingMatches, workspace.terms, workspace.mines, workspace.safes, workspace.eventBlockers, workspace.eventBlockerCells, workspace.expressions, workspace.nextExpressions, workspace.expressionWords, workspace.nextExpressionWords, workspace.countSignature, workspace.changedCells, workspace.basic, workspace.structure, workspace.probability);
     TemplateLongTermRiskEngine::pruneTerms(result, workspace.terms, workspace.pendingEvents);
     const int positiveCount = TemplateLongTermRiskEngine::buildRankOrder(workspace.terms, workspace.order);
     const int selectedCount = (std::min)(result.eventLimit, positiveCount);
@@ -1137,7 +1139,7 @@ TemplateLongTermRisk::Description TemplateLongTermRisk::describe(ObservedBoard::
     const int bins = restrictionCount + 1;
     const int words = TemplateLongTermRiskEngine::buildSupport(result, workspace.terms, workspace.order, workspace.denseCells, workspace.originalCells, workspace.domains, workspace.domainMineWords, workspace.domainSafeWords, workspace.domainIndex, workspace.nodes, workspace.nodeIndex, workspace.tails, workspace.tailIndex, workspace.factors, workspace.factorBlockers, cell, selectedCount);
     workspace.descriptionFactors.resize(0); workspace.factorBlockers.resize(0);
-    for (int rank = 0; rank < selectedCount; ++rank) TemplateLongTermRiskEngine::appendDescriptionFactor(result, workspace.terms.data[workspace.order.data[rank]], state, shapeConfig, words, workspace.originalCells, workspace.denseCells, workspace.domains, workspace.domainMineWords, workspace.domainSafeWords, workspace.domainIndex, workspace.mineWords, workspace.safeWords, workspace.mines, workspace.safes, workspace.countSignature, workspace.changedCells, workspace.forcedProbability, workspace.basic, workspace.structure, workspace.probability, workspace.descriptionFactors, workspace.factorBlockers, workspace.pendingEvents);
+    for (int rank = 0; rank < selectedCount; ++rank) TemplateLongTermRiskEngine::appendDescriptionFactor(result, workspace.terms.data[workspace.order.data[rank]], state, probabilities, shapeConfig, words, workspace.originalCells, workspace.denseCells, workspace.domains, workspace.domainMineWords, workspace.domainSafeWords, workspace.domainIndex, workspace.mineWords, workspace.safeWords, workspace.mines, workspace.safes, workspace.countSignature, workspace.changedCells, workspace.basic, workspace.structure, workspace.probability, workspace.descriptionFactors, workspace.factorBlockers, workspace.pendingEvents);
     workspace.order.resize(workspace.descriptionFactors.size);
     for (int i = 0; i < (int)workspace.descriptionFactors.size; ++i) {
         int position = i;
@@ -1156,10 +1158,10 @@ TemplateLongTermRisk::Description TemplateLongTermRisk::describe(ObservedBoard::
     for (int i = 0; i < words; ++i) { workspace.mineWords.data[i] = 0; workspace.safeWords.data[i] = 0; }
     const int dense = workspace.denseCells.data[cell];
     workspace.mineWords.data[dense / 64] |= 1ULL << (dense % 64);
-    const int domain = TemplateLongTermRiskEngine::internDomain(result, state, shapeConfig, words, workspace.originalCells, workspace.domains, workspace.domainMineWords, workspace.domainSafeWords, workspace.domainIndex, workspace.mines, workspace.safes, workspace.countSignature, workspace.changedCells, workspace.forcedProbability, workspace.basic, workspace.structure, workspace.probability, workspace.mineWords, workspace.safeWords);
+    const int domain = TemplateLongTermRiskEngine::internDomain(result, state, probabilities, shapeConfig, words, workspace.originalCells, workspace.domains, workspace.domainMineWords, workspace.domainSafeWords, workspace.domainIndex, workspace.mines, workspace.safes, workspace.countSignature, workspace.changedCells, workspace.basic, workspace.structure, workspace.probability, workspace.mineWords, workspace.safeWords);
     assert_(domain != 0, "LTR说明的已知雷条件没有可行布局");
     const long double rootMass = workspace.domains.data[domain].mass;
-    const int node = TemplateLongTermRiskEngine::evaluateDescriptionTree(result, state, shapeConfig, words, workspace.originalCells, workspace.domains, workspace.domainMineWords, workspace.domainSafeWords, workspace.domainIndex, workspace.mergeMineWords, workspace.mergeSafeWords, workspace.mines, workspace.safes, workspace.countSignature, workspace.changedCells, workspace.forcedProbability, workspace.basic, workspace.structure, workspace.probability, workspace.descriptionFactors, workspace.factorBlockers, workspace.pendingEvents, workspace.tails, workspace.tailIndex, workspace.descriptionNodes, workspace.descriptionValues, workspace.descriptionNodeIndex, domain, tail, bins);
+    const int node = TemplateLongTermRiskEngine::evaluateDescriptionTree(result, state, probabilities, shapeConfig, words, workspace.originalCells, workspace.domains, workspace.domainMineWords, workspace.domainSafeWords, workspace.domainIndex, workspace.mergeMineWords, workspace.mergeSafeWords, workspace.mines, workspace.safes, workspace.countSignature, workspace.changedCells, workspace.basic, workspace.structure, workspace.probability, workspace.descriptionFactors, workspace.factorBlockers, workspace.pendingEvents, workspace.tails, workspace.tailIndex, workspace.descriptionNodes, workspace.descriptionValues, workspace.descriptionNodeIndex, domain, tail, bins);
     const int valueBegin = workspace.descriptionNodes.data[node].valueBegin;
     const int histogramBegin = (int)result.noBodyRestrictions.size;
     result.noBodyRestrictions.resize(histogramBegin + bins);

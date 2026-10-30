@@ -4,6 +4,7 @@
 #include "algo/probability_engine/shape_solver/shape_solver.h"
 #include "algo/probability_engine/structure/structure.h"
 #include "algo/probability_engine/probability/probability.h"
+#include "algo/probability_engine/probability/observe.h"
 #include "core/datastructure/flat_hashtable.h"
 #include "core/datastructure/grid.h"
 #include "core/datastructure/hash.h"
@@ -31,12 +32,15 @@ struct Workspace {
     Structure::Workspace structure;
     // 内含 ShapeSolver::Workspace 与 Combination::Workspace。
     Probability::Workspace probability;
+    Observe::Workspace observe;
+
+    Workspace() : observe(probability.shapeSolver, probability.combination) {}
 };
 
 struct MineBoard {
     MineBoard();
     // 实际雷盘中 1 表示雷，0 表示非雷。
-    explicit MineBoard(Grid<char> board);
+    MineBoard(Grid<char> board);
     // 首步坐标必须在盘面内，且 0 <= mines < rows*cols；seed 固定布雷，首步格保证无雷。
     MineBoard(int rows, int cols, int mines, int firstRow, int firstCol, U128 seed);
 

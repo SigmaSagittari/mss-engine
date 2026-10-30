@@ -31,7 +31,7 @@ struct SplitMix64Hash {
 class U128Hasher {
   public:
     U128Hasher() : lo_(kLoSeed), hi_(kHiSeed) {}
-    explicit U128Hasher(std::uint64_t seed) : lo_(seed + kLoSeed), hi_(seed + kHiSeed) {}
+    U128Hasher(std::uint64_t seed) : lo_(seed + kLoSeed), hi_(seed + kHiSeed) {}
 
     void mix(std::uint64_t value) { lo_ = splitmix64(lo_ + value); hi_ = splitmix64(hi_ + value + kMixOffset); }
     void mix(int value) { mix((std::uint64_t)value); }

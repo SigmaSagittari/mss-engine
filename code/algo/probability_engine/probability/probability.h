@@ -15,6 +15,7 @@
 namespace mss {
 
 struct Probability {
+    struct Pool;
     struct Result {
         struct Component {
             // 本组件在 boxProbabilities 里的起点和 Box 数。
@@ -22,19 +23,34 @@ struct Probability {
             int boxCount;
         };
 
+        // 切片依赖调用方传入的 Pool；扩容后仍有效，池清空或销毁后失效。
         // 组件下标与 Structure::Result::components 对应。
-        vector<Component> components;
+        vectorPool<Component>::vector components;
         // 按 Component::boxOffset 连续存放的底层概率，已归一化但未截断，不能依赖 == 1 判断必雷。
         // 常规查询使用 mineProbability()/frontierCells()；直接读取时调用方须遵守未截断的数值语义。
-        vector<long double> boxProbabilities;
+        vectorPool<long double>::vector boxProbabilities;
         // 满足全盘总雷数约束的加权布局数；为零表示没有合法布局，此时不得查询概率。
         long double candidates;
         // 任意一个 T 格的条件雷概率。
         long double tCellProbability;
 
+        // 危险：PositionState、Reveal 和 Workspace 延迟分析并复用结果槽，避免提前计算概率。
+        // 首次由 analyze 完整赋值前，所有字段都不得读取或复制。
         // 按 Box 顺序回调每个前沿格的 CellId 和钳制后的雷概率；不遍历 T 格。
-        // structure 和 shapes 必须与生成此结果时一致。
-        template <typename Callback> void frontierCells(const Structure::Result &structure, const Structure::Pool &pool, Callback &&callback) const;
+        // probabilities 为结果所属池，structure 和 probabilities.shapes 必须与生成此结果时一致。
+        template <typename Callback> void frontierCells(const Pool &probabilities, const Structure::Result &structure, Callback &&callback) const;
+    };
+
+    // 持有概率结果数组，引用共享的结构池和分布缓存；依赖池必须覆盖本池的使用期。
+    struct Pool {
+        const Structure::Pool &shapes;
+        ShapeSolver::DistributionPool &distributions;
+        vectorPool<Result::Component> components;
+        vectorPool<long double> boxProbabilities;
+
+        Pool(const Structure::Pool &shapes, ShapeSolver::DistributionPool &distributions) : shapes(shapes), distributions(distributions) {}
+        // 只清空本层概率结果，保留引用的共享池。
+        void clear();
     };
 
     // analyzeLogicComponents 的输入：一块的前沿多项式，以及该块非前沿 T 格数。
@@ -72,31 +88,16 @@ struct Probability {
             vector<int> suffixStart;
             vector<ObservedBoard::CellId> freeCells;
         } sample;
-
-        struct Observe {
-            // 点击格周围涉及的组件及去重标记。
-            vector<Structure::ComponentId> captured;
-            vector<char> seen;
-            vector<int> adjacentBoxCells;
-            // 每个被捕获组件复用同一份观测结果；下一次 observe 会覆盖它。
-            ShapeSolver::Observed observed;
-            // dp[邻居雷数][已处理组件与邻居 T 格雷数]；两张表交替累积。
-            Grid<long double> dp;
-            Grid<long double> nextDp;
-            // restWays 按绝对剩余雷数索引；其余是未捕获组件的多项式卷积暂存。
-            vector<long double> restWays;
-            vector<long double> restCoefficients;
-            vector<long double> productScratch;
-        } observe;
     };
 
-    // board/basic/structure 必须来自同一刷新；distributions 与 workspace 可跨调用复用。
-    // 无合法全盘布局时返回结果的 candidates 为零，此时不得查询格子概率。
-    static void analyze(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &pool, const ShapeSolver::Config &config, ShapeSolver::DistributionPool &distributions, Result &result, Workspace &workspace);
+    // board/basic/structure 必须来自同一刷新；results 追加本次结果，返回值借用该池。
+    // results 引用的结构池与分布缓存须匹配；workspace 可跨调用复用，results 扩容不影响已有切片。
+    // 无合法全盘布局时 candidates 为零，返回池尾空切片，此时不得查询格子概率。
+    static Result analyze(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const ShapeSolver::Config &config, Pool &results, Workspace &workspace);
 
-    // 输入必须来自同一当前盘面且至少存在一种合法全盘布局；assignments 与 shapes 同期清空。
+    // 输入必须来自同一当前盘面且至少存在一种合法全盘布局；assignments 与 assignments.shapes 同期清空。
     // 按具体全盘雷位近似均匀抽样；函数会 resize 并清零 result，1 表示雷。
-    static void sampleMineBoard(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &pool, ShapeSolver::AssignmentPool &assignments, U128 seed, Grid<char> &result, Workspace &workspace);
+    static void sampleMineBoard(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, ShapeSolver::AssignmentPool &assignments, U128 seed, Grid<char> &result, Workspace &workspace);
 
     // components 必须覆盖本次统计的所有逻辑块，且各块 T 格互不重叠；frontier 系数至少活到调用结束。
     // totalMines 是扣除已知雷后仍需分配到前沿格和 T 格的剩余雷数。
@@ -104,9 +105,9 @@ struct Probability {
     // 返回满足全盘剩余雷数的加权布局总数 Z；Z 为零表示不存在合法全盘布局。
     static long double analyzeLogicComponents(span<const LogicComponentInput> components, int totalMines, Workspace &workspace, const std::function<void(int, int, long double, long double)> &callback);
 
-    // 格子 → 组件/Box/T 的概率查询；candidates 必须大于零，输入必须与生成结果时一致。
+    // 格子 → 组件/Box/T 的概率查询；result 的切片来自 pool，candidates 必须大于零，输入必须与生成结果时一致。
     // 逻辑推导的必安、必雷分别精确返回 0、1，调用方直接判等。
-    static long double mineProbability(const Result &result, ObservedBoard::CellId cell, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure);
+    static long double mineProbability(const Result &result, const Pool &pool, ObservedBoard::CellId cell, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure);
 
   private:
     // 前沿多项式乘自由格组合数：freeCells 个自由格里恰好放 freeMines 个雷。
@@ -117,14 +118,17 @@ struct Probability {
 };
 
 template <typename Callback>
-void Probability::Result::frontierCells(const Structure::Result &structure, const Structure::Pool &pool, Callback &&callback) const {
-    for (int component = 0; component < (int)components.size; ++component) {
-        const Component &layout = components.data[component];
+void Probability::Result::frontierCells(const Pool &probabilities, const Structure::Result &structure, Callback &&callback) const {
+    const Structure::Pool &pool = probabilities.shapes;
+    const Component *layouts = probabilities.components.data.data + components.offset;
+    const long double *values = probabilities.boxProbabilities.data.data + boxProbabilities.offset;
+    for (int component = 0; component < (int)components.count; ++component) {
+        const Component &layout = layouts[component];
         const Structure::Instance &instance = pool.instances.list.data[structure.components.data[component]];
         const int *offsets = pool.instances.boxOf.data.data + instance.boxOf.offset;
         const Structure::CellId *cells = pool.instances.cells.data.data + instance.cells.offset;
         for (int box = 0; box < layout.boxCount; ++box) {
-            const long double probability = Probability::limitProbability(boxProbabilities.data[layout.boxOffset + box]);
+            const long double probability = Probability::limitProbability(values[layout.boxOffset + box]);
             for (int i = offsets[box]; i < offsets[box + 1]; ++i)
                 callback(cells[i], probability);
         }

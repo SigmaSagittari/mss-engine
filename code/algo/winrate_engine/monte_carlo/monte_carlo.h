@@ -38,8 +38,9 @@ struct MonteCarlo {
         ShapeSolver::AssignmentPool assignments;
         GameControl::SuggestPool suggestions;
 
-        // 接管根层精确结果或安全格数组；统计只计实际完成的对局。
-        explicit Result(SuggestResult &root);
+        // 接管根层精确结果或安全格数组；shapes 属于根局面，须覆盖本结果的使用期。
+        // 统计只计实际完成的对局。
+        Result(SuggestResult &root, const Structure::Pool &shapes);
         // 返回 candidates 下标；有候选时才可调用，用采样后的均值选第一名。
         int best() const;
         ObservedBoard::CellId recommended() const;
@@ -57,13 +58,13 @@ struct MonteCarlo {
     // fiftyPool 由调用方跨查询和模拟复用；暴力接管时直接返回精确结果。
     // cells 非空时比较指定首招，须互异、非空、未揭开且非必雷；有安全格时仍采整局胜率。
     static Result analyze(GameControl::Position &position, const Config &config, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &pool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells = nullptr);
-    static void update(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &pool, Workspace &workspace);
+    static void update(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, Workspace &workspace);
 
   private:
     static void estimate(Candidate &candidate, const Config &config);
     static long double logChance(long double won, long double lost, long double target);
     static int select(Result &result, const Config &config);
-    static bool simulate(Result &result, PositionState &state, long long sequence, ObservedBoard::CellId first, const ShapeSolverConfig &shapeConfig, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &pool, Workspace &workspace);
+    static bool simulate(Result &result, PositionState &state, long long sequence, ObservedBoard::CellId first, const ShapeSolverConfig &shapeConfig, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, Workspace &workspace);
 };
 
 } // 命名空间 mss

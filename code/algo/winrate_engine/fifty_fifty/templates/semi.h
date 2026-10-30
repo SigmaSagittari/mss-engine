@@ -32,7 +32,7 @@ struct TemplateSemi {
         struct Prefix {
             Point offset; // 相对被检测格的位置。
             int first, count, begin, end, runBegin, runEnd; // 子前缀范围、checks 范围、连续必安检查范围。
-            explicit Prefix(Point offset) : offset(offset), first(0), count(0), begin(0), end(0), runBegin(0), runEnd(0) {}
+            Prefix(Point offset) : offset(offset), first(0), count(0), begin(0), end(0), runBegin(0), runEnd(0) {}
         };
         struct Build {
             // core 先放 a 个 A 组格，再放 B 组格；walls 是隔断两组数字差异所需的封口位。
@@ -82,7 +82,7 @@ struct TemplateSemi {
         vector<Constraint> &constraints;
         vector<std::uint64_t> &active, &found; // 尚在推导的假设，以及已经命中模板的假设。
         int rows, cols, words;
-        Facts(const PositionState &state, Grid<std::uint64_t> &mines, Grid<std::uint64_t> &safes, vector<Basic::Mark> &marks, vector<Adjacent> &adjacent, vector<Constraint> &constraints, vector<std::uint64_t> &active, vector<std::uint64_t> &found);
+        Facts(const PositionState &state, const Probability::Pool &probabilities, Grid<std::uint64_t> &mines, Grid<std::uint64_t> &safes, vector<Basic::Mark> &marks, vector<Adjacent> &adjacent, vector<Constraint> &constraints, vector<std::uint64_t> &active, vector<std::uint64_t> &found);
         void propagate(vector<int> &pending, vector<unsigned char> &queued);
         bool matches(int id, int word, std::uint64_t bit, Table::Kind kind) const;
     };
@@ -103,7 +103,7 @@ struct TemplateSemi {
     };
 
     static int templateCount();
-    static void detect(Semi::Result &result, const PositionState &state, int prefix, Pool &pool, Workspace &workspace);
+    static void detect(Semi::Result &result, const PositionState &state, const Probability::Pool &probabilities, int prefix, Pool &pool, Workspace &workspace);
 
   private:
     static constexpr long double halfTolerance = 1e-9L;

@@ -15,7 +15,7 @@
 
 namespace mss::UI {
 
-Session::Session(const Config &config) : nextAnalysis_(1), stopped_(false), token_(makeToken()), config_(config), searchBudget_(0), searchRunning_(false) {}
+Session::Session(const Config &config) : fiftyPool_(semiPool_, riskPool_), nextAnalysis_(1), stopped_(false), token_(makeToken()), config_(config), searchBudget_(0), searchRunning_(false) {}
 
 const std::string &Session::token() const {
     return token_;
@@ -253,6 +253,7 @@ void Session::writeCells(std::ostream &result, span<const ObservedBoard::CellId>
 void Session::writeProbabilities(std::ostream &result, GameControl::Position &position) {
     const ObservedBoard::Result &board = position.observedBoard();
     const Probability::Result &probability = position.probability();
+    const Probability::Pool &probabilities = position.state().probabilityPool;
     const Basic::Result &basic = position.basic();
     const Structure::Result &structure = position.structure();
     result << std::setprecision(18) << ",\"probabilities\":[";
@@ -260,7 +261,7 @@ void Session::writeProbabilities(std::ostream &result, GameControl::Position &po
         for (int col = 0; col < board.cells.cols(); ++col) {
             if (row != 0 || col != 0)
                 result << ',';
-            result << Probability::mineProbability(probability, board.id(row, col), board, basic, structure);
+            result << Probability::mineProbability(probability, probabilities, board.id(row, col), board, basic, structure);
         }
     result << ']';
 }
@@ -370,13 +371,14 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
                 Config config = config_;
                 if (!parseFiftyFifty(fields, config, response)) return response;
                 FiftyFifty::Workspace &workspace = analysis_->anytimeSearch.selection.fiftyFifty;
+                PositionState &current = position.state();
                 if (config.fiftyFifty.algorithm == FiftyFifty::Algorithm::OldJava) {
-                    const LongTermRisk::Details risk = FiftyFifty::describeOldJava(cell, position.state(), analysis_->config.shapeSolver, config.fiftyFifty.oldJava, workspace.oldJava);
+                    const LongTermRisk::Details risk = FiftyFifty::describeOldJava(cell, current, current.probabilityPool, analysis_->config.shapeSolver, config.fiftyFifty.oldJava, workspace.oldJava);
                     result << ",\"longTermRisk\":{\"algorithm\":\"oldjava\",\"body\":" << risk.body << ",\"restriction\":" << risk.restriction << '}';
                 } else {
                     TemplateLongTermRisk::Result risk;
-                    TemplateLongTermRisk::update(risk, position.state(), config.fiftyFifty.templates.prefix, config.fiftyFifty.templates.risk, fiftyPool_.templates.risk, workspace.templates.risk);
-                    const TemplateLongTermRisk::Description description = TemplateLongTermRisk::describe(cell, position.state(), risk, analysis_->config.shapeSolver, workspace.templates.risk);
+                    TemplateLongTermRisk::update(risk, current, current.probabilityPool, config.fiftyFifty.templates.prefix, config.fiftyFifty.templates.risk, fiftyPool_.templates.risk, workspace.templates.risk);
+                    const TemplateLongTermRisk::Description description = TemplateLongTermRisk::describe(cell, current, current.probabilityPool, risk, analysis_->config.shapeSolver, workspace.templates.risk);
                     result << ",\"longTermRisk\":{\"algorithm\":\"templates\",\"bodyUnion\":" << description.bodyUnion << ",\"restrictionCounts\":[";
                     for (int k = 0; k < description.noBodyRestrictionBins; ++k) {
                         if (k != 0) result << ',';
@@ -521,7 +523,9 @@ bool Session::startMcts(const std::string &body, std::string &response) {
     // 根输入及池随独立任务存活；普通分析的下一份快照不会覆盖 MC 正在使用的数据。
     Analysis *task = analysis.release();
     mctsWorker_ = std::jthread([this, task, config, targets, complete](std::stop_token stop) {
-        FiftyFifty::Pool fiftyPool;
+        TemplateSemi::Pool semiPool;
+        TemplateLongTermRisk::Pool riskPool;
+        FiftyFifty::Pool fiftyPool(semiPool, riskPool);
         const std::unique_ptr<Analysis> analysis(task);
         PositionState &state = analysis->position.state();
         const MovePolicy policy({config.algorithm, config.algorithm == MovePolicy::Basic::Algorithm::JavaEval ? &config.javaEval : nullptr, config.algorithm == MovePolicy::Basic::Algorithm::Anytime ? &config.anytime : nullptr}, {config.fiftyFifty.algorithm, &config.fiftyFifty.oldJava, &config.fiftyFifty.templates}, {config.brute.limit, config.brute.limit == 0 ? nullptr : &config.brute.config});
@@ -535,7 +539,7 @@ bool Session::startMcts(const std::string &body, std::string &response) {
         if (result.exact.engine == SuggestResult::Engine::BruteForce) return;
         std::chrono::steady_clock::time_point next = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
         while (!stop.stop_requested()) {
-            MonteCarlo::update(result, state, analysis->config.shapeSolver, config.monteCarlo, policy, fiftyPool, analysis->searchPool, analysis->monteCarlo);
+            MonteCarlo::update(result, state, analysis->config.shapeSolver, config.monteCarlo, policy, fiftyPool, analysis->monteCarlo);
             if (complete)
                 break;
             if (std::chrono::steady_clock::now() >= next) {
@@ -585,7 +589,9 @@ bool Session::startSearch(const std::string &body, std::string &response) {
     }
     Analysis *task = analysis.release();
     searchWorker_ = std::jthread([this, task, config, targets, safe](std::stop_token stop) {
-        FiftyFifty::Pool fiftyPool;
+        TemplateSemi::Pool semiPool;
+        TemplateLongTermRisk::Pool riskPool;
+        FiftyFifty::Pool fiftyPool(semiPool, riskPool);
         const std::unique_ptr<Analysis> analysis(task);
         PositionState &state = analysis->position.state();
         AnytimeSearch::Pool &pool = analysis->searchPool;
