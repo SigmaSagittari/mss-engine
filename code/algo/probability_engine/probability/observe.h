@@ -13,8 +13,8 @@ struct Observe {
     };
 
     struct Workspace {
-        ShapeSolver::Workspace &shapeSolver;
-        Combination::Workspace &combination;
+        ShapeSolver::Workspace shapeSolver;
+        Combination::Workspace combination;
         struct Components {
             vector<Structure::ComponentId> captured;
             vector<char> seen;
@@ -33,8 +33,6 @@ struct Observe {
             vector<long double> coefficients;
             vector<long double> scratch;
         } rest;
-
-        Workspace(ShapeSolver::Workspace &shapeSolver, Combination::Workspace &combination) : shapeSolver(shapeSolver), combination(combination) {}
     };
 
     // 输入格必须是 Hidden 或 ForcedSafe，且 board/basic/structure/probability 来自同一刷新、candidates 大于零。

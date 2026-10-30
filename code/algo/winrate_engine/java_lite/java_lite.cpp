@@ -119,7 +119,7 @@ JavaLite::Result JavaLite::evaluateImpl(PositionState &state, const ShapeSolverC
         if constexpr (RetainDeltas) {
             Structure::applyDelta(state.structure, workspace.reveal.structure, state.shapes, true);
             Basic::applyDelta(state.basic, workspace.reveal.basic, state.basicPool, true);
-            ObservedBoard::apply(state.board, workspace.reveal.board, state.basicPool.board, true);
+            ObservedBoard::applyDelta(state.board, workspace.reveal.board, state.basicPool.board, true);
         } else
             state.undoReveal(workspace.reveal, results);
         if constexpr (Prune) {

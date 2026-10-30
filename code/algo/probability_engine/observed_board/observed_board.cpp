@@ -6,7 +6,7 @@ void ObservedBoard::Pool::clear() {
     changes.data.resize(0);
 }
 
-void ObservedBoard::apply(Result &result, const Delta &delta, const Pool &pool, bool reverse) {
+void ObservedBoard::applyDelta(Result &result, const Delta &delta, const Pool &pool, bool reverse) {
     const Delta::Change *changes = pool.changes.data.data + delta.changes.offset;
     for (int i = 0; i < (int)delta.changes.count; ++i) {
         const Delta::Change &change = changes[reverse ? (int)delta.changes.count - 1 - i : i];

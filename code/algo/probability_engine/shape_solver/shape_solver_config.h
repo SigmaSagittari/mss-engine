@@ -19,10 +19,12 @@ struct ShapeSolverConfig {
     // Auto/AutoSA 中 frontier 峰值超过此值时尝试 Window3/SA。
     int window3Threshold;
     // SA 的轮数、每轮迭代次数和温度区间；迭代次数必须 >= 2，温度必须为正。
-    int saRounds;
-    int saIterations;
-    double saStartTemperature;
-    double saEndTemperature;
+    struct SA {
+        int rounds;
+        int iterations;
+        double startTemperature;
+        double endTemperature;
+    } sa;
 };
 
 } // 命名空间 mss

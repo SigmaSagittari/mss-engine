@@ -21,7 +21,7 @@ long double PositionState::countCandidatesWithForces(span<const ObservedBoard::C
         changedCells.push_back(cell);
     }
 
-    ObservedBoard::apply(board, updates, basicPool.board);
+    ObservedBoard::applyDelta(board, updates, basicPool.board);
     const Basic::Delta basicDelta = Basic::update(basic, board, updates, basicPool, basicWorkspace);
 
     bool valid = true;
@@ -61,7 +61,7 @@ long double PositionState::countCandidatesWithForces(span<const ObservedBoard::C
     }
 
     Basic::applyDelta(basic, basicDelta, basicPool, true);
-    ObservedBoard::apply(board, updates, basicPool.board, true);
+    ObservedBoard::applyDelta(board, updates, basicPool.board, true);
     basicPool.changes.pop_back(basicDelta.changes);
     basicPool.board.changes.pop_back(updates.changes);
     return candidates;
@@ -73,7 +73,7 @@ void PositionState::applyReveal(ObservedBoard::CellId cell, ObservedBoard::CellS
     reveal.previous = board.cells[position.first][position.second];
     reveal.board.changes = basicPool.board.changes.push_back();
     basicPool.board.changes.push_back(reveal.board.changes, {cell, reveal.previous, next});
-    ObservedBoard::apply(board, reveal.board, basicPool.board);
+    ObservedBoard::applyDelta(board, reveal.board, basicPool.board);
     reveal.basic = Basic::update(basic, board, reveal.board, basicPool, basicWorkspace);
     reveal.structure = Structure::update(structure, board, basic, shapes, &cell, 1, structureWorkspace);
     reveal.probability = Probability::analyze(board, basic, structure, config, results, probabilityWorkspace);
@@ -86,7 +86,7 @@ void PositionState::undoReveal(Reveal &reveal, Probability::Pool &results) {
     shapes.deltas.removed.pop_back(reveal.structure.removed);
     shapes.deltas.added.pop_back(reveal.structure.added);
     Basic::applyDelta(basic, reveal.basic, basicPool, true);
-    ObservedBoard::apply(board, reveal.board, basicPool.board, true);
+    ObservedBoard::applyDelta(board, reveal.board, basicPool.board, true);
     basicPool.changes.pop_back(reveal.basic.changes);
     basicPool.board.changes.pop_back(reveal.board.changes);
 }

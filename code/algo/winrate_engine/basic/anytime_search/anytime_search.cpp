@@ -314,7 +314,7 @@ void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index,
                 return;
             }
             const JavaLite::Delta delta = branch;
-            ObservedBoard::apply(state.board, delta.boardDelta, state.basicPool.board);
+            ObservedBoard::applyDelta(state.board, delta.boardDelta, state.basicPool.board);
             Basic::applyDelta(state.basic, delta.basicDelta, state.basicPool);
             Structure::applyDelta(state.structure, delta.structureDelta, state.shapes);
             const Probability::Result previousProbability = state.probability;
@@ -329,7 +329,7 @@ void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index,
             state.probability = previousProbability;
             Structure::applyDelta(state.structure, delta.structureDelta, state.shapes, true);
             Basic::applyDelta(state.basic, delta.basicDelta, state.basicPool, true);
-            ObservedBoard::apply(state.board, delta.boardDelta, state.basicPool.board, true);
+            ObservedBoard::applyDelta(state.board, delta.boardDelta, state.basicPool.board, true);
             if (!complete) return;
         }
         frame.value += probability * value;

@@ -34,19 +34,27 @@ struct ShapeSolverGraphStep {
     // 一次消元序列拥有生成状态和计划缓冲；按 step 从 0 开始顺序使用。
     struct Sequence {
         vector<int> position;
-        vector<int> constraintLast;
-        vector<int> boxHead;
-        vector<int> nextLink;
-        vector<int> constraintIds;
-        vector<int> closeStep;
-        vector<int> closeHead;
-        vector<int> closeNext;
-        vector<int> slotOf;
-        vector<Structure::BoxId> layout;
-        vector<Structure::BoxId> layoutNext;
-        vector<int> gather;
-        vector<Check> checks;
-        vector<Closing> closings;
+        struct Constraints {
+            vector<int> constraintLast;
+            vector<int> boxHead;
+            vector<int> nextLink;
+            vector<int> constraintIds;
+        } constraints;
+        struct Close {
+            vector<int> closeStep;
+            vector<int> closeHead;
+            vector<int> closeNext;
+        } close;
+        struct Frontier {
+            vector<int> slotOf;
+            vector<Structure::BoxId> layout;
+            vector<Structure::BoxId> layoutNext;
+        } frontier;
+        struct Plan {
+            vector<int> gather;
+            vector<Check> checks;
+            vector<Closing> closings;
+        } plan;
     };
     struct Workspace {
         struct Adjacency {

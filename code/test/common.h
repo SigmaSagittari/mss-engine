@@ -34,10 +34,12 @@ inline const mss::GameControl::Config gameConfig{
         /* graphThreshold 切换 Graph 的 Box 数阈值 */ 24,
         /* order 消元顺序 */ mss::ShapeSolverConfig::Order::Auto,
         /* window3Threshold 尝试优化顺序的前沿阈值 */ 24,
-        /* saRounds 退火轮数 */ 4,
-        /* saIterations 每轮迭代次数 */ 1000,
-        /* saStartTemperature 起始温度 */ 4.0,
-        /* saEndTemperature 结束温度 */ 0.01
+        /* sa 模拟退火 */ {
+            /* rounds 退火轮数 */ 4,
+            /* iterations 每轮迭代次数 */ 1000,
+            /* startTemperature 起始温度 */ 4.0,
+            /* endTemperature 结束温度 */ 0.01
+        }
     }
 };
 inline const mss::JavaEval::Config javaEvalConfig{

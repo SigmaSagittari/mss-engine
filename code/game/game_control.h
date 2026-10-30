@@ -33,8 +33,6 @@ struct Workspace {
     // 内含 ShapeSolver::Workspace 与 Combination::Workspace。
     Probability::Workspace probability;
     Observe::Workspace observe;
-
-    Workspace() : observe(probability.shapeSolver, probability.combination) {}
 };
 
 struct MineBoard {

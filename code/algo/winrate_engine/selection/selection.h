@@ -96,7 +96,7 @@ struct Selection {
         vector<ObservedBoard::CellId> offEdge;
         vector<ObservedBoard::CellId> witnesses;
 
-        Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) : fiftyFifty(basic, structure, probability), basic(basic), structure(structure), probability(probability), observe(probability.shapeSolver, probability.combination), javaLite(basic, structure, probability), visit(0) {}
+        Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) : fiftyFifty(basic, structure, probability), basic(basic), structure(structure), probability(probability), javaLite(basic, structure, probability), visit(0) {}
     };
 
     // state 已同步且概率有效，probabilities 为 state.probability 所属池；初始化候选与根层风险，返回实际 Observe 次数。

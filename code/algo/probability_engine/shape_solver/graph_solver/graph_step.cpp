@@ -175,8 +175,8 @@ static void makeSAOrder(const vector<int> &offsets, const vector<Structure::BoxI
     copyOrder(seed, current);
     copyOrder(seed, candidate);
     std::pair<int, int> bestScore = orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(best.data, boxCount), workspace.score);
-    const double cooling = std::pow(config.saEndTemperature / config.saStartTemperature, 1.0 / (config.saIterations - 1));
-    for (int round = 0; round < config.saRounds; ++round) {
+    const double cooling = std::pow(config.sa.endTemperature / config.sa.startTemperature, 1.0 / (config.sa.iterations - 1));
+    for (int round = 0; round < config.sa.rounds; ++round) {
         std::uint64_t state = 0x9e3779b97f4a7c15ULL + (std::uint64_t)round * 0x6a09e667f3bcc909ULL;
         copyOrder(seed, current);
         for (int perturb = 0; perturb < round; ++perturb) {
@@ -186,8 +186,8 @@ static void makeSAOrder(const vector<int> &offsets, const vector<Structure::BoxI
         }
         std::pair<int, int> currentScore = orderScore(offsets, adjacentBoxes, span<const Structure::BoxId>(current.data, boxCount), workspace.score);
         int currentEnergy = energy(currentScore);
-        double temperature = config.saStartTemperature;
-        for (int iteration = 0; iteration < config.saIterations; ++iteration) {
+        double temperature = config.sa.startTemperature;
+        for (int iteration = 0; iteration < config.sa.iterations; ++iteration) {
             copyOrder(span<const Structure::BoxId>(current.data, boxCount), candidate);
             const int left = (int)(nextRandom(state) % (std::uint64_t)boxCount);
             const int right = (int)(nextRandom(state) % (std::uint64_t)boxCount);
@@ -328,6 +328,9 @@ void ShapeSolverGraphStep::makeOrder(const vector<int> &offsets, const vector<St
 }
 
 void ShapeSolverGraphStep::prepareSteps(const Structure::Shape &shape, const Structure::Pool &shapes, span<const Structure::BoxId> order, Sequence &sequence) {
+    Sequence::Constraints &constraints = sequence.constraints;
+    Sequence::Close &close = sequence.close;
+    Sequence::Frontier &frontier = sequence.frontier;
     const int boxCount = order.size;
     const int constraintCount = (int)shape.constraints.count;
     const Structure::Shape::Constraint *records = shapeConstraints(shape, shapes);
@@ -335,60 +338,64 @@ void ShapeSolverGraphStep::prepareSteps(const Structure::Shape &shape, const Str
     sequence.position.resize(boxCount);
     for (int step = 0; step < boxCount; ++step)
         sequence.position.data[order[step]] = step;
-    sequence.constraintLast.resize(constraintCount);
-    std::fill(sequence.constraintLast.data, sequence.constraintLast.data + constraintCount, -1);
-    sequence.boxHead.resize(boxCount);
-    std::fill(sequence.boxHead.data, sequence.boxHead.data + boxCount, -1);
-    sequence.nextLink.resize(0);
-    sequence.constraintIds.resize(0);
+    constraints.constraintLast.resize(constraintCount);
+    std::fill(constraints.constraintLast.data, constraints.constraintLast.data + constraintCount, -1);
+    constraints.boxHead.resize(boxCount);
+    std::fill(constraints.boxHead.data, constraints.boxHead.data + boxCount, -1);
+    constraints.nextLink.resize(0);
+    constraints.constraintIds.resize(0);
     for (int constraint = 0; constraint < constraintCount; ++constraint) {
         const Structure::BoxId *members = constraintMembers(records[constraint], shapes);
         const int memberCount = (int)records[constraint].boxIds.count;
         for (int i = 0; i < memberCount; ++i)
-            sequence.constraintLast.data[constraint] = (std::max)(sequence.constraintLast.data[constraint], sequence.position.data[members[i]]);
+            constraints.constraintLast.data[constraint] = (std::max)(constraints.constraintLast.data[constraint], sequence.position.data[members[i]]);
         for (int i = 0; i < memberCount; ++i) {
-            sequence.nextLink.push_back(sequence.boxHead.data[members[i]]);
-            sequence.constraintIds.push_back(constraint);
-            sequence.boxHead.data[members[i]] = (int)sequence.constraintIds.size - 1;
+            constraints.nextLink.push_back(constraints.boxHead.data[members[i]]);
+            constraints.constraintIds.push_back(constraint);
+            constraints.boxHead.data[members[i]] = (int)constraints.constraintIds.size - 1;
         }
     }
-    sequence.closeStep.resize(boxCount);
+    close.closeStep.resize(boxCount);
     for (int box = 0; box < boxCount; ++box)
-        sequence.closeStep.data[box] = sequence.position.data[box];
+        close.closeStep.data[box] = sequence.position.data[box];
     for (int constraint = 0; constraint < constraintCount; ++constraint) {
         const Structure::BoxId *members = constraintMembers(records[constraint], shapes);
         const int memberCount = (int)records[constraint].boxIds.count;
         for (int i = 0; i < memberCount; ++i)
-            sequence.closeStep.data[members[i]] = (std::max)(sequence.closeStep.data[members[i]], sequence.constraintLast.data[constraint]);
+            close.closeStep.data[members[i]] = (std::max)(close.closeStep.data[members[i]], constraints.constraintLast.data[constraint]);
     }
-    sequence.closeHead.resize(boxCount);
-    std::fill(sequence.closeHead.data, sequence.closeHead.data + boxCount, -1);
-    sequence.closeNext.resize(boxCount);
-    std::fill(sequence.closeNext.data, sequence.closeNext.data + boxCount, -1);
+    close.closeHead.resize(boxCount);
+    std::fill(close.closeHead.data, close.closeHead.data + boxCount, -1);
+    close.closeNext.resize(boxCount);
+    std::fill(close.closeNext.data, close.closeNext.data + boxCount, -1);
     for (Structure::BoxId box = 0; box < boxCount; ++box) {
-        sequence.closeNext.data[box] = sequence.closeHead.data[sequence.closeStep.data[box]];
-        sequence.closeHead.data[sequence.closeStep.data[box]] = box;
+        close.closeNext.data[box] = close.closeHead.data[close.closeStep.data[box]];
+        close.closeHead.data[close.closeStep.data[box]] = box;
     }
 
-    sequence.layout.resize(0);
-    sequence.layoutNext.resize(0);
-    sequence.slotOf.resize(boxCount);
-    std::fill(sequence.slotOf.data, sequence.slotOf.data + boxCount, -1);
+    frontier.layout.resize(0);
+    frontier.layoutNext.resize(0);
+    frontier.slotOf.resize(boxCount);
+    std::fill(frontier.slotOf.data, frontier.slotOf.data + boxCount, -1);
 }
 
 ShapeSolverGraphStep::StepPlan ShapeSolverGraphStep::makeStep(const Structure::Shape &shape, const Structure::Pool &shapes, span<const Structure::BoxId> order, int step, Sequence &sequence) {
+    const Sequence::Constraints &constraints = sequence.constraints;
+    const Sequence::Close &close = sequence.close;
+    Sequence::Frontier &frontier = sequence.frontier;
+    Sequence::Plan &buffer = sequence.plan;
     const int *boxSizes = shapeBoxSizes(shape, shapes);
     const Structure::Shape::Constraint *records = shapeConstraints(shape, shapes);
     const Structure::BoxId currentBox = order[step];
     const int boxSize = boxSizes[currentBox];
-    sequence.checks.resize(0);
-    sequence.gather.resize(0);
-    sequence.closings.resize(0);
-    for (int link = sequence.boxHead.data[currentBox]; link >= 0; link = sequence.nextLink.data[link]) {
-        const Structure::Shape::Constraint &constraint = records[sequence.constraintIds.data[link]];
-        const int index = (int)sequence.checks.size;
-        sequence.checks.resize(index + 1);
-        StepGenerator::Check &check = sequence.checks.data[index];
+    buffer.checks.resize(0);
+    buffer.gather.resize(0);
+    buffer.closings.resize(0);
+    for (int link = constraints.boxHead.data[currentBox]; link >= 0; link = constraints.nextLink.data[link]) {
+        const Structure::Shape::Constraint &constraint = records[constraints.constraintIds.data[link]];
+        const int index = (int)buffer.checks.size;
+        buffer.checks.resize(index + 1);
+        StepGenerator::Check &check = buffer.checks.data[index];
         check.sum = constraint.sum;
         check.remainingSize = 0;
         check.readCount = 0;
@@ -397,33 +404,33 @@ ShapeSolverGraphStep::StepPlan ShapeSolverGraphStep::makeStep(const Structure::S
         for (int i = 0; i < memberCount; ++i) {
             const Structure::BoxId member = members[i];
             if (sequence.position.data[member] < step)
-                check.readSlots[check.readCount++] = sequence.slotOf.data[member];
+                check.readSlots[check.readCount++] = frontier.slotOf.data[member];
             else if (sequence.position.data[member] > step)
                 check.remainingSize += boxSizes[member];
         }
     }
-    sequence.layoutNext.resize(0);
-    for (int oldSlot = 0; oldSlot < (int)sequence.layout.size; ++oldSlot) {
-        const Structure::BoxId box = sequence.layout.data[oldSlot];
-        if (sequence.closeStep.data[box] == step)
+    frontier.layoutNext.resize(0);
+    for (int oldSlot = 0; oldSlot < (int)frontier.layout.size; ++oldSlot) {
+        const Structure::BoxId box = frontier.layout.data[oldSlot];
+        if (close.closeStep.data[box] == step)
             continue;
-        sequence.gather.push_back(oldSlot);
-        sequence.layoutNext.push_back(box);
+        buffer.gather.push_back(oldSlot);
+        frontier.layoutNext.push_back(box);
     }
-    if (sequence.closeStep.data[currentBox] > step) {
-        sequence.gather.push_back(-1);
-        sequence.layoutNext.push_back(currentBox);
+    if (close.closeStep.data[currentBox] > step) {
+        buffer.gather.push_back(-1);
+        frontier.layoutNext.push_back(currentBox);
     }
-    for (Structure::BoxId box = sequence.closeHead.data[step]; box >= 0; box = sequence.closeNext.data[box])
-        sequence.closings.push_back({box, box == currentBox ? -1 : sequence.slotOf.data[box]});
+    for (Structure::BoxId box = close.closeHead.data[step]; box >= 0; box = close.closeNext.data[box])
+        buffer.closings.push_back({box, box == currentBox ? -1 : frontier.slotOf.data[box]});
 
-    const StepGenerator::StepPlan plan{currentBox, boxSize, span<const StepGenerator::Check>(sequence.checks.data, (int)sequence.checks.size), span<const int>(sequence.gather.data, (int)sequence.gather.size), span<const StepGenerator::Closing>(sequence.closings.data, (int)sequence.closings.size)};
+    const StepGenerator::StepPlan plan{currentBox, boxSize, span<const StepGenerator::Check>(buffer.checks.data, (int)buffer.checks.size), span<const int>(buffer.gather.data, (int)buffer.gather.size), span<const StepGenerator::Closing>(buffer.closings.data, (int)buffer.closings.size)};
 
-    for (int i = 0; i < (int)sequence.layout.size; ++i)
-        sequence.slotOf.data[sequence.layout.data[i]] = -1;
-    for (int slot = 0; slot < (int)sequence.layoutNext.size; ++slot)
-        sequence.slotOf.data[sequence.layoutNext.data[slot]] = slot;
-    sequence.layout.swap(sequence.layoutNext);
+    for (int i = 0; i < (int)frontier.layout.size; ++i)
+        frontier.slotOf.data[frontier.layout.data[i]] = -1;
+    for (int slot = 0; slot < (int)frontier.layoutNext.size; ++slot)
+        frontier.slotOf.data[frontier.layoutNext.data[slot]] = slot;
+    frontier.layout.swap(frontier.layoutNext);
     return plan;
 }
 

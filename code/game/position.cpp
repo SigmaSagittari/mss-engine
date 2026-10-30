@@ -40,7 +40,7 @@ void GameControl::Position::reset(const ObservedBoard::Result &board) {
 }
 
 void GameControl::Position::update(ObservedBoard::Delta &delta) {
-    ObservedBoard::apply(state_.board, delta, state_.basicPool.board);
+    ObservedBoard::applyDelta(state_.board, delta, state_.basicPool.board);
     const Basic::Delta basicDelta = Basic::update(state_.basic, state_.board, delta, state_.basicPool, workspace_.basic);
     for (int i = 0; i < (int)delta.changes.count; ++i)
         state_.structureLazyUpdate.push_back(state_.basicPool.board.changes.data.data[delta.changes.offset + i].cell);

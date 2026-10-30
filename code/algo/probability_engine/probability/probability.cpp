@@ -48,18 +48,19 @@ void Probability::Pool::clear() {
 Probability::Result Probability::analyze(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const ShapeSolver::Config &config, Pool &results, Workspace &workspace) {
     const Structure::Pool &pool = results.shapes;
     ShapeSolver::DistributionPool &distributions = results.distributions;
-    Workspace &ws = workspace;
-    ws.distributionIds.resize(0);
-    ws.frontiers.resize(0);
+    vector<ShapeSolver::DistributionId> &distributionIds = workspace.distributionIds;
+    vector<Poly> &frontiers = workspace.frontiers;
+    distributionIds.resize(0);
+    frontiers.resize(0);
     const int componentCount = (int)structure.components.size;
     // 先完成所有池插入，再借用系数；中途插入可能搬动池内的结果与系数数组。
     for (int component = 0; component < componentCount; ++component) {
         const Structure::Instance &instance = pool.instances.list.data[structure.components.data[component]];
         const Structure::Shape &shape = pool.shapes.list.data[instance.shape];
-        ws.distributionIds.push_back(ShapeSolver::analyze(shape, config, distributions, ws.shapeSolver));
+        distributionIds.push_back(ShapeSolver::analyze(shape, config, distributions, workspace.shapeSolver));
     }
     for (int component = 0; component < componentCount; ++component)
-        if (distributions.list.data[ws.distributionIds.data[component]].ways.count == 0)
+        if (distributions.list.data[distributionIds.data[component]].ways.count == 0)
             return {results.components.push_back(), results.boxProbabilities.push_back(), 0.0L, 0.0L};
 
     vectorPool<Result::Component>::vector components = results.components.push_back();
@@ -77,15 +78,15 @@ Probability::Result Probability::analyze(const ObservedBoard::Result &board, con
     long double candidates = 0.0L;
     long double tCellProbability = 0.0L;
     for (int component = 0; component < componentCount; ++component) {
-        const ShapeSolver::Distribution &distribution = distributions.list.data[ws.distributionIds.data[component]];
-        ws.frontiers.push_back(Poly{distribution.start, span<const long double>(distributions.values.data.data + distribution.ways.offset, (int)distribution.ways.count)});
+        const ShapeSolver::Distribution &distribution = distributions.list.data[distributionIds.data[component]];
+        frontiers.push_back(Poly{distribution.start, span<const long double>(distributions.values.data.data + distribution.ways.offset, (int)distribution.ways.count)});
     }
 
     const int totalMines = board.totalMines - basic.mineSum;
     const int tSum = basic.unknownSum;
     // outside 视图只在回调期间有效，因此在此直接累加未归一化的 Box 雷概率分子。
-    PolyProductTree::forEachOutside(ws.frontierProducts, span<const Poly>(ws.frontiers.data, (int)ws.frontiers.size), [&](int component, const Poly &outside) {
-        const ShapeSolver::Distribution &distribution = distributions.list.data[ws.distributionIds.data[component]];
+    PolyProductTree::forEachOutside(workspace.frontierProducts, span<const Poly>(frontiers.data, (int)frontiers.size), [&](int component, const Poly &outside) {
+        const ShapeSolver::Distribution &distribution = distributions.list.data[distributionIds.data[component]];
         const Structure::Instance &instance = pool.instances.list.data[structure.components.data[component]];
         const Structure::Shape &shape = pool.shapes.list.data[instance.shape];
         const int boxCount = (int)shape.boxSizes.count;
@@ -97,7 +98,7 @@ Probability::Result Probability::analyze(const ObservedBoard::Result &board, con
             if (ways[i] == 0.0L)
                 continue;
             const int componentMines = distribution.start + i;
-            const long double outsideWays = countWeightedWays(outside, totalMines - componentMines, tSum, ws.combination);
+            const long double outsideWays = countWeightedWays(outside, totalMines - componentMines, tSum, workspace.combination);
             if (outsideWays == 0.0L)
                 continue;
             const long double totalWays = ways[i] * outsideWays;
@@ -106,10 +107,10 @@ Probability::Result Probability::analyze(const ObservedBoard::Result &board, con
                 probabilities[componentResult.boxOffset + box] += totalWays * expectations[i * boxCount + box] / boxSizes[box];
         }
     }, [&](const Poly &all) {
-        candidates = countWeightedWays(all, totalMines, tSum, ws.combination);
+        candidates = countWeightedWays(all, totalMines, tSum, workspace.combination);
         if (candidates == 0.0L)
             return;
-        tCellProbability = limitProbability(countWeightedWays(all, totalMines - 1, tSum - 1, ws.combination) / candidates);
+        tCellProbability = limitProbability(countWeightedWays(all, totalMines - 1, tSum - 1, workspace.combination) / candidates);
         for (int box = 0; box < boxOffset; ++box)
             probabilities[box] /= candidates;
     });
@@ -118,46 +119,48 @@ Probability::Result Probability::analyze(const ObservedBoard::Result &board, con
 
 void Probability::sampleMineBoard(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, ShapeSolver::AssignmentPool &assignments, U128 seed, Grid<char> &result, Workspace &workspace) {
     const Structure::Pool &pool = assignments.shapes;
-    Workspace &ws = workspace;
     const int componentCount = (int)structure.components.size;
     for (int component = 0; component < componentCount; ++component) {
         const Structure::Instance &instance = pool.instances.list.data[structure.components.data[component]];
         const Structure::Shape &shape = pool.shapes.list.data[instance.shape];
-        ShapeSolver::assignments(instance.shape, shape, assignments, ws.shapeSolver);
+        ShapeSolver::assignments(instance.shape, shape, assignments, workspace.shapeSolver);
     }
 
     // 后缀多项式：suffix[c] 是组件 c..n-1 的雷数分布乘积；suffix[n] 为常数 1。
-    Workspace::Sample &sample = ws.sample;
-    sample.values.data.resize(0);
-    sample.suffix.resize(componentCount + 1);
-    sample.suffixStart.resize(componentCount + 1);
-    sample.suffixStart.data[componentCount] = 0;
-    sample.suffix.data[componentCount] = sample.values.push_back();
-    sample.values.push_back(sample.suffix.data[componentCount], 1.0L);
+    vectorPool<long double> &sampleValues = workspace.sample.values;
+    vector<vectorPool<long double>::vector> &suffix = workspace.sample.suffix;
+    vector<int> &suffixStart = workspace.sample.suffixStart;
+    vector<ObservedBoard::CellId> &freeCells = workspace.sample.freeCells;
+    sampleValues.data.resize(0);
+    suffix.resize(componentCount + 1);
+    suffixStart.resize(componentCount + 1);
+    suffixStart.data[componentCount] = 0;
+    suffix.data[componentCount] = sampleValues.push_back();
+    sampleValues.push_back(suffix.data[componentCount], 1.0L);
     for (int component = componentCount - 1; component >= 0; --component) {
         const Structure::Instance &instance = pool.instances.list.data[structure.components.data[component]];
         const ShapeSolver::Assignments *assignment = assignments.find(instance.shape);
         const int leftCount = (int)assignment->ways.count;
-        const vectorPool<long double>::vector right = sample.suffix.data[component + 1];
+        const vectorPool<long double>::vector right = suffix.data[component + 1];
         const int rightCount = (int)right.count;
-        sample.suffixStart.data[component] = sample.suffixStart.data[component + 1];
-        sample.suffix.data[component] = sample.values.push_back();
+        suffixStart.data[component] = suffixStart.data[component + 1];
+        suffix.data[component] = sampleValues.push_back();
         if (leftCount == 0 || rightCount == 0)
             continue;
         const int size = leftCount + rightCount - 1;
         for (int i = 0; i < size; ++i)
-            sample.values.push_back(sample.suffix.data[component], 0.0L);
+            sampleValues.push_back(suffix.data[component], 0.0L);
         const long double *leftData = assignmentWays(assignments, *assignment);
-        const long double *rightData = sample.values.data.data + right.offset;
-        long double *output = sample.values.data.data + sample.suffix.data[component].offset;
+        const long double *rightData = sampleValues.data.data + right.offset;
+        long double *output = sampleValues.data.data + suffix.data[component].offset;
         for (int i = 0; i < leftCount; ++i)
             for (int j = 0; j < rightCount; ++j)
                 output[i + j] += leftData[i] * rightData[j];
     }
 
-    const vectorPool<long double>::vector &frontier = sample.suffix.data[0];
-    const int frontierStart = sample.suffixStart.data[0];
-    const long double *frontierWays = sample.values.data.data + frontier.offset;
+    const vectorPool<long double>::vector &frontier = suffix.data[0];
+    const int frontierStart = suffixStart.data[0];
+    const long double *frontierWays = sampleValues.data.data + frontier.offset;
     const int remainingMines = board.totalMines - basic.mineSum;
     const int freeCount = basic.unknownSum;
     long double totalWays = 0.0L;
@@ -165,7 +168,7 @@ void Probability::sampleMineBoard(const ObservedBoard::Result &board, const Basi
         const int freeMines = remainingMines - frontierStart - i;
         if (freeMines < 0 || freeMines > freeCount)
             continue;
-        totalWays += frontierWays[i] * pickFreeWays(freeCount, freeMines, ws.combination);
+        totalWays += frontierWays[i] * pickFreeWays(freeCount, freeMines, workspace.combination);
     }
     assert_(totalWays != 0.0L, "Probability::sampleMineBoard: 没有合法全盘雷分布");
 
@@ -177,7 +180,7 @@ void Probability::sampleMineBoard(const ObservedBoard::Result &board, const Basi
         const int freeMines = remainingMines - frontierStart - i;
         if (freeMines < 0 || freeMines > freeCount)
             continue;
-        accumulated += frontierWays[i] * pickFreeWays(freeCount, freeMines, ws.combination);
+        accumulated += frontierWays[i] * pickFreeWays(freeCount, freeMines, workspace.combination);
         if (frontierDraw < accumulated / totalWays) {
             frontierMines = frontierStart + i;
             break;
@@ -186,14 +189,14 @@ void Probability::sampleMineBoard(const ObservedBoard::Result &board, const Basi
     assert_(frontierMines >= 0, "Probability::sampleMineBoard: 全盘抽样未命中雷数档");
 
     result.resize(board.cells.rows(), board.cells.cols(), 0);
-    sample.freeCells.resize(0);
+    freeCells.resize(0);
     for (int row = 0; row < board.cells.rows(); ++row)
         for (int col = 0; col < board.cells.cols(); ++col) {
             const Basic::Mark mark = basic.marks[row][col];
             if (mark == Basic::Mark::F)
                 result[row][col] = 1;
             else if (mark == Basic::Mark::T)
-                sample.freeCells.push_back(board.id(row, col));
+                freeCells.push_back(board.id(row, col));
         }
 
     int remainingFrontier = frontierMines;
@@ -201,10 +204,10 @@ void Probability::sampleMineBoard(const ObservedBoard::Result &board, const Basi
         const Structure::Instance &instance = pool.instances.list.data[structure.components.data[component]];
         const ShapeSolver::Assignments *assignment = assignments.find(instance.shape);
         const long double *ways = assignmentWays(assignments, *assignment);
-        const vectorPool<long double>::vector &outside = sample.suffix.data[component + 1];
-        const int outsideStart = sample.suffixStart.data[component + 1];
-        const long double *outsideWays = sample.values.data.data + outside.offset;
-        const long double componentTotal = sample.values.data.data[sample.suffix.data[component].offset + (remainingFrontier - sample.suffixStart.data[component])];
+        const vectorPool<long double>::vector &outside = suffix.data[component + 1];
+        const int outsideStart = suffixStart.data[component + 1];
+        const long double *outsideWays = sampleValues.data.data + outside.offset;
+        const long double componentTotal = sampleValues.data.data[suffix.data[component].offset + (remainingFrontier - suffixStart.data[component])];
         const long double draw = random.nextUnit();
         long double sum = 0.0L;
         int componentMines = -1;
@@ -240,24 +243,25 @@ void Probability::sampleMineBoard(const ObservedBoard::Result &board, const Basi
     const int freeMines = remainingMines - frontierMines;
     for (int i = 0; i < freeMines; ++i) {
         const int chosen = i + (int)(random.nextUnit() * (freeCount - i));
-        std::swap(sample.freeCells.data[i], sample.freeCells.data[chosen]);
-        const std::pair<int, int> position = board.pos(sample.freeCells.data[i]);
+        std::swap(freeCells.data[i], freeCells.data[chosen]);
+        const std::pair<int, int> position = board.pos(freeCells.data[i]);
         result[position.first][position.second] = 1;
     }
 }
 
 long double Probability::analyzeLogicComponents(span<const LogicComponentInput> components, int totalMines, Workspace &workspace, const std::function<void(int, int, long double, long double)> &callback) {
-    Workspace &ws = workspace;
-    ws.frontiers.resize(0);
-    ws.logicValues.resize(0);
+    vector<Poly> &frontiers = workspace.frontiers;
+    vector<Workspace::LogicValue> &logicValues = workspace.logicValues;
+    frontiers.resize(0);
+    logicValues.resize(0);
     int totalOffFrontier = 0;
     for (int component = 0; component < components.size; ++component) {
-        ws.frontiers.push_back(components.data[component].frontier);
+        frontiers.push_back(components.data[component].frontier);
         totalOffFrontier += components.data[component].offFrontierCount;
     }
 
     long double candidates = 0.0L;
-    PolyProductTree::forEachOutside(ws.frontierProducts, span<const Poly>(ws.frontiers.data, (int)ws.frontiers.size), [&](int component, const Poly &outside) {
+    PolyProductTree::forEachOutside(workspace.frontierProducts, span<const Poly>(frontiers.data, (int)frontiers.size), [&](int component, const Poly &outside) {
         const LogicComponentInput &input = components.data[component];
         const Poly &frontier = input.frontier;
         if (frontier.size() == 0)
@@ -269,21 +273,21 @@ long double Probability::analyzeLogicComponents(span<const LogicComponentInput> 
         if (maxMines > totalMines)
             maxMines = totalMines;
         for (int mines = frontier.start; mines <= maxMines; ++mines) {
-            const long double localWays = countWeightedWays(frontier, mines, input.offFrontierCount, ws.combination);
+            const long double localWays = countWeightedWays(frontier, mines, input.offFrontierCount, workspace.combination);
             if (localWays == 0.0L)
                 continue;
-            const long double outsideWays = countWeightedWays(outside, totalMines - mines, totalOffFrontier - input.offFrontierCount, ws.combination);
+            const long double outsideWays = countWeightedWays(outside, totalMines - mines, totalOffFrontier - input.offFrontierCount, workspace.combination);
             const long double totalWays = localWays * outsideWays;
             if (totalWays != 0.0L)
-                ws.logicValues.push_back({component, mines, localWays, totalWays});
+                logicValues.push_back({component, mines, localWays, totalWays});
         }
     }, [&](const Poly &all) {
-        candidates = countWeightedWays(all, totalMines, totalOffFrontier, ws.combination);
+        candidates = countWeightedWays(all, totalMines, totalOffFrontier, workspace.combination);
     });
     if (candidates == 0.0L)
         return candidates;
-    for (int i = 0; i < (int)ws.logicValues.size; ++i) {
-        const Workspace::LogicValue &value = ws.logicValues.data[i];
+    for (int i = 0; i < (int)logicValues.size; ++i) {
+        const Workspace::LogicValue &value = logicValues.data[i];
         const long double probability = value.totalWays / candidates;
         if (probability != 0.0L)
             callback(value.component, value.mines, value.localWays, probability);

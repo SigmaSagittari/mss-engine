@@ -62,7 +62,7 @@ struct ObservedBoard {
 
     // delta 必须来自 pool；pool 在应用期间不得 clear 或退尾。
     // 正向按记录顺序应用；reverse 按逆序撤回，且 result 必须处于正向应用后的状态。
-    static void apply(Result &result, const Delta &delta, const Pool &pool, bool reverse = false);
+    static void applyDelta(Result &result, const Delta &delta, const Pool &pool, bool reverse = false);
 };
 
 } // 命名空间 mss
