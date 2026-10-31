@@ -9,6 +9,16 @@ namespace mss {
 // 行优先连续存储的二维网格；坐标从 0 开始，不带填充行列。
 template <typename T> class Grid {
   public:
+    // 只读定宽视图：Cols 必须等于网格列数；借用网格存储，网格 resize 或销毁后失效。
+    template <int Cols> class FixedView {
+      public:
+        FixedView(const Grid &grid) : data_(grid.cells_.data) {}
+        const T *operator[](std::size_t row) const { return data_ + row * Cols; }
+
+      private:
+        const T *data_;
+    };
+
     Grid() : rows_(0), cols_(0) {}
 
     // rows/cols 必须非负；既有多余内容丢弃，全部元素填入 value。

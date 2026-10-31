@@ -100,14 +100,14 @@ template <typename Mask> void MaskSolver<Mask>::buildLayout(const BruteForceType
     layout.mineMaskByConfig.resize(0);
     for (int config = 0; config < common.possibilityCount; ++config)
         layout.mineMaskByConfig.push_back(Mask());
-    layout.mineByteWordsByConfig.resize(common.possibilityCount, (common.candidateCount + 7) / 8, 0);
+    layout.mineByteWordsByConfig.resize(common.possibilityCount, Mask::kBitCount / 8, 0);
     for (int config = 0; config < common.possibilityCount; ++config)
         for (int i = 0; i < common.minesPerConfig; ++i) {
             const BruteForceType::CandidateId candidate = common.mineCandidateIds[config][i];
             layout.mineMaskByConfig.data[config].set(candidate);
             layout.mineByteWordsByConfig[config][candidate / 8] |= std::uint64_t{1} << (8 * (candidate % 8));
         }
-    layout.revealByConfig.resize(common.possibilityCount, common.candidateCount, 0);
+    layout.revealByConfig.resize(common.possibilityCount, Mask::kBitCount, 0);
     for (int config = 0; config < common.possibilityCount; ++config)
         for (int candidate = 0; candidate < common.candidateCount; ++candidate) {
             int value = common.candidates.data[candidate].fixedMines;
@@ -119,10 +119,11 @@ template <typename Mask> void MaskSolver<Mask>::buildLayout(const BruteForceType
 }
 
 template <typename Mask> int MaskSolver<Mask>::groupByReveal(const MaskSession<Mask> &session, const BruteForceType::ConfigId *configs, int start, int count, int candidate, vector<BruteForceType::ConfigId> *groups) {
+    const Grid<std::uint8_t>::FixedView<Mask::kBitCount> revealByConfig(session.layout.revealByConfig);
     int groupCount = 0;
     for (int i = start; i < start + count; ++i) {
         const BruteForceType::ConfigId config = configs[i];
-        const int reveal = session.layout.revealByConfig[config][candidate];
+        const int reveal = revealByConfig[config][candidate];
         if (reveal == 9)
             continue;
         if (groups[reveal].size == 0)
@@ -133,6 +134,7 @@ template <typename Mask> int MaskSolver<Mask>::groupByReveal(const MaskSession<M
 }
 
 template <typename Mask> int MaskSolver<Mask>::javaLiteScore(const MaskSession<Mask> &session, const BruteForceType::ConfigId *configs, int start, int count, int candidate, BruteForceMultimask::Worker &workspace) {
+    const Grid<std::uint8_t>::FixedView<Mask::kBitCount> revealByConfig(session.layout.revealByConfig);
     int (&mineCounts)[9][bitMask<8>::kBitCount] = workspace.scratch.javaLiteMineCounts;
     int (&groupSizes)[9] = workspace.scratch.javaLiteGroupSizes;
     for (int reveal = 0; reveal < 9; ++reveal)
@@ -142,7 +144,7 @@ template <typename Mask> int MaskSolver<Mask>::javaLiteScore(const MaskSession<M
     remaining.reset(candidate);
     for (int i = start; i < start + count; ++i) {
         const BruteForceType::ConfigId config = configs[i];
-        const int reveal = session.layout.revealByConfig[config][candidate];
+        const int reveal = revealByConfig[config][candidate];
         if (reveal == 9)
             continue;
         const Mask &mines = session.layout.mineMaskByConfig.data[config];
@@ -178,13 +180,14 @@ template <typename Mask> vector<int> &MaskSolver<Mask>::orderCandidates(const Ma
     vector<int> &deaths = layer.deaths;
     deaths.resize(session.common.candidateCount);
     std::fill(deaths.data, deaths.data + deaths.size, 0);
-    const int wordCount = session.layout.mineByteWordsByConfig.cols();
+    const int wordCount = Mask::kBitCount / 8;
+    const Grid<std::uint64_t>::FixedView<Mask::kBitCount / 8> mineWords(session.layout.mineByteWordsByConfig);
     std::uint64_t sums[Mask::kBitCount / 8];
     for (int begin = 0; begin < count; begin += (std::numeric_limits<std::uint8_t>::max)()) {
         std::fill(sums, sums + Mask::kBitCount / 8, 0);
         const int end = (std::min)(begin + (std::numeric_limits<std::uint8_t>::max)(), count);
         for (int i = begin; i < end; ++i) {
-            const std::uint64_t *row = session.layout.mineByteWordsByConfig[configs[start + i]];
+            const std::uint64_t *row = mineWords[configs[start + i]];
             for (int word = 0; word < wordCount; ++word)
                 sums[word] += row[word];
         }
@@ -227,14 +230,16 @@ template <typename Mask> vector<int> &MaskSolver<Mask>::orderCandidates(const Ma
 }
 
 template <typename Mask> void MaskSolver<Mask>::writeFirstSafeMove(const MaskSession<Mask> &session, BruteForceType::ConfigId config, BruteForceType::Result &result) {
+    const Grid<std::uint8_t>::FixedView<Mask::kBitCount> revealByConfig(session.layout.revealByConfig);
     for (int candidate = 0; candidate < session.common.candidateCount; ++candidate)
-        if (session.layout.revealByConfig[config][candidate] != 9) {
+        if (revealByConfig[config][candidate] != 9) {
             result.moves.data[0].cell = session.common.candidates.data[candidate].cell;
             return;
         }
 }
 
 template <typename Mask> template <bool Small> void MaskSolver<Mask>::groupSafeConfigs(const MaskSession<Mask> &session, const BruteForceType::ConfigId *configs, int start, int count, const Mask &safeMask, BruteForceMultimask::Layer &layer, BruteForceMultimask::Worker &workspace) {
+    const Grid<std::uint8_t>::FixedView<Mask::kBitCount> revealByConfig(session.layout.revealByConfig);
     vectorPool<BruteForceType::ConfigId> &pool = layer.safeGroupConfigs;
     vector<BruteForceMultimask::SafeGroup> &groupList = layer.safeGroupList;
     pool.data.resize(0);
@@ -251,7 +256,7 @@ template <typename Mask> template <bool Small> void MaskSolver<Mask>::groupSafeC
         keys.resize(0);
         configKeys.resize(count);
         for (int i = 0; i < count; ++i) {
-            const std::uint8_t *row = session.layout.revealByConfig[configs[start + i]];
+            const std::uint8_t *row = revealByConfig[configs[start + i]];
             int key = 0;
             int factor = 1;
             for (int j = 0; j < safeCount; ++j) {
@@ -283,7 +288,7 @@ template <typename Mask> template <bool Small> void MaskSolver<Mask>::groupSafeC
         groupIds.resize(count);
         groupSizes.resize(0);
         for (int i = 0; i < count; ++i) {
-            const std::uint8_t *row = session.layout.revealByConfig[configs[start + i]];
+            const std::uint8_t *row = revealByConfig[configs[start + i]];
             U128 key;
             if (safeCount <= 16) {
                 std::uint64_t packed = 0;
@@ -321,6 +326,7 @@ template <typename Mask> template <bool Small> void MaskSolver<Mask>::groupSafeC
 }
 
 template <typename Mask> template <bool CheckAllMoves, bool IsRoot> int MaskSolver<Mask>::solve(MaskSession<Mask> &session, const BruteForceType::ConfigId *configs, int start, int count, int need, int depth, BruteForceMultimask::Worker &workspace, BruteForceType::Result &result) {
+    const Grid<std::uint8_t>::FixedView<Mask::kBitCount> revealByConfig(session.layout.revealByConfig);
     ++session.nodes;
     if constexpr (CheckAllMoves && IsRoot) {
         if (need > count)
@@ -365,7 +371,7 @@ template <typename Mask> template <bool CheckAllMoves, bool IsRoot> int MaskSolv
                 safe &= ~session.layout.mineMaskByConfig.data[configs[start + 1]];
                 while (safe.any()) {
                     const int candidate = safe.firstSetBit();
-                    if (session.layout.revealByConfig[configs[start]][candidate] != session.layout.revealByConfig[configs[start + 1]][candidate])
+                    if (revealByConfig[configs[start]][candidate] != revealByConfig[configs[start + 1]][candidate])
                         return 2;
                     safe.reset(candidate);
                 }
@@ -455,7 +461,7 @@ template <typename Mask> template <bool CheckAllMoves, bool IsRoot> int MaskSolv
             }
             int reveals = 0;
             for (int j = start; j < start + count; ++j) {
-                const int reveal = session.layout.revealByConfig[configs[j]][candidate];
+                const int reveal = revealByConfig[configs[j]][candidate];
                 if (reveal != 9)
                     reveals |= 1 << reveal;
                 if (reveals & (reveals - 1))
