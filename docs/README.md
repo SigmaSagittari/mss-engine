@@ -6,7 +6,8 @@
 |---|---|
 | 范围、优先级、必读清单、授权、分支与提交 | [AGENTS.md](../AGENTS.md) |
 | 工作方法、审查、可靠性判断、回复格式 | [CODE_REVIEW_PROMPT.md](prompts/CODE_REVIEW_PROMPT.md) |
-| C++ 写法、结构体与默认值、`Config`/`Workspace`、文件与接口边界、UI/JS | [implementation.md](prompts/implementation.md) |
+| C++ 写法、结构体初始化、算法模块五类结构、嵌套分类、文件组织与接口形式 | [style.md](prompts/style.md) |
+| 实现中的可靠性与性能、领域与接口职责、UI/JS | [implementation.md](prompts/implementation.md) |
 | 测试 | [test.md](prompts/test.md) |
 | 运行、超时、benchmark、下载 | [operations.md](prompts/operations.md) |
 | 待办 | [TODO.md](../TODO.md) |
