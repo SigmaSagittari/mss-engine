@@ -44,31 +44,31 @@ void ShapeSolver::AssignmentPool::clear() {
     index.clear();
 }
 
-ShapeSolver::DistributionId ShapeSolver::analyze(const Structure::Shape &shape, const Config &config, DistributionPool &pool, Workspace &workspace) {
+ShapeSolver::DistributionId ShapeSolver::analyze(const Structure::Shape &shape, const Config &config, DistributionPool &pool) {
     const Structure::Pool &shapes = pool.shapes;
     const DistributionId cached = pool.find(shape.hash);
     if (cached >= 0)
         return cached;
     Distribution distribution;
     if ((int)shape.boxSizes.count < config.graphThreshold)
-        distribution = ShapeSolverDfs::analyze(shape, shapes, pool.values, workspace.dfs);
+        distribution = ShapeSolverDfs().analyze(shape, shapes, pool.values);
     else
-        distribution = ShapeSolverGraph::analyze(shape, shapes, config, pool.values, workspace.graph);
+        distribution = ShapeSolverGraph().analyze(shape, shapes, config, pool.values);
     return pool.insert(shape.hash, distribution);
 }
 
-void ShapeSolver::observe(const Structure::Shape &shape, const Structure::Pool &shapes, span<const int> adjacentBoxCells, Structure::BoxId xBox, const Config &config, Observed &result, Workspace &workspace) {
+void ShapeSolver::observe(const Structure::Shape &shape, const Structure::Pool &shapes, span<const int> adjacentBoxCells, Structure::BoxId xBox, const Config &config, Observed &result) {
     if ((int)shape.boxSizes.count < config.graphThreshold)
-        ShapeSolverDfs::observe(shape, shapes, adjacentBoxCells, xBox, result, workspace.dfs);
+        ShapeSolverDfs().observe(shape, shapes, adjacentBoxCells, xBox, result);
     else
-        ShapeSolverGraph::observe(shape, shapes, adjacentBoxCells, xBox, config, result, workspace.graph);
+        ShapeSolverGraph().observe(shape, shapes, adjacentBoxCells, xBox, config, result);
 }
 
-const ShapeSolver::Assignments &ShapeSolver::assignments(Structure::ShapeId shapeId, const Structure::Shape &shape, AssignmentPool &pool, Workspace &workspace) {
+const ShapeSolver::Assignments &ShapeSolver::assignments(Structure::ShapeId shapeId, const Structure::Shape &shape, AssignmentPool &pool) {
     const Structure::Pool &shapes = pool.shapes;
     if (const Assignments *cached = pool.find(shapeId))
         return *cached;
-    const Assignments assignments = ShapeSolverDfs::buildAssignments(shape, shapes, pool.storage, workspace.dfs);
+    const Assignments assignments = ShapeSolverDfs().buildAssignments(shape, shapes, pool.storage);
     return pool.insert(shapeId, assignments);
 }
 

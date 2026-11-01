@@ -18,20 +18,12 @@ template <int WordCount> struct bitMask {
             words[i] = 0;
     }
 
-    static bitMask bit(int index) {
-        bitMask result;
-        result.words[index / 64] = std::uint64_t{1} << (index % 64);
-        return result;
-    }
-
-    static bitMask all(int bitCount) {
-        assert_(bitCount >= 0 && bitCount <= kBitCount, "bitMask::all 的位数超出掩码位宽");
-        bitMask result;
+    bitMask(int bitCount) : bitMask() {
+        assert_(bitCount >= 0 && bitCount <= kBitCount, "bitMask 的位数超出掩码位宽");
         for (int i = 0; i < WordCount && bitCount > 0; ++i) {
-            result.words[i] = bitCount >= 64 ? ~std::uint64_t{} : (std::uint64_t{1} << bitCount) - 1;
+            words[i] = bitCount >= 64 ? ~std::uint64_t{} : (std::uint64_t{1} << bitCount) - 1;
             bitCount -= 64;
         }
-        return result;
     }
 
     bool any() const {

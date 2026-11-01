@@ -7,7 +7,7 @@ SuggestResult LowRisk::analyze(const PositionState &state, const vector<Observed
     if (cells) {
         for (int i = 0; i < (int)cells->size; ++i) {
             const ObservedBoard::CellId cell = cells->data[i];
-            const long double probability = Probability::mineProbability(state.probability, state.probabilityPool, cell, state.board, state.basic, state.structure);
+            const long double probability = Probability().mineProbability(state.probability, state.probabilityPool, cell, state.board, state.basic, state.structure);
             if (probability != 1) result.candidates.push_back(SuggestResult::Candidate(cell, 1 - probability));
         }
         result.recommend();
@@ -24,7 +24,7 @@ SuggestResult LowRisk::analyze(const PositionState &state, const vector<Observed
         ObservedBoard::CellId cell = 0;
         const int cols = state.board.cells.cols();
         while (state.basic.marks[cell / cols][cell % cols] != Basic::Mark::T) ++cell;
-        consider(cell, Probability::mineProbability(state.probability, state.probabilityPool, cell, state.board, state.basic, state.structure));
+        consider(cell, Probability().mineProbability(state.probability, state.probabilityPool, cell, state.board, state.basic, state.structure));
     }
     if (safest >= 0) result.candidates.push_back(SuggestResult::Candidate(safest, 1 - lowestRisk));
     result.recommend();

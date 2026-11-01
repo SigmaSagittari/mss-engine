@@ -16,7 +16,6 @@ struct LongTermRisk {
         Config(long double influenceThreshold) : influenceThreshold(influenceThreshold) {}
     };
 
-    struct Workspace;
     // describe 输出“已知本格为雷”的条件命中概率，本体和限制各取最大的一个模板。
     // update/influence 的可选明细参数只作 describe 内部累计，此时保存的还是布局数。
     struct Details {
@@ -36,57 +35,33 @@ struct LongTermRisk {
         Grid<unsigned char> ready;
     };
 
-    struct Workspace {
-        Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) : basic(basic), structure(structure), probability(probability) {}
-
-        Basic::Workspace &basic;
-        Structure::Workspace &structure;
-        Probability::Workspace &probability;
-        vector<ObservedBoard::CellId> changedCells;
-        Grid<long double> influenceStorage;
-        vector<long double> enablerStorage;
-        Grid<long double> valueStorage;
-        Grid<unsigned char> readyStorage;
-    };
-
     // dead 使用同盘面编号；semi 非空时补找已成立的死猜，并在找到首组时停止扫描。
-    static Result analyze(PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Semi::Result *semi);
-    // 全盘覆写 Result；同一 Workspace 串行复用。
-    static void update(Result &result, PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Semi::Result *semi, Details *details = nullptr);
-    // 单格查询返回补偿布局数；full 必须来自同一 state，工作区可替换或复用。
-    static long double influence(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, Result &full, const ShapeSolverConfig &shapeConfig, Workspace &workspace, Details *details = nullptr);
+    Result analyze(PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Semi::Result *semi);
+    // 全盘覆写 Result。
+    void update(Result &result, PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Semi::Result *semi, Details *details = nullptr);
+    // 单格查询返回补偿布局数；full 必须来自同一 state。
+    long double influence(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, Result &full, const ShapeSolverConfig &shapeConfig, Details *details = nullptr);
     // 仅详情查询调用；cell 的雷率必须大于 0，返回假设该格为雷后的单模板命中概率。
-    static Details describe(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace);
+    Details describe(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config);
 
   private:
+    struct Workspace;
+    Workspace &getWorkspace();
     static constexpr long double countTolerance = 1e-9L;
-    struct CellPosition {
-        int row;
-        int col;
+    struct CellPosition;
 
-        CellPosition(int row, int col) : row(row), col(col) {}
-    };
+    struct CellList;
 
-    struct CellList {
-        ObservedBoard::CellId cells[8];
-        int count;
+    enum class TallyKind : unsigned char;
 
-        CellList() : count(0) {}
-        void push_back(ObservedBoard::CellId cell) { cells[count++] = cell; }
-        span<const ObservedBoard::CellId> span() const { return {cells, count}; }
-    };
-
-    enum class TallyKind : unsigned char { Horizontal, Vertical, Box };
-
-    static long double boxTally(ObservedBoard::CellId cell, const PositionState &state, const Probability::Pool &probabilities);
-    static long double countWithForces(PositionState &state, span<const ObservedBoard::CellId> mines, span<const ObservedBoard::CellId> safes, const ShapeSolverConfig &shapeConfig, Workspace &workspace);
-    static long double candidateTally(PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> tiles, span<const CellPosition> source, int mineCount, int maxMissing, int minesLeft, const ShapeSolverConfig &shapeConfig, TallyKind kind, ObservedBoard::CellId cacheCell, Grid<long double> &values, Grid<unsigned char> &ready, Workspace &workspace);
-    static void update(Grid<long double> &influences, vector<long double> &enablers, Grid<long double> &values, Grid<unsigned char> &ready, PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Workspace &workspace, Semi::Result *semi, Details *details);
-    static long double influence(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, const vector<long double> &enablers, Grid<long double> &values, Grid<unsigned char> &ready, const ShapeSolverConfig &shapeConfig, Workspace &workspace, Details *details);
-    static bool hasSafeSource(const ObservedBoard::Result &board, span<const CellPosition> source);
-    static bool contains(span<const ObservedBoard::CellId> cells, ObservedBoard::CellId cell);
-    static CellList missingMines(const PositionState &state, const Probability::Pool &probabilities, span<const CellPosition> source);
-    static bool hidden(const PositionState &state, int row, int col);
+    long double boxTally(ObservedBoard::CellId cell, const PositionState &state, const Probability::Pool &probabilities);
+    long double candidateTally(PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> tiles, span<const CellPosition> source, int mineCount, int maxMissing, int minesLeft, const ShapeSolverConfig &shapeConfig, TallyKind kind, ObservedBoard::CellId cacheCell, Grid<long double> &values, Grid<unsigned char> &ready);
+    void update(Grid<long double> &influences, vector<long double> &enablers, Grid<long double> &values, Grid<unsigned char> &ready, PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Semi::Result *semi, Details *details);
+    long double influence(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, const vector<long double> &enablers, Grid<long double> &values, Grid<unsigned char> &ready, const ShapeSolverConfig &shapeConfig, Details *details);
+    bool hasSafeSource(const ObservedBoard::Result &board, span<const CellPosition> source);
+    bool contains(span<const ObservedBoard::CellId> cells, ObservedBoard::CellId cell);
+    CellList missingMines(const PositionState &state, const Probability::Pool &probabilities, span<const CellPosition> source);
+    bool hidden(const PositionState &state, int row, int col);
 };
 
 } // 命名空间 mss

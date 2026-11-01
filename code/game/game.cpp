@@ -6,13 +6,13 @@
 
 namespace mss {
 
-GameControl::Game::Game(const MineBoard &mineBoard, const ObservedBoard::Result &observedBoard, Workspace &workspace, const Config &config, SuggestPool &suggestions)
-    : mineBoard_(mineBoard), hasMineBoard_(true), pendingSeed_(), hasPendingSeed_(false), remainingSafe_(countRemainingSafe(observedBoard)), state_(remainingSafe_ == 0 ? State::Won : State::Running), position_(Position::assumeLegal(observedBoard, workspace, config)), suggestions_(suggestions) {}
+GameControl::Game::Game(const MineBoard &mineBoard, const ObservedBoard::Result &observedBoard, const Config &config, SuggestPool &suggestions)
+    : mineBoard_(mineBoard), hasMineBoard_(true), pendingSeed_(), hasPendingSeed_(false), remainingSafe_(countRemainingSafe(observedBoard)), state_(remainingSafe_ == 0 ? State::Won : State::Running), position_(observedBoard, config, Position::Check::Trusted), suggestions_(suggestions) {}
 
-GameControl::Game::Game(int rows, int cols, int mines, U128 seed, Workspace &workspace, const Config &config, SuggestPool &suggestions)
-    : mineBoard_(), hasMineBoard_(false), pendingSeed_(seed), hasPendingSeed_(true), remainingSafe_(rows * cols - mines), state_(State::Running), position_(Position::assumeLegal(ObservedBoard::Result(rows, cols, mines), workspace, config)), suggestions_(suggestions) {}
+GameControl::Game::Game(int rows, int cols, int mines, U128 seed, const Config &config, SuggestPool &suggestions)
+    : mineBoard_(), hasMineBoard_(false), pendingSeed_(seed), hasPendingSeed_(true), remainingSafe_(rows * cols - mines), state_(State::Running), position_(ObservedBoard::Result(rows, cols, mines), config, Position::Check::Trusted), suggestions_(suggestions) {}
 
-int GameControl::Game::countRemainingSafe(const ObservedBoard::Result &observedBoard) {
+int GameControl::Game::countRemainingSafe(const ObservedBoard::Result &observedBoard) const {
     int remainingSafe = observedBoard.cells.rows() * observedBoard.cells.cols() - observedBoard.totalMines;
     for (int row = 0; row < observedBoard.cells.rows(); ++row)
         for (int col = 0; col < observedBoard.cells.cols(); ++col)
@@ -36,8 +36,8 @@ void GameControl::Game::reset(U128 seed) {
 const GameControl::Position &GameControl::Game::position() const { return position_; }
 GameControl::Position &GameControl::Game::position() { return position_; }
 
-void GameControl::Game::suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &pool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, vector<ObservedBoard::CellId> &result) {
-    position_.suggest(policy, suggestions_, fiftyPool, pool, workspace, bruteForce, result);
+void GameControl::Game::suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &pool, vector<ObservedBoard::CellId> &result) {
+    position_.suggest(policy, suggestions_, fiftyPool, pool, result);
 }
 
 void GameControl::Game::play(span<const ObservedBoard::CellId> cells) {
@@ -90,7 +90,6 @@ void GameControl::Game::playUntilNoSafe() {
         play(safe);
     }
 }
-
 
 } // 命名空间 mss
 

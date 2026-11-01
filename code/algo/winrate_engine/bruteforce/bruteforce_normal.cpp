@@ -4,31 +4,74 @@
 
 namespace mss {
 
-static U128 hashConfigs(const vector<std::uint64_t> &hashes, const BruteForceType::ConfigId *configs, int start, int count) {
-    U128 hash{(std::uint64_t)count, (std::uint64_t)count};
-    for (int i = start; i < start + count; ++i) {
-        const std::uint64_t value = hashes.data[configs[i]];
-        hash.lo += value;
-        hash.hi ^= value;
-    }
-    hash.lo = splitmix64(hash.lo);
-    return hash;
-}
+// 按揭示值分桶时，一个桶在 groups 里的下标和方案数。
+struct BruteForceNormal::RevealGroup {
+    int reveal;
+    int count;
+};
 
-static void saveFail(const U128 &key, int upper, int count, FlatHashTable<U128, int, U128Hash> &table) {
-    // 负值编码“最多可能赢 upper 局”；等于方案总数的上界没有剪枝价值。
-    if (upper <= 0 || upper >= count)
-        return;
-    int *old = table.find(key);
-    if (old == nullptr) {
-        table[key] = -upper;
-        return;
-    }
-    if (*old < 0)
-        *old = (std::max)(*old, -upper);
+struct BruteForceNormal::Layer {
+    // 当前局面各候选的踩雷布局数、必安候选及尝试顺序。
+    vector<int> deaths;
+    vector<int> safeCells;
+    vector<int> order;
+    vector<BruteForceType::ConfigId> groups[9]; // 按揭出的数字 0..8 分桶，每项是完整雷盘下标。
+    vector<RevealGroup> groupList;
+    // 同时揭开必安格时，按它们显示的数字组合给布局分组。
+    vector<U128> safeHashes;
+    vector<int> safeGroupIds;
+    vector<int> safeGroupSizes;
+    // 当前递归帧所有安全组的 ConfigId 拼接；每次分组前清空，切片只在本帧内有效。
+    vectorPool<BruteForceType::ConfigId> safeGroupConfigs;
+    // 每个安全组是 safeGroupConfigs 的切片，按组大小降序处理。
+    vector<SafeGroup> safeGroupList;
+};
+
+struct BruteForceNormal::Workspace {
+    Layer &layer(int depth);
+    void reset();
+
+    Grid<std::uint8_t> mineByConfig; // [完整布局][候选] 是否为雷。
+    Grid<std::uint8_t> revealByConfig; // [完整布局][候选] 揭开后显示的数字。
+    DynamicBitset unopenedStorage;
+    vector<BruteForceType::ConfigId> configIds;
+    FlatHashTable<U128, int, U128Hash> safeGroupTable;
+    // 仅保存空表的存储容量；有效缓存由一次 solve 的状态对象持有。
+    FlatHashTable<U128, int, U128Hash> cacheStorage;
+    // 递归时持有 Layer&，用 deque 保证新增层不搬动已有层。
+    std::deque<Layer> layers;
+};
+
+__declspec(noinline) BruteForceNormal::Workspace &BruteForceNormal::getWorkspace() {
+    static thread_local Workspace workspace;
+    return workspace;
 }
 
 struct NormalSolver {
+    U128 hashConfigs(const vector<std::uint64_t> &hashes, const BruteForceType::ConfigId *configs, int start, int count) {
+        U128 hash{(std::uint64_t)count, (std::uint64_t)count};
+        for (int i = start; i < start + count; ++i) {
+            const std::uint64_t value = hashes.data[configs[i]];
+            hash.lo += value;
+            hash.hi ^= value;
+        }
+        hash.lo = splitmix64(hash.lo);
+        return hash;
+    }
+
+    void saveFail(const U128 &key, int upper, int count, FlatHashTable<U128, int, U128Hash> &table) {
+        // 负值编码“最多可能赢 upper 局”；等于方案总数的上界没有剪枝价值。
+        if (upper <= 0 || upper >= count)
+            return;
+        int *old = table.find(key);
+        if (old == nullptr) {
+            table[key] = -upper;
+            return;
+        }
+        if (*old < 0)
+            *old = (std::max)(*old, -upper);
+    }
+
     struct State {
         Grid<std::uint8_t> &mineByConfig;
         Grid<std::uint8_t> &revealByConfig;
@@ -40,11 +83,12 @@ struct NormalSolver {
     };
 
     template <bool CheckAllMoves, bool IsRoot>
-    static int solve(const BruteForceType::Session &session, State &state, BruteForceNormal::Workspace &workspace, const BruteForceType::ConfigId *configs, int start, int count, int need, int depth, BruteForceType::Result &result);
+    int solve(const BruteForceType::Session &session, State &state, const BruteForceType::ConfigId *configs, int start, int count, int need, int depth, BruteForceType::Result &result);
 };
 
 template <bool CheckAllMoves, bool IsRoot>
-int NormalSolver::solve(const BruteForceType::Session &session, State &state, BruteForceNormal::Workspace &workspace, const BruteForceType::ConfigId *configs, int start, int count, int need, int depth, BruteForceType::Result &result) {
+int NormalSolver::solve(const BruteForceType::Session &session, State &state, const BruteForceType::ConfigId *configs, int start, int count, int need, int depth, BruteForceType::Result &result) {
+    BruteForceNormal::Workspace &workspace = BruteForceNormal().getWorkspace();
     ++state.nodes;
     if constexpr (CheckAllMoves && IsRoot) {
         if (need > count)
@@ -69,7 +113,7 @@ int NormalSolver::solve(const BruteForceType::Session &session, State &state, Br
             int wins = 0;
             for (int reveal = 0; reveal < 9; ++reveal)
                 if (layer.groups[reveal].size != 0) {
-                    const int value = solve<false, false>(session, state, workspace, layer.groups[reveal].data, 0, (int)layer.groups[reveal].size, 1, depth + 1, result);
+                    const int value = solve<false, false>(session, state, layer.groups[reveal].data, 0, (int)layer.groups[reveal].size, 1, depth + 1, result);
                     if (value > 0)
                         wins += value;
                 }
@@ -177,7 +221,7 @@ int NormalSolver::solve(const BruteForceType::Session &session, State &state, Br
                     bailed = true;
                     break;
                 }
-                const int value = solve<false, false>(session, state, workspace, groupedConfigs.data.data + groupList.data[i].offset, 0, size, (std::max)(1, need - wins - remaining), depth + 1, result);
+                const int value = solve<false, false>(session, state, groupedConfigs.data.data + groupList.data[i].offset, 0, size, (std::max)(1, need - wins - remaining), depth + 1, result);
                 if (value <= 0) {
                     upper = wins - value + remaining;
                     bailed = true;
@@ -252,7 +296,7 @@ int NormalSolver::solve(const BruteForceType::Session &session, State &state, Br
                     bailed = true;
                     break;
                 }
-                const int value = solve<false, false>(session, state, workspace, group.data, 0, size, (std::max)(1, target - wins - remaining), depth + 1, result);
+                const int value = solve<false, false>(session, state, group.data, 0, size, (std::max)(1, target - wins - remaining), depth + 1, result);
                 if (value <= 0) {
                     moveUpper = wins - value + remaining;
                     bailed = true;
@@ -311,7 +355,8 @@ void BruteForceNormal::Workspace::reset() {
     safeGroupTable.clear();
 }
 
-void BruteForceNormal::solve(const BruteForceType::Session &session, const BruteForceType::Config &config, BruteForceType::Result &result, Workspace &workspace) {
+void BruteForceNormal::solve(const BruteForceType::Session &session, const BruteForceType::Config &config, BruteForceType::Result &result) {
+    Workspace &workspace = getWorkspace();
     Grid<std::uint8_t> &mineByConfig = workspace.mineByConfig;
     Grid<std::uint8_t> &revealByConfig = workspace.revealByConfig;
     DynamicBitset &unopenedCandidates = workspace.unopenedStorage;
@@ -340,11 +385,11 @@ void BruteForceNormal::solve(const BruteForceType::Session &session, const Brute
 
     if (config.checkAllMoves) {
         result.moves.resize(session.candidateCount);
-        NormalSolver::solve<true, true>(session, state, workspace, workspace.configIds.data, 0, session.possibilityCount, 1, 0, result);
+        NormalSolver().solve<true, true>(session, state, workspace.configIds.data, 0, session.possibilityCount, 1, 0, result);
     } else {
         result.moves.resize(1);
         result.moves.data[0] = BruteForceType::Result::Move(-1, 0);
-        const int wins = NormalSolver::solve<false, true>(session, state, workspace, workspace.configIds.data, 0, session.possibilityCount, 1, 0, result);
+        const int wins = NormalSolver().solve<false, true>(session, state, workspace.configIds.data, 0, session.possibilityCount, 1, 0, result);
         if (wins < 1)
             result.moves.data[0] = BruteForceType::Result::Move(-1, 0);
         else

@@ -103,17 +103,14 @@ template <typename Callback>
 void runGames(const Config &config, const mss::MovePolicy &policy, mss::U128 seed, Callback &&callback) {
     using Game = mss::GameControl::Game;
     const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
-    mss::GameControl::Workspace workspace;
     mss::GameControl::SuggestPool suggestions;
     mss::TemplateSemi::Pool semiPool;
     mss::TemplateLongTermRisk::Pool riskPool;
     mss::FiftyFifty::Pool fiftyPool(semiPool, riskPool);
-    mss::AnytimeSearch::Workspace searchWorkspace(workspace.basic, workspace.structure, workspace.probability);
-    mss::BruteForce::Workspace bruteForce(workspace.probability.shapeSolver);
     mss::vector<mss::ObservedBoard::CellId> moves;
     mss::Random random(seed.lo, seed.hi);
-    Game game(config.rows, config.cols, config.mines, {random.next(), random.next()}, workspace, gameConfig, suggestions);
-    mss::Probability::Pool pendingProbabilities(game.position().probabilityPool().shapes, game.position().probabilityPool().distributions);
+    Game game(config.rows, config.cols, config.mines, {random.next(), random.next()}, gameConfig, suggestions);
+    mss::Probability::Pool pendingProbabilities(game.position().probabilityPool().shapes, game.position().probabilityPool().distributions, game.position().probabilityPool().combinations);
     mss::JavaLite::Pool pending(pendingProbabilities);
     mss::AnytimeSearch::Pool searchPool(pending);
     const mss::ObservedBoard::CellId first = config.cols - 1;
@@ -124,7 +121,7 @@ void runGames(const Config &config, const mss::MovePolicy &policy, mss::U128 see
         for (;;) {
             callback(std::as_const(game));
             if (game.state() != Game::State::Running) break;
-            game.suggest(policy, fiftyPool, searchPool, searchWorkspace, bruteForce, moves);
+            game.suggest(policy, fiftyPool, searchPool, moves);
             game.play({moves.data, (int)moves.size});
         }
     }

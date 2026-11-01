@@ -14,10 +14,10 @@ namespace mss {
 namespace GameControl {
 
 // 人工观测入口会检查局部数字约束和全盘可满足性；失败写入 error()，这是预期错误。
-// 合法 Position 的查询共用 Workspace，不得并发或重入。
+// 同一 Position 的查询须串行；算法在执行线程取得并复用工作区。
 struct Position {
     // 人工观测入口：检查局部数字约束和全盘可满足性，错误写入 error()。
-    static Position fromUserInput(const ObservedBoard::Result &board, Workspace &workspace, const Config &config);
+    Position(const ObservedBoard::Result &board, const Config &config);
 
     Position(const Position &) = delete;
     Position &operator=(const Position &) = delete;
@@ -47,20 +47,18 @@ struct Position {
     // cells 非空时至少一格，只比较指定首招；安全格始终优先。
     // search 非空时接收 Anytime 续搜句柄，借用 searchPool 和当前根状态。
     // details 只转交 JavaEval/Anytime，由对应算法重置；其他分派不写明细。
-    void suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells = nullptr, AnytimeSearch::Result *search = nullptr, SuggestResult::Details *details = nullptr);
+    void suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, SuggestResult &result, const vector<ObservedBoard::CellId> *cells = nullptr, AnytimeSearch::Result *search = nullptr, SuggestResult::Details *details = nullptr);
     // 只查询推荐格，使用盘面及有效配置缓存；安全时返回全部安全格。
-    void suggest(const MovePolicy &policy, SuggestPool &pool, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, vector<ObservedBoard::CellId> &result);
+    void suggest(const MovePolicy &policy, SuggestPool &pool, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, vector<ObservedBoard::CellId> &result);
 
   private:
     friend struct Game;
     enum class Check { User, Trusted };
 
-    Position(const ObservedBoard::Result &board, Workspace &workspace, const Config &config, Check check);
-    // Game 专用：输入必须合法，冷路径用 assert_ 检查基础一致性。
-    static Position assumeLegal(const ObservedBoard::Result &board, Workspace &workspace, const Config &config);
-    static U128 suggestionKey(const ObservedBoard::Result &board, const MovePolicy &policy);
+    Position(const ObservedBoard::Result &board, const Config &config, Check check);
+    U128 suggestionKey(const ObservedBoard::Result &board, const MovePolicy &policy) const;
     // 两个查询入口排除安全格后共用分派；缓存未命中时不再重复安全检查。
-    void suggest(PositionState &current, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search, SuggestResult::Details *details);
+    void suggest(PositionState &current, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search, SuggestResult::Details *details);
 
     void initialize();
     void reset(const ObservedBoard::Result &board);
@@ -73,7 +71,6 @@ struct Position {
     // Basic 推导出的安全格增量集合；safeMoves 只复查这些格，不再全盘扫描。
     vector<ObservedBoard::CellId> basicSafeCells_;
     vector<unsigned char> basicSafeSeen_;
-    Workspace &workspace_;
     Config config_;
 };
 

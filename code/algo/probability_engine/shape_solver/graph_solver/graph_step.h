@@ -1,5 +1,7 @@
 #pragma once
 
+#include <utility>
+
 #include "algo/probability_engine/shape_solver/shape_solver_config.h"
 #include "algo/probability_engine/structure/structure.h"
 #include "core/datastructure/span.h"
@@ -56,42 +58,29 @@ struct ShapeSolverGraphStep {
             vector<Closing> closings;
         } plan;
     };
-    struct Workspace {
-        struct Adjacency {
-            vector<int> offsets;
-            vector<Structure::BoxId> adjacent;
-            struct Build {
-                // head/to/next 是按边组织的链表，marked 做邻居去重。
-                vector<int> head;
-                vector<int> next;
-                vector<Structure::BoxId> to;
-                vector<char> marked;
-            } build;
-        } adjacency;
-        struct Order {
-            vector<Structure::BoxId> values;
-            vector<Structure::BoxId> candidate;
-            vector<Structure::BoxId> best;
-            vector<Structure::BoxId> current;
-            // SA 的初始顺序，与 current/candidate 分开。
-            vector<Structure::BoxId> seed;
-            struct Score {
-                vector<int> remaining;
-                vector<char> selected;
-            } score;
-            struct Bfs {
-                vector<int> distance;
-                vector<Structure::BoxId> queue;
-            } bfs;
-        } order;
-        Sequence sequence;
-    };
 
-    static void buildAdjacency(const Structure::Shape &shape, const Structure::Pool &shapes, vector<int> &offsets, vector<Structure::BoxId> &adjacent, Workspace &workspace);
-    static void makeOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacent, const ShapeSolverConfig &config, vector<Structure::BoxId> &order, Workspace &workspace);
-    static void prepareSteps(const Structure::Shape &shape, const Structure::Pool &shapes, span<const Structure::BoxId> order, Sequence &sequence);
+    void buildAdjacency(const Structure::Shape &shape, const Structure::Pool &shapes, vector<int> &offsets, vector<Structure::BoxId> &adjacent);
+    void makeOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacent, const ShapeSolverConfig &config, vector<Structure::BoxId> &order);
+    void prepareSteps(const Structure::Shape &shape, const Structure::Pool &shapes, span<const Structure::BoxId> order, Sequence &sequence);
     // 返回前完成下一步的布局更新；调用者消费完计划后才能生成下一步。
-    static StepPlan makeStep(const Structure::Shape &shape, const Structure::Pool &shapes, span<const Structure::BoxId> order, int step, Sequence &sequence);
+    StepPlan makeStep(const Structure::Shape &shape, const Structure::Pool &shapes, span<const Structure::BoxId> order, int step, Sequence &sequence);
+
+  private:
+    struct Workspace;
+    Workspace &getWorkspace();
+    int shapeBoxCount(const Structure::Shape &shape);
+    const int *shapeBoxSizes(const Structure::Shape &shape, const Structure::Pool &shapes);
+    const Structure::Shape::Constraint *shapeConstraints(const Structure::Shape &shape, const Structure::Pool &shapes);
+    const Structure::BoxId *constraintMembers(const Structure::Shape::Constraint &constraint, const Structure::Pool &shapes);
+    span<const Structure::BoxId> neighbors(const vector<int> &offsets, const vector<Structure::BoxId> &adjacent, Structure::BoxId box);
+    void copyOrder(span<const Structure::BoxId> source, vector<Structure::BoxId> &target);
+    std::pair<int, int> orderScore(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, span<const Structure::BoxId> order);
+    Structure::BoxId farthestBox(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, Structure::BoxId source);
+    void makeGreedyOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, Structure::BoxId first, vector<Structure::BoxId> &order);
+    void makeWindow3Order(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, vector<Structure::BoxId> &order);
+    void makeSAOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, span<const Structure::BoxId> seed, const ShapeSolverConfig &config, vector<Structure::BoxId> &best);
+    void makeAutoOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, const ShapeSolverConfig &config, vector<Structure::BoxId> &order);
+    void makeAutoSAOrder(const vector<int> &offsets, const vector<Structure::BoxId> &adjacentBoxes, const ShapeSolverConfig &config, vector<Structure::BoxId> &order);
 };
 
 } // 命名空间 mss

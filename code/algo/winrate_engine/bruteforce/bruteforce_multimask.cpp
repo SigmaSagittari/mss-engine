@@ -11,6 +11,95 @@
 
 namespace mss {
 
+// 按揭示值分桶时，一个桶在 groups 里的下标和方案数。
+struct BruteForceMultimask::RevealGroup {
+    int reveal;
+    int count;
+};
+
+struct BruteForceMultimask::Layer {
+    // 当前候选的踩雷布局数、尝试顺序，以及按揭出数字分桶后的布局列表。
+    vector<int> deaths;
+    vector<int> order;
+    vector<BruteForceType::ConfigId> groups[9];
+    vector<RevealGroup> groupList;
+    vector<int> safeGroupIds;
+    vector<int> safeGroupSizes;
+    // 当前递归帧所有安全组的 ConfigId 拼接；每次分组前清空，切片只在本帧内有效。
+    vectorPool<BruteForceType::ConfigId> safeGroupConfigs;
+    // 每个安全组是 safeGroupConfigs 的切片，按组大小降序处理。
+    vector<SafeGroup> safeGroupList;
+};
+
+// 一个线程的递归临时内存；每个深度一份 Layer，缓存内容只在本次 solve 有效。
+struct BruteForceMultimask::Scratch {
+    Scratch();
+    Layer &layer(int depth);
+    void reset();
+
+    // 递归时持有 Layer&，用 deque 保证新增层不搬动已有层。
+    std::deque<Layer> layers;
+    FlatHashTable<U128, int, U128Hash> safeGroupTable;
+    FlatHashTable<U128, int, U128Hash> cacheStorage;
+    // Java-lite 排序的固定容量计数，不随递归深度分配。
+    int javaLiteMineCounts[9][bitMask<8>::kBitCount];
+    int javaLiteGroupSizes[9];
+    int smallGroupCounts[9 * 9 * 9];
+    vector<int> smallGroupKeys;
+    vector<int> smallGroupConfigKeys;
+};
+
+struct BruteForceMultimask::Workspace {
+    // 工作线程临时区只增不减，保留各线程的分组容量；Worker 的状态只在 solve 内存活。
+    std::deque<Scratch> workers;
+    FlatHashTable<U128, int, U128Hash> sharedStorage[256];
+    vector<bitMask<1>> mineMasks1;
+    vector<bitMask<2>> mineMasks2;
+    vector<bitMask<4>> mineMasks4;
+    vector<bitMask<8>> mineMasks8;
+    // 不同掩码位宽共用二维表的存储容量。
+    Grid<std::uint64_t> mineByteWords;
+    Grid<std::uint8_t> reveals;
+    vector<BruteForceType::ConfigId> configIds;
+    // 根并行时的候选顺序和各 worker 的上界、节点数。
+    vector<int> order;
+    vector<int> deaths;
+    vector<int> uppers;
+    vector<long long> nodes;
+};
+
+__declspec(noinline) BruteForceMultimask::Workspace &BruteForceMultimask::getWorkspace() {
+    static thread_local Workspace workspace;
+    return workspace;
+}
+
+// 本次 solve 的工作状态；cache 引用 Scratch，根并行时可接入共享缓存。
+struct BruteForceMultimask::Worker {
+    Scratch &scratch;
+    // 引用的缓存由 Scratch 持有，Worker 不接管其生命周期。
+    FlatHashTable<U128, int, U128Hash> &cache;
+    // 非空表示当前参与根并行，count 足够大的子问题走共享缓存。
+    ParallelCache *sharedCache;
+
+    Worker(Scratch &scratch, ParallelCache *sharedCache);
+    ~Worker();
+};
+
+struct BruteForceMultimask::CacheShard {
+    std::mutex mutex;
+};
+
+// 根并行线程共享的缓存；按键分片加锁，避免所有子问题争用同一把锁。
+struct BruteForceMultimask::ParallelCache {
+    CacheShard shards[256];
+    FlatHashTable<U128, int, U128Hash> (&storage)[256];
+
+    ParallelCache(FlatHashTable<U128, int, U128Hash> (&storage)[256]) : storage(storage) {}
+    void reset();
+    int find(const U128 &key);
+    void store(const U128 &key, int value);
+};
+
 // 同 death 的候选达到此数量才值得做 Java-lite 重排；沿用 1.5。
 constexpr int javaLiteConfigThreshold = 10000;
 // 方案数低于此值不启动根并行，避免线程开销；沿用 1.5。
@@ -18,30 +107,8 @@ constexpr int parallelConfigThreshold = 4096;
 // 子问题方案数达到此值才用共享缓存，避免小子问题付锁开销；沿用 1.5。
 constexpr int sharedConfigThreshold = 32;
 
-static U128 hashConfigs(const vector<std::uint64_t> &hashes, const BruteForceType::ConfigId *configs, int start, int count) {
-    U128 hash{(std::uint64_t)count, (std::uint64_t)count};
-    for (int i = start; i < start + count; ++i) {
-        const std::uint64_t value = hashes.data[configs[i]];
-        hash.lo += value;
-        hash.hi ^= value;
-    }
-    hash.lo = splitmix64(hash.lo);
-    return hash;
-}
-
-static void saveFail(const U128 &key, int upper, int count, FlatHashTable<U128, int, U128Hash> &table) {
-    if (upper <= 0 || upper >= count)
-        return;
-    int *old = table.find(key);
-    if (old == nullptr) {
-        table[key] = -upper;
-        return;
-    }
-    if (*old < 0)
-        *old = (std::max)(*old, -upper);
-}
-
-template <typename Mask> static vector<Mask> &maskStorage(BruteForceMultimask::Workspace &workspace) {
+template <typename Mask> vector<Mask> &BruteForceMultimask::maskStorage() {
+    Workspace &workspace = getWorkspace();
     if constexpr (Mask::kWordCount == 1) return workspace.mineMasks1;
     else if constexpr (Mask::kWordCount == 2) return workspace.mineMasks2;
     else if constexpr (Mask::kWordCount == 4) return workspace.mineMasks4;
@@ -85,15 +152,38 @@ template <typename Mask> struct MaskSession {
 };
 
 template <typename Mask> struct MaskSolver {
-    static void buildLayout(const BruteForceType::Session &common, MaskLayout<Mask> &layout);
-    static int groupByReveal(const MaskSession<Mask> &session, const BruteForceType::ConfigId *configs, int start, int count, int candidate, vector<BruteForceType::ConfigId> *groups);
-    static int javaLiteScore(const MaskSession<Mask> &session, const BruteForceType::ConfigId *configs, int start, int count, int candidate, BruteForceMultimask::Worker &workspace);
-    static vector<int> &orderCandidates(const MaskSession<Mask> &session, const BruteForceType::ConfigId *configs, int start, int count, int depth, BruteForceMultimask::Worker &workspace);
-    static void writeFirstSafeMove(const MaskSession<Mask> &session, BruteForceType::ConfigId config, BruteForceType::Result &result);
+    U128 hashConfigs(const vector<std::uint64_t> &hashes, const BruteForceType::ConfigId *configs, int start, int count) {
+        U128 hash{(std::uint64_t)count, (std::uint64_t)count};
+        for (int i = start; i < start + count; ++i) {
+            const std::uint64_t value = hashes.data[configs[i]];
+            hash.lo += value;
+            hash.hi ^= value;
+        }
+        hash.lo = splitmix64(hash.lo);
+        return hash;
+    }
+
+    void saveFail(const U128 &key, int upper, int count, FlatHashTable<U128, int, U128Hash> &table) {
+        if (upper <= 0 || upper >= count)
+            return;
+        int *old = table.find(key);
+        if (old == nullptr) {
+            table[key] = -upper;
+            return;
+        }
+        if (*old < 0)
+            *old = (std::max)(*old, -upper);
+    }
+
+    void buildLayout(const BruteForceType::Session &common, MaskLayout<Mask> &layout);
+    int groupByReveal(const MaskSession<Mask> &session, const BruteForceType::ConfigId *configs, int start, int count, int candidate, vector<BruteForceType::ConfigId> *groups);
+    int javaLiteScore(const MaskSession<Mask> &session, const BruteForceType::ConfigId *configs, int start, int count, int candidate, BruteForceMultimask::Worker &workspace);
+    vector<int> &orderCandidates(const MaskSession<Mask> &session, const BruteForceType::ConfigId *configs, int start, int count, int depth, BruteForceMultimask::Worker &workspace);
+    void writeFirstSafeMove(const MaskSession<Mask> &session, BruteForceType::ConfigId config, BruteForceType::Result &result);
     template <bool Small>
-    static void groupSafeConfigs(const MaskSession<Mask> &session, const BruteForceType::ConfigId *configs, int start, int count, const Mask &safeMask, BruteForceMultimask::Layer &layer, BruteForceMultimask::Worker &workspace);
+    void groupSafeConfigs(const MaskSession<Mask> &session, const BruteForceType::ConfigId *configs, int start, int count, const Mask &safeMask, BruteForceMultimask::Layer &layer, BruteForceMultimask::Worker &workspace);
     template <bool CheckAllMoves, bool IsRoot>
-    static int solve(MaskSession<Mask> &session, const BruteForceType::ConfigId *configs, int start, int count, int need, int depth, BruteForceMultimask::Worker &workspace, BruteForceType::Result &result);
+    int solve(MaskSession<Mask> &session, const BruteForceType::ConfigId *configs, int start, int count, int need, int depth, BruteForceMultimask::Worker &workspace, BruteForceType::Result &result);
 };
 
 template <typename Mask> void MaskSolver<Mask>::buildLayout(const BruteForceType::Session &common, MaskLayout<Mask> &layout) {
@@ -539,31 +629,30 @@ template <typename Mask> template <bool CheckAllMoves, bool IsRoot> int MaskSolv
     }
 }
 
-template <typename Mask> static void solveWidthParallel(const BruteForceType::Session &common, const BruteForceType::Config &config, BruteForceType::Result &result, BruteForceMultimask::Workspace &workspace);
-
-template <typename Mask> static void solveWidth(const BruteForceType::Session &common, const BruteForceType::Config &config, BruteForceType::Result &result, BruteForceMultimask::Workspace &workspace, bool allowParallel) {
+template <typename Mask> void BruteForceMultimask::solveWidth(const BruteForceType::Session &common, const BruteForceType::Config &config, BruteForceType::Result &result, bool allowParallel) {
+    Workspace &workspace = getWorkspace();
     if (allowParallel && config.parallel && config.threadCount > 1 && common.possibilityCount >= parallelConfigThreshold) {
-        solveWidthParallel<Mask>(common, config, result, workspace);
+        solveWidthParallel<Mask>(common, config, result);
         return;
     }
-    vector<Mask> &mineMaskByConfig = maskStorage<Mask>(workspace);
+    vector<Mask> &mineMaskByConfig = maskStorage<Mask>();
     Grid<std::uint64_t> &mineByteWordsByConfig = workspace.mineByteWords;
     Grid<std::uint8_t> &revealByConfig = workspace.reveals;
     MaskLayout<Mask> layout(mineMaskByConfig, mineByteWordsByConfig, revealByConfig);
-    MaskSolver<Mask>::buildLayout(common, layout);
+    MaskSolver<Mask>().buildLayout(common, layout);
     workspace.configIds.resize(common.possibilityCount);
     for (int configIndex = 0; configIndex < common.possibilityCount; ++configIndex)
         workspace.configIds.data[configIndex] = configIndex;
-    MaskSession<Mask> session(common, layout, Mask::all(common.candidateCount));
+    MaskSession<Mask> session(common, layout, Mask(common.candidateCount));
     if (workspace.workers.empty()) workspace.workers.emplace_back();
     BruteForceMultimask::Worker worker(workspace.workers[0], nullptr);
     if (config.checkAllMoves) {
         result.moves.resize(common.candidateCount);
-        MaskSolver<Mask>::template solve<true, true>(session, workspace.configIds.data, 0, common.possibilityCount, 1, 0, worker, result);
+        MaskSolver<Mask>().template solve<true, true>(session, workspace.configIds.data, 0, common.possibilityCount, 1, 0, worker, result);
     } else {
         result.moves.resize(1);
         result.moves.data[0] = BruteForceType::Result::Move(-1, 0);
-        const int wins = MaskSolver<Mask>::template solve<false, true>(session, workspace.configIds.data, 0, common.possibilityCount, 1, 0, worker, result);
+        const int wins = MaskSolver<Mask>().template solve<false, true>(session, workspace.configIds.data, 0, common.possibilityCount, 1, 0, worker, result);
         if (wins < 1)
             result.moves.data[0] = BruteForceType::Result::Move(-1, 0);
         else {
@@ -575,16 +664,17 @@ template <typename Mask> static void solveWidth(const BruteForceType::Session &c
     result.nodes = session.nodes;
 }
 
-template <typename Mask> static void solveWidthParallel(const BruteForceType::Session &common, const BruteForceType::Config &config, BruteForceType::Result &result, BruteForceMultimask::Workspace &workspace) {
-    vector<Mask> &mineMaskByConfig = maskStorage<Mask>(workspace);
+template <typename Mask> void BruteForceMultimask::solveWidthParallel(const BruteForceType::Session &common, const BruteForceType::Config &config, BruteForceType::Result &result) {
+    Workspace &workspace = getWorkspace();
+    vector<Mask> &mineMaskByConfig = maskStorage<Mask>();
     Grid<std::uint64_t> &mineByteWordsByConfig = workspace.mineByteWords;
     Grid<std::uint8_t> &revealByConfig = workspace.reveals;
     MaskLayout<Mask> layout(mineMaskByConfig, mineByteWordsByConfig, revealByConfig);
-    MaskSolver<Mask>::buildLayout(common, layout);
+    MaskSolver<Mask>().buildLayout(common, layout);
     workspace.configIds.resize(common.possibilityCount);
     for (int configIndex = 0; configIndex < common.possibilityCount; ++configIndex)
         workspace.configIds.data[configIndex] = configIndex;
-    MaskSession<Mask> rootSession(common, layout, Mask::all(common.candidateCount));
+    MaskSession<Mask> rootSession(common, layout, Mask(common.candidateCount));
     vector<int> &order = workspace.order;
     vector<int> &deaths = workspace.deaths;
     vector<int> &uppers = workspace.uppers;
@@ -594,20 +684,20 @@ template <typename Mask> static void solveWidthParallel(const BruteForceType::Se
     if (workspace.workers.empty()) workspace.workers.emplace_back();
     {
         BruteForceMultimask::Worker root(workspace.workers[0], nullptr);
-        vector<int> &rootOrder = MaskSolver<Mask>::orderCandidates(rootSession, workspace.configIds.data, 0, common.possibilityCount, 0, root);
+        vector<int> &rootOrder = MaskSolver<Mask>().orderCandidates(rootSession, workspace.configIds.data, 0, common.possibilityCount, 0, root);
         parallel.order = rootOrder;
         parallel.deaths = root.scratch.layer(0).deaths;
     }
     const int candidateCount = (int)parallel.order.size;
     if (candidateCount == 0) {
-        solveWidth<Mask>(common, config, result, workspace, false);
+        solveWidth<Mask>(common, config, result, false);
         return;
     }
     int threadCount = (std::min)(config.threadCount, candidateCount);
     if (threadCount < 1)
         threadCount = 1;
     if (threadCount == 1) {
-        solveWidth<Mask>(common, config, result, workspace, false);
+        solveWidth<Mask>(common, config, result, false);
         return;
     }
     parallel.uppers.resize(candidateCount);
@@ -622,7 +712,7 @@ template <typename Mask> static void solveWidthParallel(const BruteForceType::Se
     std::atomic<long long> best{0};
     auto work = [&](int workerIndex) {
         BruteForceMultimask::Worker worker(workspace.workers[workerIndex], &parallel.cache);
-        MaskSession<Mask> session(common, layout, Mask::all(common.candidateCount));
+        MaskSession<Mask> session(common, layout, Mask(common.candidateCount));
         BruteForceMultimask::Layer &layer = worker.scratch.layer(0);
         for (;;) {
             const int index = next.fetch_add(1, std::memory_order_relaxed);
@@ -639,7 +729,7 @@ template <typename Mask> static void solveWidthParallel(const BruteForceType::Se
             }
             for (int reveal = 0; reveal < 9; ++reveal)
                 layer.groups[reveal].resize(0);
-            const int groupCount = MaskSolver<Mask>::groupByReveal(session, workspace.configIds.data, 0, common.possibilityCount, candidate, layer.groups);
+            const int groupCount = MaskSolver<Mask>().groupByReveal(session, workspace.configIds.data, 0, common.possibilityCount, candidate, layer.groups);
             if (!config.checkAllMoves && groupCount <= 1)
                 continue;
             vector<BruteForceMultimask::RevealGroup> &groupList = layer.groupList;
@@ -670,7 +760,7 @@ template <typename Mask> static void solveWidthParallel(const BruteForceType::Se
                     reached = false;
                     break;
                 }
-                const int value = MaskSolver<Mask>::template solve<false, false>(session, layer.groups[group.reveal].data, 0, size, (std::max)(1, required - wins - remaining), 1, worker, result);
+                const int value = MaskSolver<Mask>().template solve<false, false>(session, layer.groups[group.reveal].data, 0, size, (std::max)(1, required - wins - remaining), 1, worker, result);
                 if (value <= 0) {
                     upper = wins - value + remaining;
                     reached = false;
@@ -712,7 +802,7 @@ template <typename Mask> static void solveWidthParallel(const BruteForceType::Se
         for (int i = 0; i < (int)parallel.uppers.size; ++i)
             upper = (std::max)(upper, parallel.uppers.data[i]);
         if (wins == 0 && upper == 0) {
-            MaskSolver<Mask>::writeFirstSafeMove(rootSession, workspace.configIds.data[0], result);
+            MaskSolver<Mask>().writeFirstSafeMove(rootSession, workspace.configIds.data[0], result);
             result.moves.data[0].wins = 1;
         } else
             result.moves.data[0] = BruteForceType::Result::Move(-1, 0);
@@ -771,15 +861,15 @@ void BruteForceMultimask::Scratch::reset() {
     smallGroupConfigKeys.resize(0);
 }
 
-void BruteForceMultimask::solve(const BruteForceType::Session &session, const BruteForceType::Config &config, BruteForceType::Result &result, Workspace &workspace) {
+void BruteForceMultimask::solve(const BruteForceType::Session &session, const BruteForceType::Config &config, BruteForceType::Result &result) {
     if (session.candidateCount <= bitMask<1>::kBitCount)
-        solveWidth<bitMask<1>>(session, config, result, workspace, true);
+        solveWidth<bitMask<1>>(session, config, result, true);
     else if (session.candidateCount <= bitMask<2>::kBitCount)
-        solveWidth<bitMask<2>>(session, config, result, workspace, true);
+        solveWidth<bitMask<2>>(session, config, result, true);
     else if (session.candidateCount <= bitMask<4>::kBitCount)
-        solveWidth<bitMask<4>>(session, config, result, workspace, true);
+        solveWidth<bitMask<4>>(session, config, result, true);
     else
-        solveWidth<bitMask<8>>(session, config, result, workspace, true);
+        solveWidth<bitMask<8>>(session, config, result, true);
 }
 
 } // 命名空间 mss

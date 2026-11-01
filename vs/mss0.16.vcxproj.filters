@@ -246,9 +246,9 @@
     <ClInclude Include="..\code\core\datastructure\vector.h">
       <Filter>core\datastructure</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\core\workspace.h">
-      <Filter>core</Filter>
-    </ClInclude>
+    <ClCompile Include="..\code\core\algorithm\combination.cpp">
+      <Filter>core\algorithm</Filter>
+    </ClCompile>
     <ClCompile Include="..\code\game\game_control.cpp">
       <Filter>game</Filter>
     </ClCompile>

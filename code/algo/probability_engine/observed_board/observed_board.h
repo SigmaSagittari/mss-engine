@@ -62,7 +62,11 @@ struct ObservedBoard {
 
     // delta 必须来自 pool；pool 在应用期间不得 clear 或退尾。
     // 正向按记录顺序应用；reverse 按逆序撤回，且 result 必须处于正向应用后的状态。
-    static void applyDelta(Result &result, const Delta &delta, const Pool &pool, bool reverse = false);
+    void applyDelta(Result &result, const Delta &delta, const Pool &pool, bool reverse = false);
+
+    bool isNumber(CellState state) const { return (int)state <= (int)CellState::Num8; }
+    // state 必须为 Num0..Num8。
+    int numberValue(CellState state) const { return (int)state; }
 };
 
 } // 命名空间 mss

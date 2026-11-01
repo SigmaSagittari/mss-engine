@@ -10,16 +10,42 @@
 
 namespace mss {
 
+// 构建过程复用的临时数组；每次构建覆写有效范围，Session 不借用它们。
+struct BruteForce::Build {
+    vector<ObservedBoard::CellId> candidateCells;
+    vector<int> candidateAt; // 棋盘 CellId → 候选下标，-1 表示不在本次候选里。
+    vector<BruteForceType::CandidateId> tCells; // 待分配雷数的非前沿格。
+    vector<BruteForceType::CandidateId> placed; // 当前正在拼接的完整雷盘中的雷位。
+    // 各前沿块的布局起点、数量，以及展开后的格子赋值。
+    vector<int> assignmentOffsets;
+    vector<int> assignmentCounts;
+    vector<char> assignments;
+};
+
+// Session 由 solve 局部持有并显式传给后端；数组借用本线程工作区，仅在本次 solve 内有效。
+struct BruteForce::Workspace {
+    Build buildStorage;
+    vector<BruteForceType::Session::Candidate> candidates;
+    vector<BruteForceType::CandidateId> links;
+    Grid<BruteForceType::CandidateId> mineCandidateIds;
+    vector<std::uint64_t> configHashes;
+};
+
+__declspec(noinline) BruteForce::Workspace &BruteForce::getWorkspace() {
+    static thread_local Workspace workspace;
+    return workspace;
+}
+
 using BruteForceSessionBuild = BruteForce::Build;
 
-static void writeConfig(BruteForceType::Session &session, BruteForceSessionBuild &build, bool writeConfigs) {
+void BruteForce::writeConfig(BruteForceType::Session &session, BruteForceSessionBuild &build, bool writeConfigs) {
     if (writeConfigs)
         for (int i = 0; i < session.minesPerConfig; ++i)
             session.mineCandidateIds[session.possibilityCount][i] = build.placed.data[i];
     ++session.possibilityCount;
 }
 
-static void enumerateTCells(BruteForceType::Session &session, BruteForceSessionBuild &build, int start, int remaining, bool writeConfigs) {
+void BruteForce::enumerateTCells(BruteForceType::Session &session, BruteForceSessionBuild &build, int start, int remaining, bool writeConfigs) {
     if (remaining == 0) {
         writeConfig(session, build, writeConfigs);
         return;
@@ -31,9 +57,8 @@ static void enumerateTCells(BruteForceType::Session &session, BruteForceSessionB
     }
 }
 
-static void enumerateComponents(BruteForceType::Session &session, BruteForceSessionBuild &build, const Structure::Pool &shapes, span<const Structure::InstanceId> components, int component, int usedMines, bool writeConfigs);
 
-static void enumerateBoxCells(BruteForceType::Session &session, BruteForceSessionBuild &build, const Structure::Pool &shapes, span<const Structure::InstanceId> components, int component, int assignmentStart, int box, int cellStart, int remaining, int componentMines, int usedMines, bool writeConfigs) {
+void BruteForce::enumerateBoxCells(BruteForceType::Session &session, BruteForceSessionBuild &build, const Structure::Pool &shapes, span<const Structure::InstanceId> components, int component, int assignmentStart, int box, int cellStart, int remaining, int componentMines, int usedMines, bool writeConfigs) {
     const Structure::Instance &instance = shapes.instances.list.data[components[component]];
     const int *boxOf = shapes.instances.boxOf.data.data + instance.boxOf.offset;
     const Structure::CellId *cells = shapes.instances.cells.data.data + instance.cells.offset;
@@ -55,7 +80,7 @@ static void enumerateBoxCells(BruteForceType::Session &session, BruteForceSessio
     }
 }
 
-static void enumerateComponents(BruteForceType::Session &session, BruteForceSessionBuild &build, const Structure::Pool &shapes, span<const Structure::InstanceId> components, int component, int usedMines, bool writeConfigs) {
+void BruteForce::enumerateComponents(BruteForceType::Session &session, BruteForceSessionBuild &build, const Structure::Pool &shapes, span<const Structure::InstanceId> components, int component, int usedMines, bool writeConfigs) {
     if (component == components.size) {
         const int remaining = session.minesPerConfig - usedMines;
         if (remaining >= 0 && remaining <= (int)build.tCells.size)
@@ -80,20 +105,21 @@ static void enumerateComponents(BruteForceType::Session &session, BruteForceSess
     }
 }
 
-static void populateSession(BruteForceType::Session &session, BruteForceSessionBuild &build, ShapeSolver::Workspace &shapeSolver, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Pool &shapes, span<const Structure::InstanceId> components, int mines) {
+void BruteForce::populateSession(BruteForceType::Session &session, Build &build, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Pool &shapes, span<const Structure::InstanceId> components, int mines) {
     // links 只列候选邻格；F 邻格提前写入 fixedMines，搜索表中的揭示值仍是 0~8。
     for (int candidate = 0; candidate < session.candidateCount; ++candidate) {
-        BruteForceType::Session::Candidate &current = session.candidates.data[candidate];
-        current.linksOffset = (std::uint32_t)session.links.size;
-        const std::pair<int, int> position = board.pos(current.cell);
+        const ObservedBoard::CellId cell = build.candidateCells.data[candidate];
+        const std::uint32_t linksOffset = (std::uint32_t)session.links.size;
+        std::uint8_t fixedMines = 0;
+        const std::pair<int, int> position = board.pos(cell);
         forEachAdjacent(position.first, position.second, board.cells.rows(), board.cells.cols(), [&](int row, int col) {
             if (basic.marks[row][col] == Basic::Mark::F)
-                ++current.fixedMines;
+                ++fixedMines;
             const int linked = build.candidateAt.data[board.id(row, col)];
             if (linked >= 0)
                 session.links.push_back((BruteForceType::CandidateId)linked);
         });
-        current.linksCount = (std::uint8_t)(session.links.size - current.linksOffset);
+        session.candidates.push_back({cell, linksOffset, (std::uint8_t)(session.links.size - linksOffset), fixedMines});
     }
 
     build.assignmentOffsets.resize((int)components.size + 1);
@@ -104,7 +130,7 @@ static void populateSession(BruteForceType::Session &session, BruteForceSessionB
         build.assignmentOffsets.data[component] = (int)build.assignments.size;
         const Structure::Instance &instance = shapes.instances.list.data[components[component]];
         const Structure::Shape &shape = shapes.shapes.list.data[instance.shape];
-        ShapeSolverDfs::forEachAssignment(shape, shapes, shapeSolver.dfs, [&build, component](const vector<char> &assignment, long double) {
+        ShapeSolverDfs().forEachAssignment(shape, shapes, [&build, component](const vector<char> &assignment, long double) {
             for (int box = 0; box < (int)assignment.size; ++box)
                 build.assignments.push_back(assignment.data[box]);
             ++build.assignmentCounts.data[component];
@@ -112,7 +138,6 @@ static void populateSession(BruteForceType::Session &session, BruteForceSessionB
     }
     build.assignmentOffsets.data[components.size] = (int)build.assignments.size;
 
-    session.minesPerConfig = mines;
     session.possibilityCount = 0;
     build.placed.resize(0);
     // 先数方案，再分配二维表；两遍枚举顺序一致。
@@ -125,11 +150,12 @@ static void populateSession(BruteForceType::Session &session, BruteForceSessionB
         session.configHashes.data[config] = splitmix64(config);
 }
 
-static void buildSession(BruteForceType::Session &session, BruteForceSessionBuild &build, ShapeSolver::Workspace &shapeSolver, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes) {
+void BruteForce::buildSession(BruteForceType::Session &session, Build &build, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes) {
     session.candidateCount = 0;
     session.possibilityCount = 0;
     session.candidates.resize(0);
     session.links.resize(0);
+    build.candidateCells.resize(0);
     const int rows = board.cells.rows();
     const int cols = board.cells.cols();
     build.candidateAt.resize(rows * cols);
@@ -144,18 +170,19 @@ static void buildSession(BruteForceType::Session &session, BruteForceSessionBuil
                 continue;
             const ObservedBoard::CellId cell = board.id(row, col);
             build.candidateAt.data[cell] = session.candidateCount++;
-            session.candidates.push_back({cell, 0, 0, 0});
+            build.candidateCells.push_back(cell);
             if (mark == Basic::Mark::T)
                 build.tCells.push_back((BruteForceType::CandidateId)build.candidateAt.data[cell]);
         }
-    populateSession(session, build, shapeSolver, board, basic, shapes, span<const Structure::InstanceId>(structure.components.data, (int)structure.components.size), board.totalMines - basic.mineSum);
+    populateSession(session, build, board, basic, shapes, span<const Structure::InstanceId>(structure.components.data, (int)structure.components.size), board.totalMines - basic.mineSum);
 }
 
-static void buildComponentSession(BruteForceType::Session &session, BruteForceSessionBuild &build, ShapeSolver::Workspace &shapeSolver, const ObservedBoard::Result &board, const Basic::Result &basic, span<const Structure::InstanceId> components, span<const ObservedBoard::CellId> offFrontierCells, const Structure::Pool &shapes, int mines) {
+void BruteForce::buildComponentSession(BruteForceType::Session &session, Build &build, const ObservedBoard::Result &board, const Basic::Result &basic, span<const Structure::InstanceId> components, span<const ObservedBoard::CellId> offFrontierCells, const Structure::Pool &shapes, int mines) {
     session.candidateCount = 0;
     session.possibilityCount = 0;
     session.candidates.resize(0);
     session.links.resize(0);
+    build.candidateCells.resize(0);
     const int rows = board.cells.rows();
     const int cols = board.cells.cols();
     build.candidateAt.resize(rows * cols);
@@ -166,23 +193,23 @@ static void buildComponentSession(BruteForceType::Session &session, BruteForceSe
         const Structure::CellId *cells = shapes.instances.cells.data.data + instance.cells.offset;
         for (int i = 0; i < (int)instance.cells.count; ++i) {
             build.candidateAt.data[cells[i]] = session.candidateCount++;
-            session.candidates.push_back({cells[i], 0, 0, 0});
+            build.candidateCells.push_back(cells[i]);
         }
     }
     for (int i = 0; i < offFrontierCells.size; ++i) {
         const ObservedBoard::CellId cell = offFrontierCells.data[i];
         build.candidateAt.data[cell] = session.candidateCount++;
         build.tCells.push_back((BruteForceType::CandidateId)build.candidateAt.data[cell]);
-        session.candidates.push_back({cell, 0, 0, 0});
+        build.candidateCells.push_back(cell);
     }
-    populateSession(session, build, shapeSolver, board, basic, shapes, components, mines);
+    populateSession(session, build, board, basic, shapes, components, mines);
 }
 
-static void runBackend(const BruteForceType::Session &session, const BruteForceType::Config &config, BruteForceType::Result &result, BruteForce::Workspace &workspace) {
+void BruteForce::runBackend(const BruteForceType::Session &session, const BruteForceType::Config &config, BruteForceType::Result &result) {
     if (session.possibilityCount <= 1 || session.candidateCount > bitMask<8>::kBitCount)
-        BruteForceNormal::solve(session, config, result, workspace.normal);
+        BruteForceNormal().solve(session, config, result);
     else
-        BruteForceMultimask::solve(session, config, result, workspace.multimask);
+        BruteForceMultimask().solve(session, config, result);
 }
 
 void BruteForce::writeResult(const BruteForceType::Result &raw, int count, Result &result) {
@@ -196,29 +223,31 @@ void BruteForce::writeResult(const BruteForceType::Result &raw, int count, Resul
     result.recommend();
 }
 
-void BruteForce::solve(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes, const Config &config, Result &result, Workspace &workspace) {
+void BruteForce::solve(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes, const Config &config, Result &result) {
+    Workspace &workspace = getWorkspace();
     BruteForceSessionBuild &build = workspace.buildStorage;
     vector<BruteForceType::Session::Candidate> &candidates = workspace.candidates;
     vector<BruteForceType::CandidateId> &links = workspace.links;
     Grid<BruteForceType::CandidateId> &mineCandidateIds = workspace.mineCandidateIds;
     vector<std::uint64_t> &configHashes = workspace.configHashes;
-    BruteForceType::Session session(candidates, links, mineCandidateIds, configHashes);
-    buildSession(session, build, workspace.shapeSolver, board, basic, structure, shapes);
+    BruteForceType::Session session(candidates, links, mineCandidateIds, configHashes, board.totalMines - basic.mineSum);
+    buildSession(session, build, board, basic, structure, shapes);
     BruteForceType::Result raw;
-    runBackend(session, config, raw, workspace);
+    runBackend(session, config, raw);
     writeResult(raw, session.possibilityCount, result);
 }
 
-void BruteForce::solveComponent(const ObservedBoard::Result &board, const Basic::Result &basic, span<const Structure::InstanceId> components, span<const ObservedBoard::CellId> offFrontierCells, const Structure::Pool &shapes, int mines, const Config &config, Result &result, Workspace &workspace) {
+void BruteForce::solveComponent(const ObservedBoard::Result &board, const Basic::Result &basic, span<const Structure::InstanceId> components, span<const ObservedBoard::CellId> offFrontierCells, const Structure::Pool &shapes, int mines, const Config &config, Result &result) {
+    Workspace &workspace = getWorkspace();
     BruteForceSessionBuild &build = workspace.buildStorage;
     vector<BruteForceType::Session::Candidate> &candidates = workspace.candidates;
     vector<BruteForceType::CandidateId> &links = workspace.links;
     Grid<BruteForceType::CandidateId> &mineCandidateIds = workspace.mineCandidateIds;
     vector<std::uint64_t> &configHashes = workspace.configHashes;
-    BruteForceType::Session session(candidates, links, mineCandidateIds, configHashes);
-    buildComponentSession(session, build, workspace.shapeSolver, board, basic, components, offFrontierCells, shapes, mines);
+    BruteForceType::Session session(candidates, links, mineCandidateIds, configHashes, mines);
+    buildComponentSession(session, build, board, basic, components, offFrontierCells, shapes, mines);
     BruteForceType::Result raw;
-    runBackend(session, config, raw, workspace);
+    runBackend(session, config, raw);
     writeResult(raw, session.possibilityCount, result);
 }
 

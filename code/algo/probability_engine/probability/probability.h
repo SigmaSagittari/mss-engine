@@ -16,6 +16,8 @@ namespace mss {
 
 struct Probability {
     struct Pool;
+    // 危险：默认创建的 Result 各字段均未初始化，用于预留尚未计算的概率结果。
+    // 读取或复制前，须先赋入 Probability::analyze 的返回值，或另一个已初始化的 Result。
     struct Result {
         struct Component {
             // 本组件在 boxProbabilities 里的起点和 Box 数。
@@ -34,21 +36,25 @@ struct Probability {
         // 任意一个 T 格的条件雷概率。
         long double tCellProbability;
 
-        // 危险：PositionState、Reveal 和 Workspace 延迟分析并复用结果槽，避免提前计算概率。
-        // 首次由 analyze 完整赋值前，所有字段都不得读取或复制。
-        // 按 Box 顺序回调每个前沿格的 CellId 和钳制后的雷概率；不遍历 T 格。
-        // probabilities 为结果所属池，structure 和 probabilities.shapes 必须与生成此结果时一致。
+        // 对每个前沿格调用 callback(CellId, 雷概率)，按组件、Box 顺序遍历；跳过非前沿格。
+        // probabilities 必须是保存本 Result 数据的概率池，structure 必须是计算本 Result 时使用的结构结果。
+        // 要求 candidates > 0；雷概率 >= 1 - 1e-10 时按 1 返回。
         template <typename Callback> void frontierCells(const Pool &probabilities, const Structure::Result &structure, Callback &&callback) const;
+        // probabilities 必须是保存本 Result 数据的概率池，structure 必须是计算本 Result 时使用的结构结果。
+        // 要求 candidates > 0、count >= 0；覆写 output，按升序保存最多 count 个前沿格雷概率并复用容量。
+        // 同一 Box 的概率按格数重复；雷概率 >= 1 - 1e-10 时按 1 返回。
+        void lowestProbabilities(const Pool &probabilities, const Structure::Result &structure, int count, vector<long double> &output) const;
     };
 
-    // 持有概率结果数组，引用共享的结构池和分布缓存；依赖池必须覆盖本池的使用期。
+    // 持有概率结果数组，引用共享的结构池、分布缓存和组合数缓存；依赖池必须覆盖本池的使用期。
     struct Pool {
         const Structure::Pool &shapes;
         ShapeSolver::DistributionPool &distributions;
+        Combination::Pool &combinations;
         vectorPool<Result::Component> components;
         vectorPool<long double> boxProbabilities;
 
-        Pool(const Structure::Pool &shapes, ShapeSolver::DistributionPool &distributions) : shapes(shapes), distributions(distributions) {}
+        Pool(const Structure::Pool &shapes, ShapeSolver::DistributionPool &distributions, Combination::Pool &combinations) : shapes(shapes), distributions(distributions), combinations(combinations) {}
         // 只清空本层概率结果，保留引用的共享池。
         void clear();
     };
@@ -61,60 +67,36 @@ struct Probability {
         int offFrontierCount;
     };
 
-    // 临时空间：树形组合下层的 shapeSolver 和 combination；可跨调用复用，不可并发共享。
-    struct Workspace {
-        ShapeSolver::Workspace shapeSolver;
-        Combination::Workspace combination;
-        // 本次 analyze 的组件分布 ID。
-        vector<ShapeSolver::DistributionId> distributionIds;
-
-        // 多项式乘积树的临时存储：系数池、节点和 outside 缓冲。
-        PolyProductTree::Workspace frontierProducts;
-        // 各组件按雷数分布的多项式，系数借用 distributions.values。
-        vector<Poly> frontiers;
-        // 乘积树先回调、后返回全盘分母；暂存各档分子以便统一归一化。
-        struct LogicValue {
-            int component;
-            int mines;
-            long double localWays;
-            long double totalWays;
-        };
-        vector<LogicValue> logicValues;
-
-        struct Sample {
-            // 组件后缀多项式的系数池；suffix[i] 是第 i 个后缀，suffixStart 是它的起点。
-            vectorPool<long double> values;
-            vector<vectorPool<long double>::vector> suffix;
-            vector<int> suffixStart;
-            vector<ObservedBoard::CellId> freeCells;
-        } sample;
-    };
-
     // board/basic/structure 必须来自同一刷新；results 追加本次结果，返回值借用该池。
-    // results 引用的结构池与分布缓存须匹配；workspace 可跨调用复用，results 扩容不影响已有切片。
+    // results 引用的结构池与分布缓存须匹配，扩容不影响已有切片。
     // 无合法全盘布局时 candidates 为零，返回池尾空切片，此时不得查询格子概率。
-    static Result analyze(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const ShapeSolver::Config &config, Pool &results, Workspace &workspace);
+    Result analyze(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const ShapeSolver::Config &config, Pool &results);
 
     // 输入必须来自同一当前盘面且至少存在一种合法全盘布局；assignments 与 assignments.shapes 同期清空。
     // 按具体全盘雷位近似均匀抽样；函数会 resize 并清零 result，1 表示雷。
-    static void sampleMineBoard(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, ShapeSolver::AssignmentPool &assignments, U128 seed, Grid<char> &result, Workspace &workspace);
+    void sampleMineBoard(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, ShapeSolver::AssignmentPool &assignments, Combination::Pool &combinations, U128 seed, Grid<char> &result);
 
     // components 必须覆盖本次统计的所有逻辑块，且各块 T 格互不重叠；frontier 系数至少活到调用结束。
     // totalMines 是扣除已知雷后仍需分配到前沿格和 T 格的剩余雷数。
     // 对每个全局概率非零的组件雷数档 k 回调 (组件下标, 块总雷数, 局部布局数 W_i(k), 该档概率 P_i(k))。
     // 返回满足全盘剩余雷数的加权布局总数 Z；Z 为零表示不存在合法全盘布局。
-    static long double analyzeLogicComponents(span<const LogicComponentInput> components, int totalMines, Workspace &workspace, const std::function<void(int, int, long double, long double)> &callback);
+    long double analyzeLogicComponents(span<const LogicComponentInput> components, int totalMines, Combination::Pool &combinations, const std::function<void(int, int, long double, long double)> &callback);
 
     // 格子 → 组件/Box/T 的概率查询；result 的切片来自 pool，candidates 必须大于零，输入必须与生成结果时一致。
     // 逻辑推导的必安、必雷分别精确返回 0、1，调用方直接判等。
-    static long double mineProbability(const Result &result, const Pool &pool, ObservedBoard::CellId cell, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure);
+    long double mineProbability(const Result &result, const Pool &pool, ObservedBoard::CellId cell, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure);
 
   private:
+    struct Workspace;
+    friend struct PolyProductTree;
+    Workspace &getWorkspace();
+    const long double *assignmentWays(const ShapeSolver::AssignmentPool &pool, const ShapeSolver::Assignments &assignments);
     // 前沿多项式乘自由格组合数：freeCells 个自由格里恰好放 freeMines 个雷。
-    static long double countWeightedWays(const Poly &polynomial, int totalMines, int freeCells, Combination::Workspace &workspace);
+    long double countWeightedWays(const Poly &polynomial, int totalMines, int freeCells, Combination::Pool &combinations);
 
     // 归一化舍入可能让本应为 1 的概率略低于 1；沿用 1.4 的阈值截断，实战保证不会截出问题，此函数确保逻辑解必定为 0/1。
-    static long double limitProbability(long double probability);
+    long double limitProbability(long double probability);
+    long double pickFreeWays(int freeCells, int freeMines, Combination::Pool &combinations);
 };
 
 template <typename Callback>
@@ -128,7 +110,7 @@ void Probability::Result::frontierCells(const Pool &probabilities, const Structu
         const int *offsets = pool.instances.boxOf.data.data + instance.boxOf.offset;
         const Structure::CellId *cells = pool.instances.cells.data.data + instance.cells.offset;
         for (int box = 0; box < layout.boxCount; ++box) {
-            const long double probability = Probability::limitProbability(values[layout.boxOffset + box]);
+            const long double probability = Probability().limitProbability(values[layout.boxOffset + box]);
             for (int i = offsets[box]; i < offsets[box + 1]; ++i)
                 callback(cells[i], probability);
         }

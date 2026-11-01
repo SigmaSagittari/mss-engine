@@ -41,7 +41,7 @@ struct BruteForceType {
         Result() : nodes(0) {}
     };
 
-    // 一次 solve 的候选集合和完整布局表；数组引用由 BruteForce::Workspace 持有，只能在该工作区存活期间使用。
+    // 一次 solve 的候选集合和完整布局表；数组借用 BruteForce 的临时存储，仅在本次 solve 内有效。
     struct Session {
         struct Candidate {
             ObservedBoard::CellId cell;
@@ -65,7 +65,7 @@ struct BruteForceType {
         // 每个 ConfigId 的 splitmix64；所有后端共用，避免逐节点现算。
         vector<std::uint64_t> &configHashes;
 
-        Session(vector<Candidate> &candidates, vector<CandidateId> &links, Grid<CandidateId> &mineCandidateIds, vector<std::uint64_t> &configHashes) : candidateCount(0), possibilityCount(0), candidates(candidates), links(links), minesPerConfig(0), mineCandidateIds(mineCandidateIds), configHashes(configHashes) {}
+        Session(vector<Candidate> &candidates, vector<CandidateId> &links, Grid<CandidateId> &mineCandidateIds, vector<std::uint64_t> &configHashes, int minesPerConfig) : candidateCount(0), possibilityCount(0), candidates(candidates), links(links), minesPerConfig(minesPerConfig), mineCandidateIds(mineCandidateIds), configHashes(configHashes) {}
     };
 };
 

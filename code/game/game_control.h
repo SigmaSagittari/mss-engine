@@ -11,7 +11,7 @@
 
 namespace mss {
 
-// GameControl 只提供对局层共享的配置、工作区和雷盘；Position/Game 由各自头文件定义。
+// GameControl 只提供对局层共享的配置和雷盘；Position/Game 由各自头文件定义。
 namespace GameControl {
 
 struct Position;
@@ -25,14 +25,6 @@ struct SuggestPool {
 // 目前只有 ShapeSolver 参数；策略配置不进这里，随 SuggestPolicy 由调用方提供。
 struct Config {
     ShapeSolver::Config shapeSolver;
-};
-
-struct Workspace {
-    Basic::Workspace basic;
-    Structure::Workspace structure;
-    // 内含 ShapeSolver::Workspace 与 Combination::Workspace。
-    Probability::Workspace probability;
-    Observe::Workspace observe;
 };
 
 struct MineBoard {

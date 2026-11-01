@@ -11,8 +11,34 @@
 
 namespace mss {
 
+struct Observe::Workspace {
+    struct Components {
+        vector<Structure::ComponentId> captured;
+        vector<char> seen;
+        vector<int> adjacentBoxCells;
+        // 每个被捕获组件复用同一份观测结果；下一次 observe 会覆盖它。
+        ShapeSolver::Observed observed;
+    } components;
+    struct Convolution {
+        // dp[邻居雷数][已处理组件与邻居 T 格雷数]；两张表交替累积。
+        Grid<long double> dp;
+        Grid<long double> nextDp;
+    } convolution;
+    struct Rest {
+        // ways 按绝对剩余雷数索引；其余是未捕获组件的多项式卷积暂存。
+        vector<long double> ways;
+        vector<long double> coefficients;
+        vector<long double> scratch;
+    } rest;
+};
+
+__declspec(noinline) Observe::Workspace &Observe::getWorkspace() {
+    static thread_local Workspace workspace;
+    return workspace;
+}
+
 // 两个多项式卷积到调用方缓冲区；输出不与输入重叠。
-static void multiplyPoly(const Poly &left, const Poly &right, vector<long double> &output) {
+void Observe::multiplyPoly(const Poly &left, const Poly &right, vector<long double> &output) {
     output.resize(0);
     if (left.size() == 0 || right.size() == 0)
         return;
@@ -27,19 +53,20 @@ static void multiplyPoly(const Poly &left, const Poly &right, vector<long double
 }
 
 // 交换两个系数数组的存储，避免整份复制。
-static void swapValues(vector<long double> &left, vector<long double> &right) {
+void Observe::swapValues(vector<long double> &left, vector<long double> &right) {
     std::swap(left.data, right.data);
     std::swap(left.size, right.size);
     std::swap(left.capacity, right.capacity);
 }
 
-static long double choose(int n, int k, Combination::Workspace &workspace) {
+long double Observe::choose(int n, int k, Combination::Pool &combinations) {
     if (n <= 9)
-        return Combination::chooseSmall(n, k);
-    return Combination::chooseLarge(n, k, workspace);
+        return Combination().chooseSmall(n, k);
+    return Combination().chooseLarge(n, k, combinations);
 }
 
-void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Probability::Result &probability, const Probability::Pool &probabilities, const ShapeSolver::Config &config, ObservedBoard::CellId cell, Result &result, Workspace &workspace) {
+void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Probability::Result &probability, const Probability::Pool &probabilities, const ShapeSolver::Config &config, ObservedBoard::CellId cell, Result &result) {
+    Workspace &workspace = getWorkspace();
     const Structure::Pool &pool = probabilities.shapes;
     ShapeSolver::DistributionPool &distributions = probabilities.distributions;
     Workspace::Components &components = workspace.components;
@@ -50,7 +77,7 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
     const int col = position.second;
     const Basic::Mark mark = basic.marks[row][col];
     const int totalMines = board.totalMines - basic.mineSum;
-    result.probability[9] = Probability::mineProbability(probability, probabilities, cell, board, basic, structure);
+    result.probability[9] = Probability().mineProbability(probability, probabilities, cell, board, basic, structure);
     if (mark == Basic::Mark::F)
         return;
 
@@ -121,7 +148,7 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
         int addedLimit = 0;
         for (int box = 0; box < boxCount; ++box) addedLimit += components.adjacentBoxCells.data[box];
         const Structure::BoxId xBox = components.captured.data[index] == clickedComponent ? clickedBox : -1;
-        ShapeSolver::observe(shape, pool, span<const int>(components.adjacentBoxCells.data, boxCount), xBox, config, components.observed, workspace.shapeSolver);
+        ShapeSolver().observe(shape, pool, span<const int>(components.adjacentBoxCells.data, boxCount), xBox, config, components.observed);
         next->resize(neighborLimit + addedLimit + 1, stride, 0.0L);
         for (int currentNeighborMines = 0; currentNeighborMines <= neighborLimit; ++currentNeighborMines)
             for (int addedNeighborMines = 0; addedNeighborMines <= addedLimit; ++addedNeighborMines) {
@@ -149,7 +176,7 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
                 if (base == 0.0L)
                     continue;
                 for (int tMines = 0; tMines <= tNeighbors && neighborMines + tMines <= 8; ++tMines)
-                    (*next)[neighborMines + tMines][capturedMines + tMines] += base * Combination::chooseSmall(tNeighbors, tMines);
+                    (*next)[neighborMines + tMines][capturedMines + tMines] += base * Combination().chooseSmall(tNeighbors, tMines);
             }
         neighborLimit += tNeighbors;
         std::swap(current, next);
@@ -165,7 +192,7 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
             continue;
         const Structure::Instance &instance = pool.instances.list.data[structure.components.data[component]];
         const Structure::Shape &shape = pool.shapes.list.data[instance.shape];
-        const ShapeSolver::DistributionId id = ShapeSolver::analyze(shape, config, distributions, workspace.shapeSolver);
+        const ShapeSolver::DistributionId id = ShapeSolver().analyze(shape, config, distributions);
         const ShapeSolver::Distribution &distribution = distributions.list.data[id];
         const Poly left{restStart, span<const long double>(rest.coefficients.data, (int)rest.coefficients.size)};
         const Poly right{distribution.start, span<const long double>(distributions.values.data.data + distribution.ways.offset, (int)distribution.ways.count)};
@@ -186,7 +213,7 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
             const long double ways = rest.coefficients.data[i];
             const int componentMines = restStart + i;
             for (int tMines = (std::max)(0, minRestMines - componentMines); tMines <= (std::min)(tPool, totalMines - componentMines); ++tMines)
-                rest.ways.data[componentMines + tMines] += ways * choose(tPool, tMines, workspace.combination);
+                rest.ways.data[componentMines + tMines] += ways * choose(tPool, tMines, probabilities.combinations);
         }
     }
 

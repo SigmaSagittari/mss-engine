@@ -9,16 +9,26 @@
 
 namespace mss {
 
+// 临时队列；一次调用返回后可顺序复用，不可并发共享。
+struct Basic::Workspace {
+    vector<ObservedBoard::CellId> pending;
+    // 与 CellId 一一对应；数字处理完清零，调用结束时全为 0。
+    vector<unsigned char> queued;
+};
+
+__declspec(noinline) Basic::Workspace &Basic::getWorkspace() {
+    static thread_local Workspace workspace;
+    return workspace;
+}
+
 void Basic::Pool::clear() {
     changes.data.resize(0);
 }
 
-// 数字状态底层值连续为 0~8；下面两个判断只接收对应状态。
-static bool isNumber(ObservedBoard::CellState state) { return (int)state <= (int)ObservedBoard::CellState::Num8; }
-static int numberValue(ObservedBoard::CellState state) { return (int)state; }
-static bool isCandidate(Basic::Mark mark) { return mark == Basic::Mark::H || mark == Basic::Mark::T; }
+bool Basic::isCandidate(Basic::Mark mark) { return mark == Basic::Mark::H || mark == Basic::Mark::T; }
 
-void Basic::analyze(Result &result, const ObservedBoard::Result &state, Basic::Workspace &workspace) {
+void Basic::analyze(Result &result, const ObservedBoard::Result &state) {
+    Workspace &workspace = getWorkspace();
     const int rows = state.cells.rows();
     const int cols = state.cells.cols();
     result.unknownSum = 0;
@@ -33,14 +43,14 @@ void Basic::analyze(Result &result, const ObservedBoard::Result &state, Basic::W
                 result.marks[row][col] = Mark::T;
             else if (cell == ObservedBoard::CellState::ForcedMine)
                 result.marks[row][col] = Mark::F;
-            else if (cell != ObservedBoard::CellState::ForcedSafe && !isNumber(cell))
+            else if (cell != ObservedBoard::CellState::ForcedSafe && !ObservedBoard().isNumber(cell))
                 assert_(false, "Basic::analyze: unknown observed cell state");
         }
 
     // 挨着已翻开数字的隐藏候选格从 T 改为 H。
     for (int row = 0; row < rows; ++row)
         for (int col = 0; col < cols; ++col)
-            if (isNumber(state.cells[row][col]))
+            if (ObservedBoard().isNumber(state.cells[row][col]))
                 forEachAdjacent(row, col, rows, cols, [&](int neighborRow, int neighborCol) {
                     if (state.cells[neighborRow][neighborCol] == ObservedBoard::CellState::Hidden && result.marks[neighborRow][neighborCol] == Mark::T)
                         result.marks[neighborRow][neighborCol] = Mark::H;
@@ -51,7 +61,7 @@ void Basic::analyze(Result &result, const ObservedBoard::Result &state, Basic::W
     // 先把所有数字入队；推导后追加受影响的数字，重复项出队时按最新标记重算。
     for (int row = 0; row < rows; ++row)
         for (int col = 0; col < cols; ++col)
-            if (isNumber(state.cells[row][col]))
+            if (ObservedBoard().isNumber(state.cells[row][col]))
                 pending.push_back(state.id(row, col));
 
     for (int head = 0; head < (int)pending.size; ++head) {
@@ -67,7 +77,7 @@ void Basic::analyze(Result &result, const ObservedBoard::Result &state, Basic::W
                 ++candidateCount;
         });
 
-        const int remaining = numberValue(state.cells[row][col]) - mineCount;
+        const int remaining = ObservedBoard().numberValue(state.cells[row][col]) - mineCount;
         if (remaining != 0 && remaining != candidateCount)
             continue;
 
@@ -77,7 +87,7 @@ void Basic::analyze(Result &result, const ObservedBoard::Result &state, Basic::W
                 return;
             result.marks[neighborRow][neighborCol] = mark;
             forEachAdjacent(neighborRow, neighborCol, rows, cols, [&](int affectedRow, int affectedCol) {
-                if (isNumber(state.cells[affectedRow][affectedCol]))
+                if (ObservedBoard().isNumber(state.cells[affectedRow][affectedCol]))
                     pending.push_back(state.id(affectedRow, affectedCol));
             });
         });
@@ -105,7 +115,8 @@ void Basic::analyze(Result &result, const ObservedBoard::Result &state, Basic::W
         }
 }
 
-Basic::Delta Basic::update(Result &result, const ObservedBoard::Result &board, const ObservedBoard::Delta &updates, Pool &pool, Workspace &workspace) {
+Basic::Delta Basic::update(Result &result, const ObservedBoard::Result &board, const ObservedBoard::Delta &updates, Pool &pool) {
+    Workspace &workspace = getWorkspace();
     Delta delta{pool.changes.push_back()};
     const int rows = board.cells.rows();
     const int cols = board.cells.cols();
@@ -151,7 +162,7 @@ Basic::Delta Basic::update(Result &result, const ObservedBoard::Result &board, c
                 --result.hideAround[neighborRow][neighborCol];
             if (nextCandidate)
                 ++result.hideAround[neighborRow][neighborCol];
-            if (!isNumber(board.cells[neighborRow][neighborCol]))
+            if (!ObservedBoard().isNumber(board.cells[neighborRow][neighborCol]))
                 return;
             const ObservedBoard::CellId neighbor = board.id(neighborRow, neighborCol);
             if (!queued.data[neighbor]) {
@@ -173,7 +184,7 @@ Basic::Delta Basic::update(Result &result, const ObservedBoard::Result &board, c
         }
 
         setMark(row, col, Mark::S);
-        if (isNumber(change.next) && !queued.data[change.cell]) {
+        if (ObservedBoard().isNumber(change.next) && !queued.data[change.cell]) {
             queued.data[change.cell] = 1;
             pending.push_back(change.cell);
         }
@@ -188,7 +199,7 @@ Basic::Delta Basic::update(Result &result, const ObservedBoard::Result &board, c
         const int row = position.first;
         const int col = position.second;
         const int candidateCount = result.hideAround[row][col];
-        const int remaining = numberValue(board.cells[row][col]) - result.mineAround[row][col];
+        const int remaining = ObservedBoard().numberValue(board.cells[row][col]) - result.mineAround[row][col];
         if (candidateCount != 0 && (remaining == 0 || remaining == candidateCount)) {
             const Mark mark = remaining == 0 ? Mark::S : Mark::F;
             forEachAdjacent(row, col, rows, cols, [&](int neighborRow, int neighborCol) {
@@ -258,14 +269,14 @@ bool Basic::checkValid(const ObservedBoard::Result &board, const Result &result)
                 ++candidateSum;
             if (state == ObservedBoard::CellState::ForcedMine && mark != Mark::F)
                 return false;
-            if ((state == ObservedBoard::CellState::ForcedSafe || isNumber(state)) && mark != Mark::S)
+            if ((state == ObservedBoard::CellState::ForcedSafe || ObservedBoard().isNumber(state)) && mark != Mark::S)
                 return false;
 
             int mineAround = 0;
             int hideAround = 0;
             bool adjacentNumber = false;
             forEachAdjacent(row, col, rows, cols, [&](int neighborRow, int neighborCol) {
-                if (isNumber(board.cells[neighborRow][neighborCol]))
+                if (ObservedBoard().isNumber(board.cells[neighborRow][neighborCol]))
                     adjacentNumber = true;
                 if (result.marks[neighborRow][neighborCol] == Mark::F)
                     ++mineAround;
@@ -276,7 +287,7 @@ bool Basic::checkValid(const ObservedBoard::Result &board, const Result &result)
                 return false;
             if (mineAround != result.mineAround[row][col] || hideAround != result.hideAround[row][col])
                 return false;
-            if (isNumber(state) && (numberValue(state) < mineAround || numberValue(state) > mineAround + hideAround))
+            if (ObservedBoard().isNumber(state) && (ObservedBoard().numberValue(state) < mineAround || ObservedBoard().numberValue(state) > mineAround + hideAround))
                 return false;
         }
 

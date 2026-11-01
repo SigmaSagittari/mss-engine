@@ -55,26 +55,20 @@ struct ShapeSolver {
         void clear();
     };
 
-    // 树形工作区：两个后端各持自己的临时区，上层按值汇总。
-    struct Workspace {
-        ShapeSolverDfs::Workspace dfs;
-        ShapeSolverGraph::Workspace graph;
-    };
-
     // shape 必须来自 pool.shapes；命中 shape.hash 时返回池中已有 ID。
-    static DistributionId analyze(const Structure::Shape &shape, const Config &config, DistributionPool &pool, Workspace &workspace);
+    DistributionId analyze(const Structure::Shape &shape, const Config &config, DistributionPool &pool);
 
     // adjacentBoxCells 是点击格在本组件各 Box 中的相邻格数，长度必须等于 Box 数。
     // xBox 只在点击格属于本组件时非负：该 Box 的容量按点击格已知安全减 1；否则传 -1。
     // 多个组件各调一次，邻居雷数由调用方卷积；result 完整覆写。
-    static void observe(const Structure::Shape &shape, const Structure::Pool &shapes, span<const int> adjacentBoxCells, Structure::BoxId xBox, const Config &config, Observed &result, Workspace &workspace);
+    void observe(const Structure::Shape &shape, const Structure::Pool &shapes, span<const int> adjacentBoxCells, Structure::BoxId xBox, const Config &config, Observed &result);
 
     // 按 ShapeId 缓存 DFS 枚举的全部赋值；返回的引用在下一次 insert 后失效。
-    static const Assignments &assignments(Structure::ShapeId shapeId, const Structure::Shape &shape, AssignmentPool &pool, Workspace &workspace);
+    const Assignments &assignments(Structure::ShapeId shapeId, const Structure::Shape &shape, AssignmentPool &pool);
 
     // componentMines 必须是 ways 里的非零档；unit 必须在 [0, 1) 内。
     // 返回 boxCount 个字节的赋值视图，指向 pool 内，pool 清空前有效。
-    static span<const char> sampleAssignment(const AssignmentPool &pool, const Assignments &assignments, int componentMines, long double unit);
+    span<const char> sampleAssignment(const AssignmentPool &pool, const Assignments &assignments, int componentMines, long double unit);
 };
 
 } // 命名空间 mss

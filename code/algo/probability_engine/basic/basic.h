@@ -52,24 +52,22 @@ struct Basic {
         void clear();
     };
 
-    // 临时队列；一次调用返回后可顺序复用，不可并发共享。
-    struct Workspace {
-        vector<ObservedBoard::CellId> pending;
-        // 与 CellId 一一对应；数字处理完清零，调用结束时全为 0。
-        vector<unsigned char> queued;
-    };
-
     // state 必须是有效观测盘面；把标记写入 result（复用已有容量），不修改 state。
-    static void analyze(Result &result, const ObservedBoard::Result &state, Workspace &workspace);
+    void analyze(Result &result, const ObservedBoard::Result &state);
 
     // result 对应 updates 应用前的状态，board 已应用同一批 updates；在 pool 尾部写出标记变化日志。
-    static Delta update(Result &result, const ObservedBoard::Result &board, const ObservedBoard::Delta &updates, Pool &pool, Workspace &workspace);
+    Delta update(Result &result, const ObservedBoard::Result &board, const ObservedBoard::Delta &updates, Pool &pool);
 
     // 正向按日志顺序同步标记与邻域计数；reverse 按逆序撤回，result 必须处于正向应用后的状态。
-    static void applyDelta(Result &result, const Delta &delta, const Pool &pool, bool reverse = false);
+    void applyDelta(Result &result, const Delta &delta, const Pool &pool, bool reverse = false);
 
     // board/result 尺寸必须相同；任一标记、缓存、局部约束或全局雷数不一致时返回 false，不修改输入。
-    static bool checkValid(const ObservedBoard::Result &board, const Result &result);
+    bool checkValid(const ObservedBoard::Result &board, const Result &result);
+
+  private:
+    struct Workspace;
+    Workspace &getWorkspace();
+    bool isCandidate(Basic::Mark mark);
 };
 
 } // 命名空间 mss

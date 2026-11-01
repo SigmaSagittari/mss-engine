@@ -18,7 +18,7 @@ void GameControl::Position::initialize() {
     state_.distributions.clear();
     state_.basicPool.clear();
     state_.boardPool.clear();
-    Structure::analyze(state_.structure, state_.board, state_.basic, state_.shapes, workspace_.structure);
+    Structure().analyze(state_.structure, state_.board, state_.basic, state_.shapes);
     basicSafeCells_.resize(0);
     basicSafeSeen_.resize(state_.board.cells.rows() * state_.board.cells.cols());
     std::fill(basicSafeSeen_.data, basicSafeSeen_.data + basicSafeSeen_.size, 0);
@@ -35,13 +35,13 @@ void GameControl::Position::initialize() {
 
 void GameControl::Position::reset(const ObservedBoard::Result &board) {
     state_.board = board;
-    Basic::analyze(state_.basic, state_.board, workspace_.basic);
+    Basic().analyze(state_.basic, state_.board);
     initialize();
 }
 
 void GameControl::Position::update(ObservedBoard::Delta &delta) {
-    ObservedBoard::applyDelta(state_.board, delta, state_.basicPool.board);
-    const Basic::Delta basicDelta = Basic::update(state_.basic, state_.board, delta, state_.basicPool, workspace_.basic);
+    ObservedBoard().applyDelta(state_.board, delta, state_.basicPool.board);
+    const Basic::Delta basicDelta = Basic().update(state_.basic, state_.board, delta, state_.basicPool);
     for (int i = 0; i < (int)delta.changes.count; ++i)
         state_.structureLazyUpdate.push_back(state_.basicPool.board.changes.data.data[delta.changes.offset + i].cell);
     for (int i = 0; i < (int)basicDelta.changes.count; ++i) {
@@ -60,18 +60,18 @@ void GameControl::Position::update(ObservedBoard::Delta &delta) {
 void GameControl::Position::updateStructure() {
     if (state_.structureLazyUpdate.size == 0)
         return;
-    const Structure::Delta delta = Structure::update(state_.structure, state_.board, state_.basic, state_.shapes, state_.structureLazyUpdate.data, (int)state_.structureLazyUpdate.size, workspace_.structure);
+    const Structure::Delta delta = Structure().update(state_.structure, state_.board, state_.basic, state_.shapes, state_.structureLazyUpdate.data, (int)state_.structureLazyUpdate.size);
     state_.shapes.deltas.removed.pop_back(delta.removed);
     state_.shapes.deltas.added.pop_back(delta.added);
     state_.structureLazyUpdate.resize(0);
 }
 
-GameControl::Position::Position(const ObservedBoard::Result &board, Workspace &workspace, const Config &config, Check check)
-    : state_(board), error_(), workspace_(workspace), config_(config) {
-    Basic::analyze(state_.basic, state_.board, workspace_.basic);
+GameControl::Position::Position(const ObservedBoard::Result &board, const Config &config, Check check)
+    : state_(board), error_(), config_(config) {
+    Basic().analyze(state_.basic, state_.board);
     // trusted 盘面由 Game 自己从合法根局面和抽样雷盘构造，不再重复校验。
     if (check == Check::User) {
-        if (!Basic::checkValid(state_.board, state_.basic)) {
+        if (!Basic().checkValid(state_.board, state_.basic)) {
             error_ = "基础逻辑冲突";
             return;
         }
@@ -81,7 +81,7 @@ GameControl::Position::Position(const ObservedBoard::Result &board, Workspace &w
         for (int component = 0; component < (int)state_.structure.components.size; ++component) {
             const Structure::Instance &instance = state_.shapes.instances.list.data[state_.structure.components.data[component]];
             const Structure::Shape &shape = state_.shapes.shapes.list.data[instance.shape];
-            const ShapeSolver::DistributionId id = ShapeSolver::analyze(shape, config_.shapeSolver, state_.distributions, workspace_.probability.shapeSolver);
+            const ShapeSolver::DistributionId id = ShapeSolver().analyze(shape, config_.shapeSolver, state_.distributions);
             if (state_.distributions.list.data[id].ways.count == 0) {
                 error_ = "某连通块无解";
                 return;
@@ -92,20 +92,14 @@ GameControl::Position::Position(const ObservedBoard::Result &board, Workspace &w
     }
 }
 
-GameControl::Position GameControl::Position::fromUserInput(const ObservedBoard::Result &board, Workspace &workspace, const Config &config) {
-    return Position(board, workspace, config, Check::User);
-}
+GameControl::Position::Position(const ObservedBoard::Result &board, const Config &config) : Position(board, config, Check::User) {}
 
-U128 GameControl::Position::suggestionKey(const ObservedBoard::Result &board, const MovePolicy &policy) {
+U128 GameControl::Position::suggestionKey(const ObservedBoard::Result &board, const MovePolicy &policy) const {
     U128Hasher hasher;
     hasher.mix(board.cells.rows()); hasher.mix(board.cells.cols()); hasher.mix(board.totalMines);
     for (int row = 0; row < board.cells.rows(); ++row) for (int col = 0; col < board.cells.cols(); ++col) hasher.mix((int)board.cells[row][col]);
     policy.hash(hasher);
     return hasher.finalize();
-}
-
-GameControl::Position GameControl::Position::assumeLegal(const ObservedBoard::Result &board, Workspace &workspace, const Config &config) {
-    return Position(board, workspace, config, Check::Trusted);
 }
 
 const ObservedBoard::Result &GameControl::Position::observedBoard() const { return state_.board; }
@@ -130,7 +124,7 @@ const Probability::Result &GameControl::Position::probability() {
     if (!state_.probabilityValid) {
         updateStructure();
         state_.probabilityPool.clear();
-        state_.probability = Probability::analyze(state_.board, state_.basic, state_.structure, config_.shapeSolver, state_.probabilityPool, workspace_.probability);
+        state_.probability = Probability().analyze(state_.board, state_.basic, state_.structure, config_.shapeSolver, state_.probabilityPool);
         state_.probabilityValid = true;
     }
     return state_.probability;
@@ -150,12 +144,12 @@ long double GameControl::Position::mineProbability(ObservedBoard::CellId cell) {
         return 0.0L;
     if (mark == Basic::Mark::F)
         return 1.0L;
-    return Probability::mineProbability(probability(), state_.probabilityPool, cell, state_.board, state_.basic, state_.structure);
+    return Probability().mineProbability(probability(), state_.probabilityPool, cell, state_.board, state_.basic, state_.structure);
 }
 
 void GameControl::Position::observe(ObservedBoard::CellId cell, Observe::Result &result) {
     const Probability::Result &currentProbability = probability();
-    Observe::observe(state_.board, state_.basic, state_.structure, currentProbability, state_.probabilityPool, config_.shapeSolver, cell, result, workspace_.observe);
+    Observe().observe(state_.board, state_.basic, state_.structure, currentProbability, state_.probabilityPool, config_.shapeSolver, cell, result);
 }
 
 span<const ObservedBoard::CellId> GameControl::Position::safeMoves() {
@@ -184,7 +178,7 @@ span<const ObservedBoard::CellId> GameControl::Position::safeMoves() {
     return span<const ObservedBoard::CellId>(safeCells_.data, (int)safeCells_.size);
 }
 
-void GameControl::Position::suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search, SuggestResult::Details *details) {
+void GameControl::Position::suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search, SuggestResult::Details *details) {
     result = SuggestResult();
     if (search) *search = AnytimeSearch::Result();
     const span<const ObservedBoard::CellId> safe = safeMoves();
@@ -193,10 +187,10 @@ void GameControl::Position::suggest(const MovePolicy &policy, FiftyFifty::Pool &
         for (int i = 0; i < safe.size; ++i) { result.suggest.push_back(safe.data[i]); result.candidates.push_back(SuggestResult::Candidate(safe.data[i], 1)); }
         return;
     }
-    suggest(state(), policy, fiftyPool, searchPool, workspace, bruteForce, result, cells, search, details);
+    suggest(state(), policy, fiftyPool, searchPool, result, cells, search, details);
 }
 
-void GameControl::Position::suggest(PositionState &current, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search, SuggestResult::Details *details) {
+void GameControl::Position::suggest(PositionState &current, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search, SuggestResult::Details *details) {
     int remaining = current.board.cells.rows() * current.board.cells.cols() - current.board.totalMines;
     for (int row = 0; row < current.board.cells.rows(); ++row) for (int col = 0; col < current.board.cells.cols(); ++col)
         if (current.board.cells[row][col] <= ObservedBoard::CellState::Num8) --remaining;
@@ -204,7 +198,7 @@ void GameControl::Position::suggest(PositionState &current, const MovePolicy &po
     if (policy.brute.limit != 0 && current.probability.candidates < policy.brute.limit) {
         BruteForce::Config config = *policy.brute.config;
         if (cells) config.checkAllMoves = true;
-        BruteForce::solve(current.board, current.basic, current.structure, current.shapes, config, result, bruteForce);
+        BruteForce().solve(current.board, current.basic, current.structure, current.shapes, config, result);
         if (cells) {
             int count = 0;
             for (int i = 0; i < (int)result.candidates.size; ++i)
@@ -212,15 +206,15 @@ void GameControl::Position::suggest(PositionState &current, const MovePolicy &po
             result.candidates.size = count; result.recommend();
         }
     } else if (policy.basic.algorithm == MovePolicy::Basic::Algorithm::LowRisk) {
-        SuggestResult evaluated = LowRisk::analyze(current, cells);
+        SuggestResult evaluated = LowRisk().analyze(current, cells);
         result.swap(evaluated);
     } else {
         const FiftyFifty::Config &fifty = policy.fiftyFifty;
         if (policy.basic.algorithm == MovePolicy::Basic::Algorithm::JavaEval) {
-            SuggestResult evaluated = JavaEval::analyze(current, config_.shapeSolver, *policy.basic.javaEval, fifty, fiftyPool, workspace.selection, cells, details);
+            SuggestResult evaluated = JavaEval().analyze(current, config_.shapeSolver, *policy.basic.javaEval, fifty, fiftyPool, cells, details);
             result.swap(evaluated);
         } else {
-            const AnytimeSearch::Result searched = AnytimeSearch::analyze(current, searchPool, config_.shapeSolver, *policy.basic.anytime, fifty, fiftyPool, workspace, cells, details);
+            const AnytimeSearch::Result searched = AnytimeSearch().analyze(current, searchPool, config_.shapeSolver, *policy.basic.anytime, fifty, fiftyPool, cells, details);
             SuggestResult evaluated = searched.snapshot(searchPool);
             result.swap(evaluated);
             if (search) *search = searched;
@@ -228,14 +222,14 @@ void GameControl::Position::suggest(PositionState &current, const MovePolicy &po
     }
 }
 
-void GameControl::Position::suggest(const MovePolicy &policy, SuggestPool &pool, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, AnytimeSearch::Workspace &workspace, BruteForce::Workspace &bruteForce, vector<ObservedBoard::CellId> &result) {
+void GameControl::Position::suggest(const MovePolicy &policy, SuggestPool &pool, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, vector<ObservedBoard::CellId> &result) {
     result.resize(0);
     const span<const ObservedBoard::CellId> safe = safeMoves();
     if (safe.size != 0) { for (int i = 0; i < safe.size; ++i) result.push_back(safe.data[i]); return; }
     const U128 key = suggestionKey(state_.board, policy);
     if (ObservedBoard::CellId *cached = pool.cache.find(key)) { result.push_back(*cached); return; }
     SuggestResult evaluated;
-    suggest(state(), policy, fiftyPool, searchPool, workspace, bruteForce, evaluated, nullptr, nullptr, nullptr);
+    suggest(state(), policy, fiftyPool, searchPool, evaluated, nullptr, nullptr, nullptr);
     result.swap(evaluated.suggest);
     if (result.size != 0) pool.cache.emplace(key, result.data[0]);
 }

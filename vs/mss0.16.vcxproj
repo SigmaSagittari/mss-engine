@@ -108,6 +108,7 @@
     <ClCompile Include="..\code\algo\winrate_engine\selection\selection.cpp" />
     <ClCompile Include="..\code\game\game.cpp" />
     <ClCompile Include="..\code\game\game_control.cpp" />
+    <ClCompile Include="..\code\core\algorithm\combination.cpp" />
     <ClCompile Include="..\code\game\position.cpp" />
     <ClCompile Include="..\code\game\position_state.cpp" />
     <ClCompile Include="..\code\ui\ui.cpp" />
@@ -152,7 +153,6 @@
     <ClInclude Include="..\code\core\datastructure\span.h" />
     <ClInclude Include="..\code\core\datastructure\vector_pool.h" />
     <ClInclude Include="..\code\core\datastructure\vector.h" />
-    <ClInclude Include="..\code\core\workspace.h" />
     <ClInclude Include="..\code\game\game_control.h" />
     <ClInclude Include="..\code\game\game.h" />
     <ClInclude Include="..\code\game\position_state.h" />

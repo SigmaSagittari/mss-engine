@@ -115,46 +115,26 @@ struct Structure {
         void clear();
     };
 
-    // 临时空间：analyze 和 update 各用一套遍历区，互不依赖上次调用留下的状态。
-    struct Workspace {
-        struct Analyze {
-            Grid<char> visited;
-            // H 格 -> Box 下标，建组件时逐格写入。
-            Grid<int> boxOfCell;
-            vector<CellId> cells;
-        } analyze;
-
-        // update 专用：遍历区、脏格与本次被删的旧组件
-        struct Update {
-            Grid<char> visited;
-            Grid<int> boxOfCell;
-            vector<CellId> cells;
-            Grid<char> dirty;
-            vector<CellId> dirtyCells;
-            // 按发现顺序追加，写 Delta 前按组件下标降序排序。
-            vector<ComponentId> removed;
-        } update;
-
-        // Box 归并
-        struct Boxes {
-            FlatHashTable<U128, BoxId, U128Hash> hashBox;
-            struct Bucket {
-                CellId cells[9];
-            };
-            vector<Bucket> buckets;
-            vector<char> boxUsed;
-        } boxes;
-    };
-
     // 输入必须尺寸相同、Basic 与此观测盘面一致；只为 H 和相邻数字建立组件，不收录 T。
-    static void analyze(Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool, Workspace &workspace);
+    void analyze(Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool);
 
     // changedCells 覆盖自 result 状态以来的全部观测变化；board/basic 是最终状态，Pool 与 result 匹配。
     // 只重建受影响组件，delta 记录回到调用前 result 所需的信息。
-    static Delta update(Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool, const CellId *changedCells, int changedCount, Workspace &workspace);
+    Delta update(Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool, const CellId *changedCells, int changedCount);
 
     // 正向时 result 对应更新前状态；reverse 时对应更新后状态且必须后进先出。池不得清空。
-    static void applyDelta(Result &result, const Delta &delta, const Pool &pool, bool reverse = false);
+    void applyDelta(Result &result, const Delta &delta, const Pool &pool, bool reverse = false);
+
+  private:
+    struct Workspace;
+    Workspace &getWorkspace();
+    U128 cellSignature(int row, int col, const ObservedBoard::Result &board);
+    void remapInstance(Structure::InstanceId id, Structure::ComponentId component, const Structure::Pool &pool, Structure::Result &result);
+    void clearInstance(Structure::InstanceId id, const Structure::Pool &pool, Structure::Result &result);
+    void collectComponent(Structure::CellId start, const ObservedBoard::Result &board, const Basic::Result &basic, Grid<char> &visited, vector<Structure::CellId> &cells);
+    U128 computeShapeHash(vectorPool<int>::vector boxSizes, vectorPool<Structure::Shape::Constraint>::vector constraints, const Structure::Pool::Shapes &pool);
+    U128 computeInstanceHash(const Structure::Instance &instance, const Structure::Pool::Instances &pool);
+    InstanceId buildComponent(const vector<CellId> &componentCells, const ObservedBoard::Result &board, const Basic::Result &basic, Grid<int> &boxOfCell, Pool &pool);
 };
 
 } // 命名空间 mss

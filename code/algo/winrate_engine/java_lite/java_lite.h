@@ -49,35 +49,18 @@ struct JavaLite {
         Result(long double value, long double progressMultiplier, vectorPool<Delta>::vector deltas, int nodes, bool valid) : value(value), progressMultiplier(progressMultiplier), deltas(deltas), nodes(nodes), valid(valid) {}
     };
 
-    struct Workspace {
-        Basic::Workspace &basic;
-        Structure::Workspace &structure;
-        Probability::Workspace &probability;
-        PositionState::Reveal reveal;
-
-        Workspace(Basic::Workspace &basic, Structure::Workspace &structure, Probability::Workspace &probability) : basic(basic), structure(structure), probability(probability) {}
-    };
-
     // state 已同步且概率有效，observation 来自同一局面的 cell；cell 未揭开。
     // remainingSafe 是未揭开的安全格总数；linkedClears 是假设本格安全后的推进基准。
     // pool 为空时退回临时增量；非空时保留增量和完整概率，切片借用调用方的池。
     // pool 引用的概率池须绑定 state 的结构池和分布缓存。
     // prune 控制是否允许剪枝；floor 是比较下界，负数表示当前还没有可用下界；返回前恢复 state。
-    static Result evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, Pool *pool, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool isSafeMove, bool prune, long double floor, SuggestResult::Details *details = nullptr);
+    Result evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Pool *pool, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool isSafeMove, bool prune, long double floor, SuggestResult::Details *details = nullptr);
 
   private:
+    struct Workspace;
+    Workspace &getWorkspace();
     template <bool Prune, bool RetainDeltas>
-    static Result evaluateImpl(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, Pool *pool, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool isSafeMove, long double floor, SuggestResult::Details *details);
-
-    struct Summary {
-        // 后续最安全两格按 80% / 20% 混合的评分，以及当前未揭开的必安格数。
-        long double blendedSafety;
-        int knownSafeCount;
-
-        Summary(long double blendedSafety, int knownSafeCount) : blendedSafety(blendedSafety), knownSafeCount(knownSafeCount) {}
-    };
-
-    static Summary shortTerm(const PositionState &state, const Probability::Result &probability, const Probability::Pool &pool, int remainingSafe);
+    Result evaluateImpl(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Pool *pool, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool isSafeMove, long double floor, SuggestResult::Details *details);
 };
 
 } // 命名空间 mss

@@ -15,6 +15,7 @@ namespace mss::UI {
 
 struct Session {
     Session(const Config &config);
+    ~Session();
     const std::string &token() const;
     bool stopped() const;
     std::string handle(const std::string &path, const std::string &body);
@@ -27,34 +28,18 @@ struct Session {
     std::string searchUpdate() const;
 
   private:
-    struct FormField {
-        std::string key;
-        std::string value;
-    };
-    // 一次计算拥有固定盘面及其结果、缓存；后续查询只引用 id，不接受盘面修改。
-    struct Analysis {
-        int id;
-        GameControl::Config config;
-        GameControl::Workspace game;
-        BruteForce::Workspace bruteForce;
-        AnytimeSearch::Workspace anytimeSearch;
-        MonteCarlo::Workspace monteCarlo;
-        GameControl::Position position;
-        Probability::Pool pendingProbabilities;
-        JavaLite::Pool pending;
-        AnytimeSearch::Pool searchPool;
-        Analysis(int id, const GameControl::Config &config, const ObservedBoard::Result &board) : id(id), config(config), bruteForce(game.probability.shapeSolver), anytimeSearch(game.basic, game.structure, game.probability), position(GameControl::Position::fromUserInput(board, game, config)), pendingProbabilities(position.probabilityPool().shapes, position.probabilityPool().distributions), pending(pendingProbabilities), searchPool(pending) {}
-    };
+    struct FormField;
+    struct Analysis;
 
-    static std::vector<FormField> parseForm(const std::string &body);
-    static std::string jsonString(const std::string &value);
-    static bool parseInteger(const std::string &value, int &result);
-    static std::string makeToken();
-    static std::string cellString(const ObservedBoard::Result &board);
-    static void writeProbabilities(std::ostream &result, GameControl::Position &position);
-    static void writeCells(std::ostream &result, span<const ObservedBoard::CellId> cells);
-    static std::string mctsResult(const MonteCarlo::Result &result, bool complete, long double candidates);
-    static void writeMoveDetails(std::ostream &result, const SuggestResult::Details &details, ObservedBoard::CellId cell);
+    std::vector<FormField> parseForm(const std::string &body) const;
+    std::string jsonString(const std::string &value) const;
+    bool parseInteger(const std::string &value, int &result) const;
+    std::string makeToken() const;
+    std::string cellString(const ObservedBoard::Result &board) const;
+    void writeProbabilities(std::ostream &result, GameControl::Position &position) const;
+    void writeCells(std::ostream &result, span<const ObservedBoard::CellId> cells) const;
+    std::string mctsResult(const MonteCarlo::Result &result, bool complete, long double candidates) const;
+    void writeMoveDetails(std::ostream &result, const SuggestResult::Details &details, ObservedBoard::CellId cell) const;
     std::string value(const std::vector<FormField> &fields, const std::string &key) const;
     std::string error(const std::string &message) const;
     bool parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolverConfig::Order &algo);
@@ -62,7 +47,7 @@ struct Session {
     bool parseFiftyFifty(const std::vector<FormField> &fields, Config &config, std::string &response);
     bool parseConfig(const std::vector<FormField> &fields, Config &config, std::string &response);
     bool parseBoard(const std::vector<FormField> &fields, int &rows, int &cols, int &mines, std::string &cells, std::string &response);
-    static ObservedBoard::Result makeBoard(int rows, int cols, int mines, const std::string &cells);
+    ObservedBoard::Result makeBoard(int rows, int cols, int mines, const std::string &cells) const;
     bool createAnalysis(const std::vector<FormField> &fields, std::unique_ptr<Analysis> &analysis, std::string &response);
     std::string analyze(const std::vector<FormField> &fields);
     std::string playUntilNoSafe(const std::vector<FormField> &fields);

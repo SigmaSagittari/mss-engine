@@ -234,7 +234,7 @@ void HttpServer::run() {
                     for (int i = 0; i < 2; ++i) content.replace(content.find(fiftyMarkers[i]), std::string(fiftyMarkers[i]).size(), config.fiftyFifty.algorithm == (FiftyFifty::Algorithm)i ? "selected" : "");
                     const std::string prefixMarker = "__MSS_TEMPLATE_PREFIX__", countMarker = "__MSS_TEMPLATE_COUNT__";
                     content.replace(content.find(prefixMarker), prefixMarker.size(), std::to_string(config.fiftyFifty.templates.prefix));
-                    content.replace(content.find(countMarker), countMarker.size(), std::to_string(FiftyFifty::templateCount()));
+                    content.replace(content.find(countMarker), countMarker.size(), std::to_string(FiftyFifty().templateCount()));
                     const std::string ltrEventLimitMarker = "__MSS_LTR_EVENT_LIMIT__";
                     content.replace(content.find(ltrEventLimitMarker), ltrEventLimitMarker.size(), std::to_string(config.fiftyFifty.templates.risk.eventLimit));
                     const std::string thresholdMarker = "__MSS_BRUTE_FORCE_THRESHOLD__";

@@ -1,52 +1,27 @@
 #include "algo/winrate_engine/java_lite/java_lite.h"
 
+#include <algorithm>
+
 namespace mss {
+
+struct JavaLite::Workspace {
+    PositionState::Reveal reveal;
+    vector<long double> lowestProbabilities;
+};
+
+__declspec(noinline) JavaLite::Workspace &JavaLite::getWorkspace() {
+    static thread_local Workspace workspace;
+    return workspace;
+}
 
 void JavaLite::Pool::clear() {
     deltas.data.resize(0);
     probabilities.resize(0);
 }
 
-JavaLite::Summary JavaLite::shortTerm(const PositionState &state, const Probability::Result &probability, const Probability::Pool &pool, int remainingSafe) {
-    int known = state.board.totalMines + remainingSafe - state.basic.mineSum - state.basic.unknownSum;
-    int knownSafeCount = 0;
-    long double best = state.basic.unknownSum != 0 ? 1.0L - probability.tCellProbability : 0.0L;
-    long double second = best;
-    auto add = [&](long double safety) {
-        if (safety > best) {
-            second = best;
-            best = safety;
-        } else if (safety > second)
-            second = safety;
-    };
-    for (int component = 0; component < (int)state.structure.components.size; ++component) {
-        const Structure::Instance &instance = state.shapes.instances.list.data[state.structure.components.data[component]];
-        const Probability::Result::Component &layout = pool.components.data.data[probability.components.offset + component];
-        const int *offsets = state.shapes.instances.boxOf.data.data + instance.boxOf.offset;
-        const int boxCount = (int)instance.boxOf.count - 1;
-        for (int box = 0; box < boxCount; ++box) {
-            const int count = offsets[box + 1] - offsets[box];
-            const long double safety = 1.0L - pool.boxProbabilities.data.data[probability.boxProbabilities.offset + layout.boxOffset + box];
-            known -= count;
-            if (safety == 1.0L)
-                knownSafeCount += count;
-            add(safety);
-            if (count > 1)
-                add(safety);
-        }
-    }
-    if (known != 0)
-        add(1.0L);
-    if (known > 1)
-        add(1.0L);
-    knownSafeCount += known;
-    if (state.basic.unknownSum != 0 && probability.tCellProbability == 0.0L)
-        knownSafeCount += state.basic.unknownSum;
-    return Summary(remainingSafe == 0 ? 1.0L : (4.0L * best + second) / 5.0L, knownSafeCount);
-}
-
 template <bool Prune, bool RetainDeltas>
-JavaLite::Result JavaLite::evaluateImpl(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, Pool *pool, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool isSafeMove, long double floor, SuggestResult::Details *details) {
+JavaLite::Result JavaLite::evaluateImpl(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Pool *pool, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool isSafeMove, long double floor, SuggestResult::Details *details) {
+    Workspace &workspace = getWorkspace();
     const long double candidates = state.probability.candidates;
     const long double mineProbability = observation.probability[9];
     vectorPool<Delta>::vector recordedDeltas = RetainDeltas ? pool->deltas.push_back() : vectorPool<Delta>::vector{};
@@ -98,28 +73,40 @@ JavaLite::Result JavaLite::evaluateImpl(PositionState &state, const ShapeSolverC
     for (int ordinal = 0; ordinal < digitCount; ++ordinal) {
         const int digit = order[ordinal];
         Probability::Pool &results = RetainDeltas ? pool->probabilityPool : state.probabilityPool;
-        state.applyReveal(cell, (ObservedBoard::CellState)digit, shapeConfig, workspace.basic, workspace.structure, workspace.probability, workspace.reveal, results);
+        state.applyReveal(cell, (ObservedBoard::CellState)digit, shapeConfig, workspace.reveal, results);
         ++nodes;
-        const Summary summary = shortTerm(state, workspace.reveal.probability, results, remainingSafe - 1);
+        vector<long double> &lowest = workspace.lowestProbabilities;
+        workspace.reveal.probability.lowestProbabilities(results, state.structure, 2, lowest);
+        int known = state.board.totalMines + remainingSafe - 1 - state.basic.mineSum - state.basic.unknownSum;
+        int knownSafeCount = 0;
+        workspace.reveal.probability.frontierCells(results, state.structure, [&](ObservedBoard::CellId, long double probability) {
+            --known;
+            if (1.0L - probability == 1.0L) ++knownSafeCount;
+        });
+        const long double offEdgeSafety = state.basic.unknownSum != 0 ? 1.0L - workspace.reveal.probability.tCellProbability : 0.0L;
+        const long double best = (std::max)(lowest.size > 0 ? 1.0L - lowest.data[0] : 0.0L, offEdgeSafety);
+        const long double second = (std::max)(lowest.size > 1 ? 1.0L - lowest.data[1] : 0.0L, offEdgeSafety);
+        const long double blendedSafety = remainingSafe == 1 || known > 1 ? 1.0L : known == 1 ? (4.0L + best) / 5.0L : (4.0L * best + second) / 5.0L;
         const int offEdgeClears = state.basic.unknownSum != 0 && workspace.reveal.probability.tCellProbability == 0.0L ? state.basic.unknownSum : 0;
-        contributions[digit] = observation.probability[digit] * summary.blendedSafety;
+        knownSafeCount += known + offEdgeClears;
+        contributions[digit] = observation.probability[digit] * blendedSafety;
         value += contributions[digit];
-        if (details) details->outcomes.push_back(SuggestResult::Details::Outcome(cell, digit, summary.blendedSafety));
+        if (details) details->outcomes.push_back(SuggestResult::Details::Outcome(cell, digit, blendedSafety));
         if constexpr (RetainDeltas) {
-            pool->deltas.push_back(recordedDeltas, Delta(summary.knownSafeCount, workspace.reveal.probability.candidates / candidates, workspace.reveal.board, workspace.reveal.basic, workspace.reveal.structure));
+            pool->deltas.push_back(recordedDeltas, Delta(knownSafeCount, workspace.reveal.probability.candidates / candidates, workspace.reveal.board, workspace.reveal.basic, workspace.reveal.structure));
             pool->probabilities.push_back(workspace.reveal.probability);
             deltaDigits[ordinal] = digit;
         }
-        if (summary.knownSafeCount - offEdgeClears > linkedClears) {
+        if (knownSafeCount - offEdgeClears > linkedClears) {
             progress += observation.probability[digit];
             progressByDigit[digit] = observation.probability[digit];
         }
         evaluated |= 1u << digit;
         remainingSafety -= observation.probability[digit];
         if constexpr (RetainDeltas) {
-            Structure::applyDelta(state.structure, workspace.reveal.structure, state.shapes, true);
-            Basic::applyDelta(state.basic, workspace.reveal.basic, state.basicPool, true);
-            ObservedBoard::applyDelta(state.board, workspace.reveal.board, state.basicPool.board, true);
+            Structure().applyDelta(state.structure, workspace.reveal.structure, state.shapes, true);
+            Basic().applyDelta(state.basic, workspace.reveal.basic, state.basicPool, true);
+            ObservedBoard().applyDelta(state.board, workspace.reveal.board, state.basicPool.board, true);
         } else
             state.undoReveal(workspace.reveal, results);
         if constexpr (Prune) {
@@ -166,13 +153,13 @@ JavaLite::Result JavaLite::evaluateImpl(PositionState &state, const ShapeSolverC
     return Result(value, progressMultiplier, recordedDeltas, nodes, true);
 }
 
-JavaLite::Result JavaLite::evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Workspace &workspace, Pool *pool, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool isSafeMove, bool prune, long double floor, SuggestResult::Details *details) {
+JavaLite::Result JavaLite::evaluate(PositionState &state, const ShapeSolverConfig &shapeConfig, long double progressContribution, Pool *pool, ObservedBoard::CellId cell, const Observe::Result &observation, int remainingSafe, int linkedClears, bool isSafeMove, bool prune, long double floor, SuggestResult::Details *details) {
     if (!prune || floor < 0.0L) {
-        if (pool == nullptr) return evaluateImpl<false, false>(state, shapeConfig, progressContribution, workspace, pool, cell, observation, remainingSafe, linkedClears, isSafeMove, floor, details);
-        return evaluateImpl<false, true>(state, shapeConfig, progressContribution, workspace, pool, cell, observation, remainingSafe, linkedClears, isSafeMove, floor, details);
+        if (pool == nullptr) return evaluateImpl<false, false>(state, shapeConfig, progressContribution, pool, cell, observation, remainingSafe, linkedClears, isSafeMove, floor, details);
+        return evaluateImpl<false, true>(state, shapeConfig, progressContribution, pool, cell, observation, remainingSafe, linkedClears, isSafeMove, floor, details);
     }
-    if (pool == nullptr) return evaluateImpl<true, false>(state, shapeConfig, progressContribution, workspace, pool, cell, observation, remainingSafe, linkedClears, isSafeMove, floor, details);
-    return evaluateImpl<true, true>(state, shapeConfig, progressContribution, workspace, pool, cell, observation, remainingSafe, linkedClears, isSafeMove, floor, details);
+    if (pool == nullptr) return evaluateImpl<true, false>(state, shapeConfig, progressContribution, pool, cell, observation, remainingSafe, linkedClears, isSafeMove, floor, details);
+    return evaluateImpl<true, true>(state, shapeConfig, progressContribution, pool, cell, observation, remainingSafe, linkedClears, isSafeMove, floor, details);
 }
 
 } // 命名空间 mss

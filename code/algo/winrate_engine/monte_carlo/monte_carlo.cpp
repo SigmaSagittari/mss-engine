@@ -8,7 +8,7 @@
 
 namespace mss {
 
-MonteCarlo::Candidate::Candidate(ObservedBoard::CellId cell, long double prior, const Config &config) : cell(cell), samples(0), wins(0), prior(prior), chanceSamples(-1), chanceTarget(0.0L), chanceLog(0.0L) { estimate(*this, config); }
+MonteCarlo::Candidate::Candidate(ObservedBoard::CellId cell, long double prior, const Config &config) : cell(cell), samples(0), wins(0), prior(prior), chanceSamples(-1), chanceTarget(0.0L), chanceLog(0.0L) { MonteCarlo().estimate(*this, config); }
 
 MonteCarlo::Result::Result(SuggestResult &root, const Structure::Pool &shapes) : winrate(root.engine == SuggestResult::Engine::Safe || root.reason == SuggestResult::Reason::Finished), samples(0), wins(0), random(0xC0FFEE12345ULL, 0xD1B54A32D192ED03ULL), assignments(shapes) {
     if (root.engine == SuggestResult::Engine::BruteForce) exact.swap(root);
@@ -26,8 +26,6 @@ ObservedBoard::CellId MonteCarlo::Result::recommended() const {
     if (exact.engine == SuggestResult::Engine::BruteForce) return exact.suggest.size == 0 ? -1 : exact.suggest.data[0];
     return winrate || candidates.size == 0 ? -1 : candidates.data[best()].cell;
 }
-
-MonteCarlo::Workspace::Workspace() : anytimeSearch(game.basic, game.structure, game.probability), bruteForce(game.probability.shapeSolver) {}
 
 void MonteCarlo::estimate(Candidate &candidate, const Config &config) {
     const long double count = candidate.samples + 2.0L + config.priorWeight;
@@ -90,9 +88,9 @@ int MonteCarlo::select(Result &result, const Config &config) {
     return selected;
 }
 
-MonteCarlo::Result MonteCarlo::analyze(GameControl::Position &position, const Config &config, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &pool, Workspace &workspace, const vector<ObservedBoard::CellId> *cells) {
+MonteCarlo::Result MonteCarlo::analyze(GameControl::Position &position, const Config &config, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &pool, const vector<ObservedBoard::CellId> *cells) {
     SuggestResult evaluated;
-    position.suggest(policy, fiftyPool, pool, workspace.anytimeSearch, workspace.bruteForce, evaluated, cells);
+    position.suggest(policy, fiftyPool, pool, evaluated, cells);
     Result result(evaluated, position.probabilityPool().shapes);
     if (result.exact.engine == SuggestResult::Engine::BruteForce || result.winrate) return result;
     assert_(evaluated.candidates.size != 0, "MonteCarlo: 非终局没有首招候选");
@@ -108,36 +106,36 @@ MonteCarlo::Result MonteCarlo::analyze(GameControl::Position &position, const Co
     return result;
 }
 
-bool MonteCarlo::simulate(Result &result, PositionState &state, long long sequence, ObservedBoard::CellId first, const ShapeSolverConfig &shapeConfig, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, Workspace &workspace) {
+bool MonteCarlo::simulate(Result &result, PositionState &state, long long sequence, ObservedBoard::CellId first, const ShapeSolverConfig &shapeConfig, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool) {
     Grid<char> mines;
-    Probability::sampleMineBoard(state.board, state.basic, state.structure, result.assignments, U128(splitmix64(0x123456789ABCDEFULL + sequence), splitmix64(0xF123456789ABCDE0ULL + sequence)), mines, workspace.game.probability);
+    Probability().sampleMineBoard(state.board, state.basic, state.structure, result.assignments, state.combinations, U128(splitmix64(0x123456789ABCDEFULL + sequence), splitmix64(0xF123456789ABCDE0ULL + sequence)), mines);
     ObservedBoard::Result observed = state.board;
     for (int i = 0; i < (int)result.safeCells.size; ++i) {
         const std::pair<int, int> position = observed.pos(result.safeCells.data[i]);
         if (observed.cells[position.first][position.second] == ObservedBoard::CellState::ForcedSafe) observed.cells[position.first][position.second] = ObservedBoard::CellState::Hidden;
     }
     const GameControl::Config gameConfig{shapeConfig};
-    GameControl::Game game(GameControl::MineBoard(mines), observed, workspace.game, gameConfig, result.suggestions);
+    GameControl::Game game(GameControl::MineBoard(mines), observed, gameConfig, result.suggestions);
     // 搜索池绑定本次模拟的局面，在整局建议调用之间复用。
-    Probability::Pool pendingProbabilities(game.position().probabilityPool().shapes, game.position().probabilityPool().distributions);
+    Probability::Pool pendingProbabilities(game.position().probabilityPool().shapes, game.position().probabilityPool().distributions, game.position().probabilityPool().combinations);
     JavaLite::Pool pending(pendingProbabilities);
     AnytimeSearch::Pool pool(pending);
     if (game.state() == GameControl::Game::State::Running)
         game.play(result.winrate ? span<const ObservedBoard::CellId>(result.safeCells.data, (int)result.safeCells.size) : span<const ObservedBoard::CellId>(&first, 1));
     vector<ObservedBoard::CellId> suggestion;
     while (game.state() == GameControl::Game::State::Running) {
-        game.suggest(policy, fiftyPool, pool, workspace.anytimeSearch, workspace.bruteForce, suggestion);
+        game.suggest(policy, fiftyPool, pool, suggestion);
         if (suggestion.size == 0) assert_(false, "MonteCarlo: 对局未结束却没有建议");
         game.play(span<const ObservedBoard::CellId>(suggestion.data, (int)suggestion.size));
     }
     return game.state() == GameControl::Game::State::Won;
 }
 
-void MonteCarlo::update(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, Workspace &workspace) {
+void MonteCarlo::update(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool) {
     if (result.exact.engine == SuggestResult::Engine::BruteForce) return;
     const int selected = result.winrate ? -1 : select(result, config);
     const long long sequence = result.winrate ? result.samples : result.candidates.data[selected].samples;
-    const bool won = simulate(result, state, sequence, result.winrate ? -1 : result.candidates.data[selected].cell, shapeConfig, policy, fiftyPool, workspace);
+    const bool won = MonteCarlo().simulate(result, state, sequence, result.winrate ? -1 : result.candidates.data[selected].cell, shapeConfig, policy, fiftyPool);
     ++result.samples;
     result.wins += won;
     if (selected >= 0) {
