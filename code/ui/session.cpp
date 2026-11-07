@@ -30,7 +30,7 @@ struct Session::Analysis {
     Analysis(int id, const GameControl::Config &config, const ObservedBoard::Result &board) : id(id), config(config), position(board, config), pendingProbabilities(position.probabilityPool().shapes, position.probabilityPool().distributions, position.probabilityPool().combinations), pending(pendingProbabilities), searchPool(pending) {}
 };
 
-Session::Session(const Config &config) : fiftyPool_(semiPool_, riskPool_), nextAnalysis_(1), stopped_(false), token_(makeToken()), config_(config), searchBudget_(0), searchRunning_(false) {}
+Session::Session(const Config &config) : fiftyPool_(semiPool_, riskPool_), nextAnalysis_(1), stopped_(false), token_(makeToken()), config_(config), searchBudget_(0), searchBudgetEpoch_(0), searchRunning_(false) {}
 
 Session::~Session() = default;
 
@@ -649,17 +649,28 @@ bool Session::startSearch(const std::string &body, std::string &response) {
             searchUpdate_ = json.str();
         };
         publish();
+        constexpr long long nodesPerUpdate = 5000;
         while (!result.finished && !stop.stop_requested()) {
+            bool running;
             long long budget;
+            unsigned long long epoch;
             {
                 std::unique_lock<std::mutex> lock(searchMutex_);
                 if (!searchWake_.wait(lock, stop, [&]() { return searchRunning_ || searchBudget_ > 0; })) break;
-                budget = searchRunning_ ? 350 : (std::min)(searchBudget_, 350LL);
-                if (!searchRunning_) searchBudget_ -= budget;
+                running = searchRunning_;
+                budget = running ? nodesPerUpdate : (std::min)(searchBudget_, nodesPerUpdate);
+                epoch = searchBudgetEpoch_;
             }
+            const long long before = result.nodes;
             AnytimeSearch::Config stepConfig = config.anytime;
             stepConfig.nodeLimit = budget;
             AnytimeSearch().update(result, state, pool, analysis->config.shapeSolver, stepConfig, fifty, fiftyPool, &details);
+            const long long spent = result.nodes - before;
+            if (!running) {
+                const std::lock_guard<std::mutex> lock(searchMutex_);
+                if (epoch == searchBudgetEpoch_)
+                    searchBudget_ = result.finished ? 0 : (std::max)(0LL, searchBudget_ - spent);
+            }
             publish();
         }
     });
@@ -676,7 +687,10 @@ std::string Session::controlSearch(const std::string &body) {
         const std::lock_guard<std::mutex> lock(searchMutex_);
         searchRunning_ = action == "resume";
         if (action == "step") searchBudget_ += nodes;
-        else searchBudget_ = 0;
+        else {
+            searchBudget_ = 0;
+            ++searchBudgetEpoch_;
+        }
     }
     searchWake_.notify_one();
     return "{\"ok\":true}";

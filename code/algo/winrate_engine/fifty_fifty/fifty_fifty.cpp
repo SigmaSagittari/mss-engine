@@ -3,7 +3,7 @@
 namespace mss {
 
 struct FiftyFifty::Workspace {
-    Semi::Result description;
+    vector<ObservedBoard::CellId> description;
 };
 
 __declspec(noinline) FiftyFifty::Workspace &FiftyFifty::getWorkspace() {
@@ -13,14 +13,15 @@ __declspec(noinline) FiftyFifty::Workspace &FiftyFifty::getWorkspace() {
 
 int FiftyFifty::templateCount() { return TemplateSemi().templateCount(); }
 
-void FiftyFifty::detect(Semi::Result &result, const PositionState &state, const Probability::Pool &probabilities, const Config &config, Pool &pool) {
-    if (config.algorithm == Algorithm::OldJava) Semi().update(result, state, probabilities, span<const ObservedBoard::CellId>());
-    else TemplateSemi().detect(result, state, probabilities, config.templates->prefix, pool.templates.semi);
+Semi::Kind FiftyFifty::detect(vector<ObservedBoard::CellId> &cells, const PositionState &state, const Probability::Pool &probabilities, const Config &config, Pool &pool) {
+    if (config.algorithm == Algorithm::OldJava) return Semi().update(cells, state, probabilities, span<const ObservedBoard::CellId>());
+    return TemplateSemi().detect(cells, state, probabilities, config.templates->prefix, pool.templates.semi);
 }
 
-void FiftyFifty::prepareRisk(Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, Pool &pool, bool collectSemi) {
-    if (config.algorithm == Algorithm::OldJava) LongTermRisk().update(result.oldJava, state, probabilities, span<const ObservedBoard::CellId>(), shapeConfig, *config.oldJava, collectSemi ? &result.semi : nullptr);
-    else TemplateLongTermRisk().update(result.templates, state, probabilities, config.templates->prefix, config.templates->risk, pool.templates.risk);
+Semi::Kind FiftyFifty::prepareRisk(Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, Pool &pool, vector<ObservedBoard::CellId> *semiCells) {
+    if (config.algorithm == Algorithm::OldJava) return LongTermRisk().update(result.oldJava, state, probabilities, span<const ObservedBoard::CellId>(), shapeConfig, *config.oldJava, semiCells);
+    TemplateLongTermRisk().update(result.templates, state, probabilities, config.templates->prefix, config.templates->risk, pool.templates.risk);
+    return Semi::Kind::None;
 }
 
 long double FiftyFifty::influence(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, Result &result, const ShapeSolverConfig &shapeConfig, const Config &config) {

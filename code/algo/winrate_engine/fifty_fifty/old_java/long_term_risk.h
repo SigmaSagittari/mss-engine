@@ -37,8 +37,8 @@ struct LongTermRisk {
 
     // dead 使用同盘面编号；semi 非空时补找已成立的死猜，并在找到首组时停止扫描。
     Result analyze(PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Semi::Result *semi);
-    // 全盘覆写 Result。
-    void update(Result &result, PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Semi::Result *semi, Details *details = nullptr);
+    // 覆写风险；semiCells 非空时另写补找候选，命中后返回分类并停止扫描。
+    Semi::Kind update(Result &result, PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, vector<ObservedBoard::CellId> *semiCells, Details *details = nullptr);
     // 单格查询返回补偿布局数；full 必须来自同一 state。
     long double influence(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, Result &full, const ShapeSolverConfig &shapeConfig, Details *details = nullptr);
     // 仅详情查询调用；cell 的雷率必须大于 0，返回假设该格为雷后的单模板命中概率。
@@ -56,7 +56,7 @@ struct LongTermRisk {
 
     long double boxTally(ObservedBoard::CellId cell, const PositionState &state, const Probability::Pool &probabilities);
     long double candidateTally(PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> tiles, span<const CellPosition> source, int mineCount, int maxMissing, int minesLeft, const ShapeSolverConfig &shapeConfig, TallyKind kind, ObservedBoard::CellId cacheCell, Grid<long double> &values, Grid<unsigned char> &ready);
-    void update(Grid<long double> &influences, vector<long double> &enablers, Grid<long double> &values, Grid<unsigned char> &ready, PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Semi::Result *semi, Details *details);
+    Semi::Kind update(Grid<long double> &influences, vector<long double> &enablers, Grid<long double> &values, Grid<unsigned char> &ready, PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, vector<ObservedBoard::CellId> *semiCells, Details *details);
     long double influence(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, const vector<long double> &enablers, Grid<long double> &values, Grid<unsigned char> &ready, const ShapeSolverConfig &shapeConfig, Details *details);
     bool hasSafeSource(const ObservedBoard::Result &board, span<const CellPosition> source);
     bool contains(span<const ObservedBoard::CellId> cells, ObservedBoard::CellId cell);

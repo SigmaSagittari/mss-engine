@@ -1,7 +1,5 @@
 #pragma once
 
-#include <deque>
-
 #include "algo/winrate_engine/selection/selection.h"
 #include "core/datastructure/vector_pool.h"
 #include "game/position_state.h"
@@ -9,7 +7,7 @@
 namespace mss {
 
 // 反复加深首招的后续搜索。analyze 建树并推进一次，update 用新预算接着推进。
-// Pool 保存整棵树和暂停位置；Result 是这棵树的查询句柄；Workspace 只复用临时内存。
+// Pool 保存树和中断位置；Result 是查询句柄。
 struct AnytimeSearch {
     struct Config {
         Selection::Config selection;
@@ -33,7 +31,7 @@ struct AnytimeSearch {
             // 最新完整后续分，不含推进奖励或根层补偿。
             // 危险：未展开局面为避免提前生成候选而延迟计算 value；必须原位构造，extendPosition 返回或 extendCandidate 结算本结局后才可读取。
             long double value;
-            // 推进奖励只参与选招，不进入 value 回传。
+            // JavaLite 首评推进乘数，用于续搜排序。
             long double progressMultiplier;
             // 同一 Pool 内的子节点切片；扩容后 offset/count 仍有效。
             vectorPool<Node>::vector child;
@@ -45,16 +43,16 @@ struct AnytimeSearch {
             int probabilityIndex;
             // depth 是当前点击步数；expandedDepth 是已完成评分的最深步数，根从 0 开始。
             int depth;
+            int parent; // 父节点在同一 Pool 内的下标；根为 -1。
             int expandedDepth;
             // 后续已求完，无需继续加深。
             bool finished;
-            // 根候选保留根层结果顺序；续搜顺序由 Frame 冻结，不参与树内宽度。
+            // 根候选另有根补偿。
             bool root;
             // 分支位置是否已准备候选；expandedDepth 是该候选/位置已展开到的最大深度。
             bool prepared;
-            Node(const Selection::Evaluation &evaluation, int depth) : value(evaluation.javaLite.value), progressMultiplier(evaluation.javaLite.progressMultiplier), child{}, cell(evaluation.cell), probabilityIndex(-1), depth(depth), expandedDepth(0), finished(evaluation.javaLite.deltas.count == 0), root(depth == 0), prepared(false) {}
-            Node(int deltaIndex, int probabilityIndex, int depth) : progressMultiplier(1.0L), child{}, deltaIndex(deltaIndex), probabilityIndex(probabilityIndex), depth(depth), expandedDepth(0), finished(false), root(false), prepared(false) {}
-            long double score() const { return value * progressMultiplier; }
+            Node(const Selection::Evaluation &evaluation, int depth, int parent) : value(evaluation.javaLite.value), progressMultiplier(evaluation.javaLite.progressMultiplier), child{}, cell(evaluation.cell), probabilityIndex(-1), depth(depth), parent(parent), expandedDepth(0), finished(evaluation.javaLite.deltas.count == 0), root(depth == 0), prepared(false) {}
+            Node(int deltaIndex, int probabilityIndex, int depth, int parent) : progressMultiplier(1.0L), child{}, deltaIndex(deltaIndex), probabilityIndex(probabilityIndex), depth(depth), parent(parent), expandedDepth(0), finished(false), root(false), prepared(false) {}
         };
 
         vectorPool<Node> nodes;
@@ -66,24 +64,10 @@ struct AnytimeSearch {
         struct ProbabilityLayer;
         // 按局面深度索引，0 不使用；每层通过 new/delete 独立创建和释放。
         vector<ProbabilityLayer *> probabilities;
-        // 每个搜索深度一份续算游标；预算耗尽后保留顺序、下一结局及未完成的概率合计。
-        struct Frame {
-            vector<int> order; // 这一层候选的 Node 下标，按选招分排序后冻结。
-            int next; // order 中下一招的位置。
-            int nextOutcome; // 当前招法的 child 中下一个数字结局的位置。
-            long double value; // 当前候选已完成的数字结局之概率加权和。
-            bool settled; // 已完成的结局是否都已经求到终局。
-            bool active; // 当前深度是否有待续算的候选顺序。
-
-            Frame() : next(0), nextOutcome(0), value(0.0L), settled(true), active(false) {}
-        };
-        std::deque<Frame> frames;
-        // 同时最多准备一个新位置；一个局面的候选必须完整评估、筛选及转存后才检查预算。
-        Selection::Result selected;
-        vector<Selection::Evaluation> evaluatedMoves;
+        int nextPosition; // 下次要推进的数字局面下标；-1 表示没有中断。
         JavaLite::Pool &pending; // 调用方持有的小池；只转存保留招法，须覆盖搜索池使用期。
 
-        Pool(JavaLite::Pool &pending) : pending(pending) {}
+        Pool(JavaLite::Pool &pending) : nextPosition(-1), pending(pending) {}
         ~Pool();
         Pool(const Pool &) = delete;
         Pool &operator=(const Pool &) = delete;
@@ -91,7 +75,7 @@ struct AnytimeSearch {
         void clearProbabilities();
         // 只在递归已经退出、state.probability 恢复根结果后调用。
         void releaseProbabilities();
-        long double score(int index) const { const Node &candidate = nodes.data.data[index]; return candidate.score() + (candidate.root ? rootCompensations.data[index] : 0.0L); }
+        long double score(int index) const { const Node &candidate = nodes.data.data[index]; return candidate.value + (candidate.root ? rootCompensations.data[index] : 0.0L); }
     };
 
     struct Result {
@@ -119,15 +103,17 @@ struct AnytimeSearch {
     void update(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, SuggestResult::Details *details = nullptr);
 
   private:
+    struct Workspace;
+    Workspace &getWorkspace();
     void selectCandidates(vector<Selection::Evaluation> &evaluatedMoves, int limit);
-    void selectRoot(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details);
-    long long prepareNode(PositionState &state, const Probability::Pool &probabilities, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, int width);
-    void orderMoves(Pool &pool, vectorPool<Pool::Node>::vector children, Pool::Frame &frame);
+    void selectRoot(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Selection::Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Selection::Result &selected, vector<Selection::Evaluation> &evaluatedMoves, JavaLite::Pool &pending, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details);
+    long long prepareNode(PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Selection::Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Selection::Result &selected, vector<Selection::Evaluation> &evaluatedMoves, JavaLite::Pool &pending, int width);
+    vectorPool<int>::vector orderMoves(const Pool &pool, vectorPool<Pool::Node>::vector children, int maxDepth, int resumeMove, vectorPool<int> &order);
     void appendDeltas(Pool &pool, int index, const JavaLite::Result &evaluated, const JavaLite::Pool &values);
     Result buildRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details);
-    long long extend(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, long long nodeBudget, int maxDepth, SuggestResult::Details *details);
-    void extendPosition(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, long long &budget, bool &complete);
-    void extendCandidate(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, long long &budget, bool &complete);
+    // 完成返回 -1；预算耗尽返回待推进局面的下标。
+    int extendPosition(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, long long &budget, span<const int> resume);
+    int extendCandidate(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, long long &budget, span<const int> resume);
 };
 
 } // 命名空间 mss

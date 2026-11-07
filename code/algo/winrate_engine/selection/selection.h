@@ -56,9 +56,8 @@ struct Selection {
         bool dominance; // 支配去重：假设本格安全后，有一个原本更安全的候选必安。
 
         long double progressContribution;
-        long double influenceScale; // 仅根层使用的长期风险补偿系数。
 
-        Config(long double selectionThreshold1, long double selectionThreshold2, int spaceThreshold, bool interchangeable, bool equivalence, bool dominance, long double progressContribution, long double influenceScale) : selectionThreshold1(selectionThreshold1), selectionThreshold2(selectionThreshold2), spaceThreshold(spaceThreshold), interchangeable(interchangeable), equivalence(equivalence), dominance(dominance), progressContribution(progressContribution), influenceScale(influenceScale) {}
+        Config(long double selectionThreshold1, long double selectionThreshold2, int spaceThreshold, bool interchangeable, bool equivalence, bool dominance, long double progressContribution) : selectionThreshold1(selectionThreshold1), selectionThreshold2(selectionThreshold2), spaceThreshold(spaceThreshold), interchangeable(interchangeable), equivalence(equivalence), dominance(dominance), progressContribution(progressContribution) {}
         void hash(U128Hasher &hasher) const;
     };
     // state 已同步且概率有效，probabilities 为 state.probability 所属池；初始化候选与根层风险，返回实际 Observe 次数。
@@ -75,7 +74,7 @@ struct Selection {
   private:
     struct Workspace;
     Workspace &getWorkspace();
-    Result::Source find(PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, bool useRisk, const vector<ObservedBoard::CellId> *cells);
+    Result::Source find(PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, const vector<ObservedBoard::CellId> *cells);
     int removeDead(Result &result, Result::Source source, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig);
     bool prepare(Result &result, int index, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, int &linkedClears, int &nodes);
     bool interchangeable(const PositionState &state, const Probability::Pool &probabilities, ObservedBoard::CellId lhs, ObservedBoard::CellId rhs);

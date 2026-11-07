@@ -49,8 +49,7 @@ inline const mss::JavaEval::Config javaEvalConfig{
     /* interchangeable 对换去重 */ false,
     /* equivalence 等价类去重 */ false,
     /* dominance 支配去重 */ true,
-    /* progressContribution 推进加分 */ 0.001L,
-    /* influenceScale 长期风险系数 */ 0.9L
+    /* progressContribution 推进加分 */ 0.001L
 };
 inline const mss::AnytimeSearch::Config anytimeConfig{
     /* selection 候选选择与单步评分 */ {
@@ -60,8 +59,7 @@ inline const mss::AnytimeSearch::Config anytimeConfig{
         /* interchangeable 对换去重 */ true,
         /* equivalence 等价类去重 */ true,
         /* dominance 支配去重 */ true,
-        /* progressContribution 推进加分 */ javaEvalConfig.progressContribution,
-        /* influenceScale 长期风险系数 */ javaEvalConfig.influenceScale
+        /* progressContribution 推进加分 */ javaEvalConfig.progressContribution
     },
     /* nodeLimit 全盘概率分析与 Observe 次数预算 */ 10000,
     /* width[0] 第一层宽度 */ 6,

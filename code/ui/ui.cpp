@@ -6,7 +6,7 @@
 namespace mss::UI {
 
 void run() {
-    const JavaEval::Config javaEval(0.10L, 0.20L, 8, false, false, true, 0.001L, 0.9L);
+    const JavaEval::Config javaEval(0.10L, 0.20L, 8, false, false, true, 0.001L);
     JavaEval::Config searchEval = javaEval;
     searchEval.interchangeable = searchEval.equivalence = searchEval.dominance = true;
     const GameControl::Config game{ShapeSolver::Config{35, ShapeSolverConfig::Order::Auto, 15, {8, 50000, 40000.0, 0.1}}};

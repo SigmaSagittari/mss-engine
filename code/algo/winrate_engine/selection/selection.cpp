@@ -51,7 +51,6 @@ void Selection::Config::hash(U128Hasher &hasher) const {
     hasher.mix(equivalence);
     hasher.mix(dominance);
     mixReal(progressContribution);
-    mixReal(influenceScale);
 }
 
 // 对换去重：两格独占的邻位只能是必雷或棋盘外，不依赖 Box。
@@ -327,7 +326,7 @@ void Selection::selectOrdinary(vector<ObservedBoard::CellId> &result, const Posi
     }
 }
 
-Selection::Result::Source Selection::find(PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, bool useRisk, const vector<ObservedBoard::CellId> *cells) {
+Selection::Result::Source Selection::find(PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, const vector<ObservedBoard::CellId> *cells) {
     Workspace &workspace = getWorkspace();
     result.cells.resize(0);
     result.observations.resize(0);
@@ -335,6 +334,15 @@ Selection::Result::Source Selection::find(PositionState &state, const Probabilit
     if (cells != nullptr) {
         result.cells = *cells;
         return Result::Source::Specified;
+    }
+    const bool root = result.mode != Mode::Inner;
+    const bool oldJava = fiftyConfig.algorithm == FiftyFifty::Algorithm::OldJava;
+    if (root) {
+        Semi::Kind semi = FiftyFifty().detect(result.cells, state, probabilities, fiftyConfig, fiftyPool);
+        if (oldJava && semi == Semi::Kind::None)
+            semi = FiftyFifty().prepareRisk(result.fiftyFifty, state, probabilities, shapeConfig, fiftyConfig, fiftyPool, &result.cells);
+        if (semi != Semi::Kind::None)
+            return semi == Semi::Kind::Forced ? Result::Source::Forced : Result::Source::Semi;
     }
     workspace.offEdge.resize(0);
     workspace.witnesses.resize(0);
@@ -345,7 +353,7 @@ Selection::Result::Source Selection::find(PositionState &state, const Probabilit
             if (state.board.cells[row][col] <= ObservedBoard::CellState::Num8)
                 workspace.witnesses.push_back(cell);
             else if (state.board.cells[row][col] != ObservedBoard::CellState::ForcedMine) {
-                if (!useRisk && Probability().mineProbability(state.probability, probabilities, cell, state.board, state.basic, state.structure) == 0.0L) {
+                if (!root && Probability().mineProbability(state.probability, probabilities, cell, state.board, state.basic, state.structure) == 0.0L) {
                     result.cells.push_back(cell);
                     return Result::Source::Safe;
                 }
@@ -358,15 +366,7 @@ Selection::Result::Source Selection::find(PositionState &state, const Probabilit
             }
         }
 
-    Semi::Result &semi = result.fiftyFifty.semi;
-    semi.cells.swap(result.cells);
-    FiftyFifty().detect(semi, state, probabilities, fiftyConfig, fiftyPool);
-    if (semi.kind == Semi::Kind::None && useRisk && fiftyConfig.algorithm == FiftyFifty::Algorithm::OldJava)
-        FiftyFifty().prepareRisk(result.fiftyFifty, state, probabilities, shapeConfig, fiftyConfig, fiftyPool, true);
-    result.cells.swap(semi.cells);
-    if (semi.kind != Semi::Kind::None)
-        return semi.kind == Semi::Kind::Forced ? Result::Source::Forced : Result::Source::Semi;
-    selectOrdinary(result.cells, state, probabilities, useRisk && fiftyConfig.algorithm == FiftyFifty::Algorithm::OldJava ? &result.fiftyFifty.oldJava : nullptr, span<const ObservedBoard::CellId>(workspace.offEdge.data, (int)workspace.offEdge.size), span<const ObservedBoard::CellId>(workspace.witnesses.data, (int)workspace.witnesses.size), firstOffEdge, config);
+    selectOrdinary(result.cells, state, probabilities, root && oldJava ? &result.fiftyFifty.oldJava : nullptr, span<const ObservedBoard::CellId>(workspace.offEdge.data, (int)workspace.offEdge.size), span<const ObservedBoard::CellId>(workspace.witnesses.data, (int)workspace.witnesses.size), firstOffEdge, config);
     std::sort(result.cells.data, result.cells.data + result.cells.size, [&](ObservedBoard::CellId left, ObservedBoard::CellId right) {
         const long double leftProbability = Probability().mineProbability(state.probability, probabilities, left, state.board, state.basic, state.structure);
         const long double rightProbability = Probability().mineProbability(state.probability, probabilities, right, state.board, state.basic, state.structure);
@@ -379,12 +379,12 @@ int Selection::begin(PositionState &state, const Probability::Pool &probabilitie
     const bool root = mode != Mode::Inner;
     result.mode = mode;
     result.next = 0;
-    result.source = find(state, probabilities, shapeConfig, config, fiftyConfig, fiftyPool, result, root, cells);
+    result.source = find(state, probabilities, shapeConfig, config, fiftyConfig, fiftyPool, result, cells);
     const bool semi = result.source == Result::Source::Forced || result.source == Result::Source::Semi;
     result.direct = mode == Mode::JavaEval && result.source == Result::Source::Forced && result.cells.size < 4;
     const int nodes = result.direct ? 0 : removeDead(result, result.source, state, probabilities, shapeConfig);
     if (root && !semi && result.cells.size != 0 && (fiftyConfig.algorithm == FiftyFifty::Algorithm::Templates || result.source == Result::Source::Specified))
-        FiftyFifty().prepareRisk(result.fiftyFifty, state, probabilities, shapeConfig, fiftyConfig, fiftyPool, false);
+        FiftyFifty().prepareRisk(result.fiftyFifty, state, probabilities, shapeConfig, fiftyConfig, fiftyPool, nullptr);
     result.remainingSafe = state.board.cells.rows() * state.board.cells.cols() - state.board.totalMines;
     result.forcedSafes = 0;
     for (int row = 0; row < state.board.cells.rows(); ++row)
@@ -413,10 +413,11 @@ Selection::Evaluation Selection::next(Result &result, PositionState &state, cons
     if (!prepare(result, index, state, probabilities, shapeConfig, config, linkedClears, preparationNodes))
         return Evaluation(cell, JavaLite::Result(0.0L, 1.0L, {}, 0, false), 0.0L, preparationNodes);
     const bool risk = result.mode != Mode::Inner && !safe && result.source != Result::Source::Forced && result.source != Result::Source::Semi;
-    const long double influence = risk && observation.probability[9] != 1.0L ? FiftyFifty().influence(cell, state, probabilities, result.fiftyFifty, shapeConfig, fiftyConfig) : 0.0L;
+    long double compensation = risk && observation.probability[9] != 1.0L ? FiftyFifty().influence(cell, state, probabilities, result.fiftyFifty, shapeConfig, fiftyConfig) : 0.0L;
     const JavaLite::Result javaLite = JavaLite().evaluate(state, shapeConfig, config.progressContribution, pool, cell, observation, result.remainingSafe, linkedClears, safe, result.mode == Mode::Inner, floor, details);
-    long double compensation = risk ? config.influenceScale * influence : 0.0L;
-    if (risk && fiftyConfig.algorithm == FiftyFifty::Algorithm::OldJava && observation.probability[9] != 1.0L) compensation *= javaLite.value * javaLite.progressMultiplier / (1.0L - observation.probability[9]);
+    if (result.mode == Mode::JavaEval) compensation *= 0.9L;
+    if (risk && fiftyConfig.algorithm == FiftyFifty::Algorithm::OldJava && observation.probability[9] != 1.0L)
+        compensation *= javaLite.value * (result.mode == Mode::JavaEval ? javaLite.progressMultiplier : 1.0L) / (1.0L - observation.probability[9]);
     return Evaluation(cell, javaLite, compensation, preparationNodes);
 }
 

@@ -262,7 +262,7 @@ bool Semi::extendChain(const PositionState &state, const Probability::Pool &prob
     return false;
 }
 
-Semi::Kind Semi::extendChains(Result &result, const PositionState &state, const Probability::Pool &probabilities, span<Link> links, std::deque<Chain> &chains, int &chainCount, CellId target) {
+Semi::Kind Semi::extendChains(vector<CellId> &cells, const PositionState &state, const Probability::Pool &probabilities, span<Link> links, std::deque<Chain> &chains, int &chainCount, CellId target) {
     for (int startIndex = 0; startIndex < links.size; ++startIndex) {
         Link &start = links.data[startIndex];
         if (start.closedFirst == start.closedSecond)
@@ -279,11 +279,11 @@ Semi::Kind Semi::extendChains(Result &result, const PositionState &state, const 
             chain.trouble.push_back(start.trouble[i]);
         start.processed = true;
         if (extendChain(state, probabilities, links, chain, chains, chainCount, target)) {
-            result.cells.resize(0);
+            cells.resize(0);
             for (int i = 0; i < (int)chain.whole5050.size; ++i) {
                 const CellId cell = chain.whole5050.data[i];
                 if (!chain.semi || Probability().mineProbability(state.probability, probabilities, cell, state.board, state.basic, state.structure) <= 0.5L)
-                    result.cells.push_back(cell);
+                    cells.push_back(cell);
             }
             return chain.semi ? Kind::Semi : Kind::Forced;
         }
@@ -300,7 +300,7 @@ Semi::Kind Semi::extendChains(Result &result, const PositionState &state, const 
     return Kind::None;
 }
 
-Semi::Kind Semi::connectChains(Result &result, const PositionState &state, const Probability::Pool &probabilities, span<const CellId> dead, std::deque<Chain> &chains, int chainCount, const std::deque<vector<CellId>> &witnesses, int witnessCount, CellId target) {
+Semi::Kind Semi::connectChains(vector<CellId> &cells, const PositionState &state, const Probability::Pool &probabilities, span<const CellId> dead, std::deque<Chain> &chains, int chainCount, const std::deque<vector<CellId>> &witnesses, int witnessCount, CellId target) {
     Workspace &workspace = getWorkspace();
     for (int witnessIndex = 0; witnessIndex < witnessCount; ++witnessIndex) {
         const vector<CellId> &witness = witnesses[witnessIndex];
@@ -355,12 +355,12 @@ Semi::Kind Semi::connectChains(Result &result, const PositionState &state, const
                 }
                 const int comparison = tally1 < tally2 ? -1 : (tally1 > tally2 ? 1 : 0);
                 if (target >= 0 && !((comparison <= 0 && chain1->openTile == target) || (comparison >= 0 && chain2->openTile == target))) continue;
-                result.cells.resize(0);
+                cells.resize(0);
                 if (comparison == 0) {
-                    result.cells.push_back(chain1->openTile);
-                    result.cells.push_back(chain2->openTile);
+                    cells.push_back(chain1->openTile);
+                    cells.push_back(chain2->openTile);
                 } else
-                    result.cells.push_back(comparison < 0 ? chain1->openTile : chain2->openTile);
+                    cells.push_back(comparison < 0 ? chain1->openTile : chain2->openTile);
                 // 连接约束含两格之外的可能雷位，两端可以同时安全。
                 return Kind::Semi;
             }
@@ -369,10 +369,9 @@ Semi::Kind Semi::connectChains(Result &result, const PositionState &state, const
     return Kind::None;
 }
 
-Semi::Kind Semi::update(Result &result, const PositionState &state, const Probability::Pool &probabilities, span<const CellId> dead, CellId target) {
+Semi::Kind Semi::update(vector<CellId> &cells, const PositionState &state, const Probability::Pool &probabilities, span<const CellId> dead, CellId target) {
     Workspace &workspace = getWorkspace();
-    result.kind = Kind::None;
-    result.cells.resize(0);
+    cells.resize(0);
     int linkCount = 0;
     int chainCount = 0;
     int witnessCount = 0;
@@ -389,41 +388,32 @@ Semi::Kind Semi::update(Result &result, const PositionState &state, const Probab
             break;
     }
     if (unavoidable != nullptr) {
-        result.cells.resize(0);
-        result.cells.push_back(unavoidable->first);
-        result.cells.push_back(unavoidable->second);
+        cells.resize(0);
+        cells.push_back(unavoidable->first);
+        cells.push_back(unavoidable->second);
         // 重叠的封闭 Semi 边属于同一组，沿共享端点收齐候选。
         if (unavoidable->semi) {
-            for (int i = 0; i < (int)result.cells.size; ++i) {
+            for (int i = 0; i < (int)cells.size; ++i) {
                 for (int j = 0; j < links.size; ++j) {
                     const Link &link = links.data[j];
-                    if (!link.semi || !link.unavoidable || (link.first != result.cells.data[i] && link.second != result.cells.data[i]))
+                    if (!link.semi || !link.unavoidable || (link.first != cells.data[i] && link.second != cells.data[i]))
                         continue;
-                    const CellId cell = link.first == result.cells.data[i] ? link.second : link.first;
-                    if (!semiContains(span<const CellId>(result.cells.data, (int)result.cells.size), cell))
-                        result.cells.push_back(cell);
+                    const CellId cell = link.first == cells.data[i] ? link.second : link.first;
+                    if (!semiContains(span<const CellId>(cells.data, (int)cells.size), cell))
+                        cells.push_back(cell);
                 }
             }
         }
-        result.kind = unavoidable->semi ? Kind::Semi : Kind::Forced;
-        return result.kind;
+        return unavoidable->semi ? Kind::Semi : Kind::Forced;
     }
-    const Kind kind = extendChains(result, state, probabilities, links, workspace.chains, chainCount, target);
-    if (kind != Kind::None) {
-        result.kind = kind;
-        return kind;
-    }
-    const Kind connected = connectChains(result, state, probabilities, dead, workspace.chains, chainCount, workspace.witnesses, witnessCount, target);
-    if (connected != Kind::None) {
-        result.kind = connected;
-        return connected;
-    }
-    return result.kind;
+    const Kind kind = extendChains(cells, state, probabilities, links, workspace.chains, chainCount, target);
+    if (kind != Kind::None) return kind;
+    return connectChains(cells, state, probabilities, dead, workspace.chains, chainCount, workspace.witnesses, witnessCount, target);
 }
 
 Semi::Result Semi::analyze(const PositionState &state, const Probability::Pool &probabilities, span<const CellId> dead) {
     Result result;
-    update(result, state, probabilities, dead);
+    result.kind = update(result.cells, state, probabilities, dead);
     return result;
 }
 

@@ -13,7 +13,7 @@ struct SuggestResult {
     struct Candidate {
         ObservedBoard::CellId cell;
         // LowRisk 为安全率，BruteForce 为最终胜率，JavaE 为含推进奖励的评分。
-        // Anytime 为最新完成层的普通分，不含推进奖励；推荐另看完成深度和选招分。
+        // Anytime 为最新完成层的原始分加根补偿；推荐先比较完成深度。
         long double value;
         Candidate(ObservedBoard::CellId cell, long double value) : cell(cell), value(value) {}
     };

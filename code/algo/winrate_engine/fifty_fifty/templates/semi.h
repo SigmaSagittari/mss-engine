@@ -28,7 +28,7 @@ struct TemplateSemi {
     };
 
     int templateCount();
-    void detect(Semi::Result &result, const PositionState &state, const Probability::Pool &probabilities, int prefix, Pool &pool);
+    Semi::Kind detect(vector<ObservedBoard::CellId> &cells, const PositionState &state, const Probability::Pool &probabilities, int prefix, Pool &pool);
 
   private:
     struct Workspace;

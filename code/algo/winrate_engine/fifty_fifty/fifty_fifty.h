@@ -32,15 +32,14 @@ struct FiftyFifty {
         Pool(TemplateSemi::Pool &semi, TemplateLongTermRisk::Pool &risk) : templates(semi, risk) {}
     };
     struct Result {
-        Semi::Result semi;
         LongTermRisk::Result oldJava;
         TemplateLongTermRisk::Result templates;
     };
 
     int templateCount();
-    void detect(Semi::Result &result, const PositionState &state, const Probability::Pool &probabilities, const Config &config, Pool &pool);
-    // 同一根盘面先准备所选路线的风险；OldJava 可同时补找 Semi。
-    void prepareRisk(Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, Pool &pool, bool collectSemi);
+    Semi::Kind detect(vector<ObservedBoard::CellId> &cells, const PositionState &state, const Probability::Pool &probabilities, const Config &config, Pool &pool);
+    // 准备风险；OldJava 可同时写入补找候选，命中时返回分类。
+    Semi::Kind prepareRisk(Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, Pool &pool, vector<ObservedBoard::CellId> *semiCells);
     // 两条路线均返回除以全盘布局数后的无条件风险量。
     long double influence(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, Result &result, const ShapeSolverConfig &shapeConfig, const Config &config);
     LongTermRisk::Details describeOldJava(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const LongTermRisk::Config &config);

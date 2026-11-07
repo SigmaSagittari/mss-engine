@@ -106,7 +106,7 @@ long double LongTermRisk::candidateTally(PositionState &state, const Probability
     return value;
 }
 
-void LongTermRisk::update(Grid<long double> &influences, vector<long double> &enablers, Grid<long double> &values, Grid<unsigned char> &ready, PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Semi::Result *semi, Details *details) {
+Semi::Kind LongTermRisk::update(Grid<long double> &influences, vector<long double> &enablers, Grid<long double> &values, Grid<unsigned char> &ready, PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, vector<ObservedBoard::CellId> *semiCells, Details *details) {
     Workspace &workspace = getWorkspace();
     vector<ObservedBoard::CellId> &changedCells = workspace.changedCells;
     const int rows = state.board.cells.rows();
@@ -118,10 +118,8 @@ void LongTermRisk::update(Grid<long double> &influences, vector<long double> &en
     values.resize(3, size, 0.0L);
     ready.resize(3, size, 0);
     const int minesLeft = state.board.totalMines - state.basic.mineSum;
-    if (semi != nullptr) {
-        semi->kind = Semi::Kind::None;
-        semi->cells.resize(0);
-    }
+    Semi::Kind kind = Semi::Kind::None;
+    if (semiCells != nullptr) semiCells->resize(0);
 
     auto consider = [&](span<const ObservedBoard::CellId> tiles, span<const CellPosition> source, int mineCount, int maxMissing) -> bool {
         if (hasSafeSource(state.board, source))
@@ -143,14 +141,14 @@ void LongTermRisk::update(Grid<long double> &influences, vector<long double> &en
         const long double tally = state.countCandidatesWithForces(mines.span(), safes.span(), shapeConfig, changedCells);
         if (tally == 0.0L)
             return false;
-        if (semi != nullptr) {
+        if (semiCells != nullptr) {
             for (int i = 0; i < tiles.size; ++i) {
                 const long double mineTally = boxTally(tiles.data[i], state, probabilities);
                 if (std::abs(tally - mineTally) <= countTolerance * (std::max)(tally, mineTally) && !contains(dead, tiles.data[i]))
-                    semi->cells.push_back(tiles.data[i]);
+                    semiCells->push_back(tiles.data[i]);
             }
-            if (semi->cells.size != 0) {
-                semi->kind = (int)semi->cells.size == tiles.size && std::abs(2.0L * tally - state.probability.candidates) <= countTolerance * state.probability.candidates ? Semi::Kind::Forced : Semi::Kind::Semi;
+            if (semiCells->size != 0) {
+                kind = (int)semiCells->size == tiles.size && std::abs(2.0L * tally - state.probability.candidates) <= countTolerance * state.probability.candidates ? Semi::Kind::Forced : Semi::Kind::Semi;
                 return true;
             }
         }
@@ -179,7 +177,7 @@ void LongTermRisk::update(Grid<long double> &influences, vector<long double> &en
             const ObservedBoard::CellId tiles[2] = {state.board.id(row, col), state.board.id(row, col + 1)};
             const CellPosition source[6] = {CellPosition(row - 1, col - 1), CellPosition(row, col - 1), CellPosition(row + 1, col - 1), CellPosition(row - 1, col + 2), CellPosition(row, col + 2), CellPosition(row + 1, col + 2)};
             if (consider(span<const ObservedBoard::CellId>(tiles, 2), span<const CellPosition>(source, 6), 1, 2))
-                return;
+                return kind;
         }
     for (int row = 0; row + 1 < rows; ++row)
         for (int col = 0; col < cols; ++col) {
@@ -188,7 +186,7 @@ void LongTermRisk::update(Grid<long double> &influences, vector<long double> &en
             const ObservedBoard::CellId tiles[2] = {state.board.id(row, col), state.board.id(row + 1, col)};
             const CellPosition source[6] = {CellPosition(row - 1, col - 1), CellPosition(row - 1, col), CellPosition(row - 1, col + 1), CellPosition(row + 2, col - 1), CellPosition(row + 2, col), CellPosition(row + 2, col + 1)};
             if (consider(span<const ObservedBoard::CellId>(tiles, 2), span<const CellPosition>(source, 6), 1, 2))
-                return;
+                return kind;
         }
     for (int row = 0; row + 1 < rows; ++row)
         for (int col = 0; col + 1 < cols; ++col) {
@@ -197,16 +195,17 @@ void LongTermRisk::update(Grid<long double> &influences, vector<long double> &en
             const ObservedBoard::CellId tiles[4] = {state.board.id(row, col), state.board.id(row, col + 1), state.board.id(row + 1, col), state.board.id(row + 1, col + 1)};
             const CellPosition source[4] = {CellPosition(row - 1, col - 1), CellPosition(row - 1, col + 2), CellPosition(row + 2, col - 1), CellPosition(row + 2, col + 2)};
             if (consider(span<const ObservedBoard::CellId>(tiles, 4), span<const CellPosition>(source, 4), 2, 3))
-                return;
+                return kind;
         }
+    return kind;
 }
 
-void LongTermRisk::update(Result &result, PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Semi::Result *semi, Details *details) {
+Semi::Kind LongTermRisk::update(Result &result, PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, vector<ObservedBoard::CellId> *semiCells, Details *details) {
     Grid<long double> &influences = result.influences;
     vector<long double> &enablers = result.enablers;
     Grid<long double> &values = result.values;
     Grid<unsigned char> &ready = result.ready;
-    update(influences, enablers, values, ready, state, probabilities, dead, shapeConfig, config, semi, details);
+    return update(influences, enablers, values, ready, state, probabilities, dead, shapeConfig, config, semiCells, details);
 }
 
 long double LongTermRisk::influence(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, const vector<long double> &enablers, Grid<long double> &values, Grid<unsigned char> &ready, const ShapeSolverConfig &shapeConfig, Details *details) {
@@ -284,7 +283,8 @@ LongTermRisk::Details LongTermRisk::describe(ObservedBoard::CellId cell, Positio
 
 LongTermRisk::Result LongTermRisk::analyze(PositionState &state, const Probability::Pool &probabilities, span<const ObservedBoard::CellId> dead, const ShapeSolverConfig &shapeConfig, const Config &config, Semi::Result *semi) {
     Result result;
-    update(result, state, probabilities, dead, shapeConfig, config, semi);
+    const Semi::Kind kind = update(result, state, probabilities, dead, shapeConfig, config, semi != nullptr ? &semi->cells : nullptr);
+    if (semi != nullptr) semi->kind = kind;
     return result;
 }
 

@@ -71,6 +71,7 @@ struct Session {
     std::condition_variable_any searchWake_;
     std::string searchUpdate_;
     long long searchBudget_;
+    unsigned long long searchBudgetEpoch_; // 暂停或切换连续运行时，作废上一批的手动预算。
     bool searchRunning_;
     std::jthread mctsWorker_;
     std::jthread searchWorker_;

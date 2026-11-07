@@ -334,7 +334,7 @@ int TemplateSemi::matchPrefix(const Pool::Table &table, const Pool &pool, int no
     return -1;
 }
 
-void TemplateSemi::detect(Semi::Result &result, const PositionState &state, const Probability::Pool &probabilities, int prefix, Pool &pool) {
+Semi::Kind TemplateSemi::detect(vector<ObservedBoard::CellId> &cells, const PositionState &state, const Probability::Pool &probabilities, int prefix, Pool &pool) {
     Workspace &workspace = getWorkspace();
     int selected = -1;
     for (int i = 0; i < (int)pool.tables.size; ++i) if (pool.tables.data[i].prefix == prefix) { selected = i; break; }
@@ -353,14 +353,16 @@ void TemplateSemi::detect(Semi::Result &result, const PositionState &state, cons
             const int node = pool.starts.data.data[table.starts.offset + (dr + table.radiusR) * (table.radiusC * 2 + 1) + dc + table.radiusC];
             if (node >= 0 && matchPrefix(table, pool, node, facts, root) >= 0) facts.found.data[word] |= 1ULL << (root % 64);
         }
-    result.kind = Semi::Kind::None; result.cells.resize(0);
+    Semi::Kind kind = Semi::Kind::None;
+    cells.resize(0);
     for (int root = 0; root < facts.rows * facts.cols; ++root) if (facts.found.data[root / 64] & (1ULL << (root % 64))) {
         const long double probability = Probability().mineProbability(state.probability, probabilities, root, state.board, state.basic, state.structure);
         const bool forced = std::abs(probability - 0.5L) <= halfTolerance;
-        if (forced && result.kind != Semi::Kind::Forced) { result.cells.resize(0); result.kind = Semi::Kind::Forced; }
-        if (result.kind != Semi::Kind::Forced) result.kind = Semi::Kind::Semi;
-        if (forced || result.kind == Semi::Kind::Semi) result.cells.push_back(root);
+        if (forced && kind != Semi::Kind::Forced) { cells.resize(0); kind = Semi::Kind::Forced; }
+        if (kind != Semi::Kind::Forced) kind = Semi::Kind::Semi;
+        if (forced || kind == Semi::Kind::Semi) cells.push_back(root);
     }
+    return kind;
 }
 
 } // 命名空间 mss

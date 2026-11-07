@@ -7,6 +7,18 @@
 
 namespace mss {
 
+struct AnytimeSearch::Workspace {
+    vectorPool<int> order;
+    vector<int> path;
+    Selection::Result selected;
+    vector<Selection::Evaluation> evaluatedMoves;
+};
+
+__declspec(noinline) AnytimeSearch::Workspace &AnytimeSearch::getWorkspace() {
+    static thread_local Workspace workspace;
+    return workspace;
+}
+
 struct AnytimeSearch::Pool::ProbabilityLayer {
     Probability::Pool pool;
     vector<Probability::Result> results;
@@ -23,8 +35,7 @@ void AnytimeSearch::Pool::clear() {
     nodes.data.resize(0);
     deltas.resize(0);
     clearProbabilities();
-    for (Frame &frame : frames)
-        frame.active = false;
+    nextPosition = -1;
 }
 
 void AnytimeSearch::Pool::clearProbabilities() {
@@ -71,16 +82,14 @@ SuggestResult AnytimeSearch::Result::snapshot(const Pool &pool) const {
     return result;
 }
 
-void AnytimeSearch::selectRoot(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details) {
-    Selection::Result &selected = pool.selected;
-    vector<Selection::Evaluation> &evaluatedMoves = pool.evaluatedMoves;
+void AnytimeSearch::selectRoot(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Selection::Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Selection::Result &selected, vector<Selection::Evaluation> &evaluatedMoves, JavaLite::Pool &pending, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details) {
     evaluatedMoves.resize(0);
-    pool.pending.clear();
-    pool.pending.probabilityPool.clear();
-    result.nodes += Selection().begin(state, state.probabilityPool, shapeConfig, config.selection, fiftyConfig, fiftyPool, selected, Selection::Mode::Root, cells);
+    pending.clear();
+    pending.probabilityPool.clear();
+    result.nodes += Selection().begin(state, state.probabilityPool, shapeConfig, config, fiftyConfig, fiftyPool, selected, Selection::Mode::Root, cells);
     result.reason = selected.reason();
     while (selected.next < (int)selected.cells.size) {
-        const Selection::Evaluation evaluated = Selection().next(selected, state, state.probabilityPool, shapeConfig, config.selection, fiftyConfig, &pool.pending, -1.0L, details);
+        const Selection::Evaluation evaluated = Selection().next(selected, state, state.probabilityPool, shapeConfig, config, fiftyConfig, &pending, -1.0L, details);
         result.nodes += evaluated.nodes();
         if (evaluated.javaLite.valid) evaluatedMoves.push_back(evaluated);
     }
@@ -111,18 +120,16 @@ void AnytimeSearch::selectCandidates(vector<Selection::Evaluation> &evaluatedMov
     evaluatedMoves.size = selectedCount;
 }
 
-long long AnytimeSearch::prepareNode(PositionState &state, const Probability::Pool &probabilities, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, int width) {
-    Selection::Result &selected = pool.selected;
-    vector<Selection::Evaluation> &evaluatedMoves = pool.evaluatedMoves;
+long long AnytimeSearch::prepareNode(PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Selection::Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Selection::Result &selected, vector<Selection::Evaluation> &evaluatedMoves, JavaLite::Pool &pending, int width) {
     evaluatedMoves.resize(0);
-    pool.pending.clear();
-    pool.pending.probabilityPool.clear();
-    long long nodes = Selection().begin(state, probabilities, shapeConfig, config.selection, fiftyConfig, fiftyPool, selected, Selection::Mode::Inner);
+    pending.clear();
+    pending.probabilityPool.clear();
+    long long nodes = Selection().begin(state, probabilities, shapeConfig, config, fiftyConfig, fiftyPool, selected, Selection::Mode::Inner);
     assert_(selected.cells.size != 0, "AnytimeSearch: 非终局没有内层候选");
     const int limit = selected.source == Selection::Result::Source::Safe ? 1 : width;
     while (selected.next < (int)selected.cells.size) {
         const long double floor = (int)evaluatedMoves.size == limit ? evaluatedMoves.data[limit - 1].score() : -1.0L;
-        const Selection::Evaluation evaluated = Selection().next(selected, state, probabilities, shapeConfig, config.selection, fiftyConfig, &pool.pending, floor);
+        const Selection::Evaluation evaluated = Selection().next(selected, state, probabilities, shapeConfig, config, fiftyConfig, &pending, floor);
         nodes += evaluated.nodes();
         if (!evaluated.javaLite.valid) continue;
         evaluatedMoves.push_back(evaluated);
@@ -131,18 +138,27 @@ long long AnytimeSearch::prepareNode(PositionState &state, const Probability::Po
     return nodes;
 }
 
-void AnytimeSearch::orderMoves(Pool &pool, vectorPool<Pool::Node>::vector children, Pool::Frame &frame) {
-    frame.order.resize(children.count);
-    for (int i = 0; i < (int)children.count; ++i)
-        frame.order.data[i] = (int)children.offset + i;
-    std::sort(frame.order.data, frame.order.data + frame.order.size, [&](int left, int right) {
-        return pool.score(left) != pool.score(right) ? pool.score(left) > pool.score(right) : left < right;
-    });
-    frame.next = 0;
-    frame.nextOutcome = 0;
-    frame.value = 0.0L;
-    frame.settled = true;
-    frame.active = true;
+vectorPool<int>::vector AnytimeSearch::orderMoves(const Pool &pool, vectorPool<Pool::Node>::vector children, int maxDepth, int resumeMove, vectorPool<int> &order) {
+    vectorPool<int>::vector moves = order.push_back();
+    if (resumeMove >= 0) order.push_back(moves, resumeMove);
+    for (int i = 0; i < (int)children.count; ++i) {
+        const int index = (int)children.offset + i;
+        const Pool::Node &candidate = pool.nodes.data.data[index];
+        if (index != resumeMove && !candidate.finished && candidate.expandedDepth < maxDepth)
+            order.push_back(moves, index);
+    }
+    const int first = resumeMove >= 0 ? 1 : 0;
+    if ((int)moves.count > first + 1) {
+        auto priority = [&](int index) {
+            const Pool::Node &candidate = pool.nodes.data.data[index];
+            return candidate.value * candidate.progressMultiplier + (candidate.root ? pool.rootCompensations.data[index] : 0.0L);
+        };
+        std::sort(order.data.data + moves.offset + first, order.data.data + moves.offset + moves.count, [&](int left, int right) {
+            const long double leftPriority = priority(left), rightPriority = priority(right);
+            return leftPriority != rightPriority ? leftPriority > rightPriority : left < right;
+        });
+    }
+    return moves;
 }
 
 void AnytimeSearch::appendDeltas(Pool &pool, int index, const JavaLite::Result &evaluated, const JavaLite::Pool &values) {
@@ -150,7 +166,7 @@ void AnytimeSearch::appendDeltas(Pool &pool, int index, const JavaLite::Result &
     vectorPool<Pool::Node>::vector branches = pool.nodes.push_back();
     if (evaluated.deltas.count != 0) {
         while ((int)pool.probabilities.size <= depth + 1) pool.probabilities.push_back(nullptr);
-        if (pool.probabilities.data[depth + 1] == nullptr) pool.probabilities.data[depth + 1] = new Pool::ProbabilityLayer(pool.pending.probabilityPool.shapes, pool.pending.probabilityPool.distributions, pool.pending.probabilityPool.combinations);
+        if (pool.probabilities.data[depth + 1] == nullptr) pool.probabilities.data[depth + 1] = new Pool::ProbabilityLayer(values.probabilityPool.shapes, values.probabilityPool.distributions, values.probabilityPool.combinations);
     }
     for (int i = 0; i < (int)evaluated.deltas.count; ++i) {
         Pool::ProbabilityLayer &layer = *pool.probabilities.data[depth + 1];
@@ -169,7 +185,7 @@ void AnytimeSearch::appendDeltas(Pool &pool, int index, const JavaLite::Result &
         const int positionIndex = pool.nodes.data.size;
         pool.nodes.data.resize(positionIndex + 1);
         ++branches.count;
-        new (pool.nodes.data.data + positionIndex) Pool::Node(delta, probabilityIndex, depth + 1);
+        new (pool.nodes.data.data + positionIndex) Pool::Node(delta, probabilityIndex, depth + 1, index);
     }
     Pool::Node &candidate = pool.nodes.data.data[index];
     candidate.child = branches;
@@ -178,8 +194,9 @@ void AnytimeSearch::appendDeltas(Pool &pool, int index, const JavaLite::Result &
 AnytimeSearch::Result AnytimeSearch::buildRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details) {
     Result result;
     pool.clear();
-    vector<Selection::Evaluation> &evaluatedMoves = pool.evaluatedMoves;
-    AnytimeSearch().selectRoot(result, state, pool, shapeConfig, config, fiftyConfig, fiftyPool, cells, details);
+    Selection::Result &selected = getWorkspace().selected;
+    vector<Selection::Evaluation> &evaluatedMoves = getWorkspace().evaluatedMoves;
+    selectRoot(result, state, shapeConfig, config.selection, fiftyConfig, fiftyPool, selected, evaluatedMoves, pool.pending, cells, details);
     if (cells == nullptr) {
         std::stable_sort(evaluatedMoves.data, evaluatedMoves.data + evaluatedMoves.size, [](const Selection::Evaluation &left, const Selection::Evaluation &right) { return left.score() > right.score(); });
         if (config.width[0] > 0 && (int)evaluatedMoves.size > config.width[0]) evaluatedMoves.size = config.width[0];
@@ -187,7 +204,7 @@ AnytimeSearch::Result AnytimeSearch::buildRoot(PositionState &state, Pool &pool,
     result.roots = pool.nodes.push_back();
     pool.rootCompensations.resize((int)result.roots.offset + evaluatedMoves.size);
     for (int i = 0; i < (int)evaluatedMoves.size; ++i) {
-        pool.nodes.push_back(result.roots, Pool::Node(evaluatedMoves.data[i], 0));
+        pool.nodes.push_back(result.roots, Pool::Node(evaluatedMoves.data[i], 0, -1));
         Pool::Node &candidate = pool.nodes.data.data[result.roots.offset + i];
         pool.rootCompensations.data[result.roots.offset + i] = candidate.finished ? 0.0L : evaluatedMoves.data[i].compensation;
     }
@@ -199,46 +216,16 @@ AnytimeSearch::Result AnytimeSearch::buildRoot(PositionState &state, Pool &pool,
     return result;
 }
 
-long long AnytimeSearch::extend(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, long long nodeBudget, int maxDepth, SuggestResult::Details *details) {
-    if (pool.frames.empty()) pool.frames.emplace_back();
-    Pool::Frame &frame = pool.frames[0];
-    if (!frame.active) orderMoves(pool, result.roots, frame);
-    long long budget = nodeBudget;
-    bool complete = true;
-    while (frame.next < (int)frame.order.size) {
-        const int index = frame.order.data[frame.next];
-        AnytimeSearch().extendCandidate(state, pool, index, maxDepth, shapeConfig, config, fiftyConfig, fiftyPool, budget, complete);
-        if (!complete) break;
-        if (details) {
-            const Pool::Node &candidate = pool.nodes.data.data[index];
-            // 数字顺序与根分支顺序一致；只在整格完成后发布，保留上一完整层的子评分。
-            int branch = 0;
-            for (int i = 0; i < (int)details->outcomes.size; ++i)
-                if (details->outcomes.data[i].cell == candidate.cell) details->outcomes.data[i].value = pool.nodes.data.data[candidate.child.offset + branch++].value;
-            details->history.push_back(SuggestResult::Details::Layer(candidate.cell, maxDepth, pool.score(index)));
-        }
-        ++frame.next;
-    }
-    if (complete) {
-        result.completedDepth = maxDepth;
-        frame.active = false;
-    }
-    result.finished = complete;
-    for (int i = 0; i < (int)result.roots.count; ++i)
-        result.finished = result.finished && pool.nodes.data.data[result.roots.offset + i].finished;
-    result.nodes += nodeBudget - budget;
-    return budget;
-}
-
-void AnytimeSearch::extendPosition(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, long long &budget, bool &complete) {
+int AnytimeSearch::extendPosition(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, long long &budget, span<const int> resume) {
     const int depth = pool.nodes.data.data[index].depth;
     if (!pool.nodes.data.data[index].prepared) {
         const int width = config.width[depth == 1 ? 1 : 2];
-        budget -= AnytimeSearch().prepareNode(state, pool.probabilities.data[depth]->pool, pool, shapeConfig, config, fiftyConfig, fiftyPool, width);
-        const vector<Selection::Evaluation> &evaluatedMoves = pool.evaluatedMoves;
+        Selection::Result &selected = getWorkspace().selected;
+        vector<Selection::Evaluation> &evaluatedMoves = getWorkspace().evaluatedMoves;
+        budget -= prepareNode(state, pool.probabilities.data[depth]->pool, shapeConfig, config.selection, fiftyConfig, fiftyPool, selected, evaluatedMoves, pool.pending, width);
         vectorPool<Pool::Node>::vector candidates = pool.nodes.push_back();
         for (int i = 0; i < (int)evaluatedMoves.size; ++i) {
-            pool.nodes.push_back(candidates, Pool::Node(evaluatedMoves.data[i], depth));
+            pool.nodes.push_back(candidates, Pool::Node(evaluatedMoves.data[i], depth, index));
         }
         pool.nodes.data.data[index].child = candidates;
         pool.nodes.data.data[index].prepared = true;
@@ -246,56 +233,57 @@ void AnytimeSearch::extendPosition(PositionState &state, Pool &pool, int index, 
         for (int i = 0; i < (int)evaluatedMoves.size; ++i)
             appendDeltas(pool, (int)candidates.offset + i, evaluatedMoves.data[i].javaLite, pool.pending);
         --pool.probabilities.data[depth]->remaining;
-        long double best = 0.0L, bestScore = 0.0L;
+        long double best = 0.0L;
         bool allFinished = true;
         for (int i = 0; i < (int)candidates.count; ++i) {
             const Pool::Node &candidate = pool.nodes.data.data[candidates.offset + i];
-            if (i == 0 || candidate.score() > bestScore) { best = candidate.value; bestScore = candidate.score(); }
+            best = (std::max)(best, candidate.value);
             allFinished = allFinished && candidate.finished;
         }
         pool.nodes.data.data[index].value = best;
         pool.nodes.data.data[index].finished = allFinished;
     }
-    if (pool.nodes.data.data[index].expandedDepth >= maxDepth || pool.nodes.data.data[index].finished) return;
-    if ((int)pool.frames.size() <= depth) pool.frames.resize(depth + 1);
-    Pool::Frame &frame = pool.frames[depth];
-    if (!frame.active) orderMoves(pool, pool.nodes.data.data[index].child, frame);
-    while (frame.next < (int)frame.order.size) {
-        AnytimeSearch().extendCandidate(state, pool, frame.order.data[frame.next], maxDepth, shapeConfig, config, fiftyConfig, fiftyPool, budget, complete);
-        if (!complete) return;
-        ++frame.next;
-    }
+    if (pool.nodes.data.data[index].expandedDepth >= maxDepth || pool.nodes.data.data[index].finished) return -1;
     const vectorPool<Pool::Node>::vector children = pool.nodes.data.data[index].child;
-    long double best = 0.0L, bestScore = 0.0L;
+    const int resumeMove = resume.size != 0 ? resume.data[--resume.size] : -1;
+    vectorPool<int> &order = getWorkspace().order;
+    const vectorPool<int>::vector moves = orderMoves(pool, children, maxDepth, resumeMove, order);
+    for (int i = 0; i < (int)moves.count; ++i) {
+        const int move = order.data.data[moves.offset + i];
+        const int nextPosition = extendCandidate(state, pool, move, maxDepth, shapeConfig, config, fiftyConfig, fiftyPool, budget, move == resumeMove ? resume : span<const int>());
+        if (nextPosition >= 0) {
+            order.pop_back(moves);
+            return nextPosition;
+        }
+    }
+    order.pop_back(moves);
+    long double best = 0.0L;
     bool allFinished = true;
     for (int i = 0; i < (int)children.count; ++i) {
         const Pool::Node &candidate = pool.nodes.data.data[children.offset + i];
-        if (i == 0 || candidate.score() > bestScore) { best = candidate.value; bestScore = candidate.score(); }
+        best = (std::max)(best, candidate.value);
         allFinished = allFinished && candidate.finished;
     }
     pool.nodes.data.data[index].value = best;
     pool.nodes.data.data[index].finished = allFinished;
     pool.nodes.data.data[index].expandedDepth = maxDepth;
-    frame.active = false;
+    return -1;
 }
 
-void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, long long &budget, bool &complete) {
-    if (pool.nodes.data.data[index].finished) {
-        pool.nodes.data.data[index].expandedDepth = maxDepth;
-        return;
-    }
+int AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, long long &budget, span<const int> resume) {
     const int depth = pool.nodes.data.data[index].depth;
     const vectorPool<Pool::Node>::vector children = pool.nodes.data.data[index].child;
     const int horizon = maxDepth - depth;
-    Pool::Frame &frame = pool.frames[depth];
+    const int resumePosition = resume.size != 0 ? resume.data[--resume.size] : -1;
+    long double sum = 0.0L;
+    bool settled = true;
     int safe = state.board.cells.rows() * state.board.cells.cols() - state.board.totalMines;
     for (int row = 0; row < state.board.cells.rows(); ++row)
         for (int col = 0; col < state.board.cells.cols(); ++col)
             if (state.board.cells[row][col] <= ObservedBoard::CellState::Num8) --safe;
     // 1.5 的 remainingSafe 是根状态总安全数，frameCount 是路径深度加一；换到当前盘面就是只剩一个安全格。
     const bool terminal = safe <= 1 || state.board.totalMines == state.basic.mineSum;
-    while (frame.nextOutcome < (int)children.count) {
-        const int i = frame.nextOutcome;
+    for (int i = 0; i < (int)children.count; ++i) {
         const int branchIndex = (int)children.offset + i;
         const JavaLite::Delta &branch = pool.deltas.data[pool.nodes.data.data[branchIndex].deltaIndex];
         const int clears = branch.knownSafeCount;
@@ -308,15 +296,12 @@ void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index,
         } else if (clears >= horizon + 2) {
             value = 1.0L;
             finished = false;
-        } else if (pool.nodes.data.data[branchIndex].expandedDepth >= maxDepth || pool.nodes.data.data[branchIndex].finished) {
+        } else if (branchIndex < resumePosition || pool.nodes.data.data[branchIndex].expandedDepth >= maxDepth || pool.nodes.data.data[branchIndex].finished) {
             value = pool.nodes.data.data[branchIndex].value;
             finished = pool.nodes.data.data[branchIndex].finished;
         } else {
             const bool needProbability = !pool.nodes.data.data[branchIndex].prepared;
-            if (needProbability && budget <= 0) {
-                complete = false;
-                return;
-            }
+            if (needProbability && budget <= 0) return branchIndex;
             const JavaLite::Delta delta = branch;
             ObservedBoard().applyDelta(state.board, delta.boardDelta, state.basicPool.board);
             Basic().applyDelta(state.basic, delta.basicDelta, state.basicPool);
@@ -327,33 +312,26 @@ void AnytimeSearch::extendCandidate(PositionState &state, Pool &pool, int index,
                 const Pool::Node &position = pool.nodes.data.data[branchIndex];
                 state.probability = pool.probabilities.data[position.depth]->results.data[position.probabilityIndex];
             }
-            AnytimeSearch().extendPosition(state, pool, branchIndex, maxDepth, shapeConfig, config, fiftyConfig, fiftyPool, budget, complete);
-            value = pool.nodes.data.data[branchIndex].value;
-            finished = pool.nodes.data.data[branchIndex].finished;
+            const int nextPosition = extendPosition(state, pool, branchIndex, maxDepth, shapeConfig, config, fiftyConfig, fiftyPool, budget, branchIndex == resumePosition ? resume : span<const int>());
             state.probability = previousProbability;
             Structure().applyDelta(state.structure, delta.structureDelta, state.shapes, true);
             Basic().applyDelta(state.basic, delta.basicDelta, state.basicPool, true);
             ObservedBoard().applyDelta(state.board, delta.boardDelta, state.basicPool.board, true);
-            if (!complete) return;
+            if (nextPosition >= 0) return nextPosition;
+            value = pool.nodes.data.data[branchIndex].value;
+            finished = pool.nodes.data.data[branchIndex].finished;
         }
-        frame.value += probability * value;
-        frame.settled = frame.settled && finished;
-        ++frame.nextOutcome;
+        sum += probability * value;
+        settled = settled && finished;
         pool.nodes.data.data[branchIndex].value = value;
         // 永久终结的局面以后也不会生成招法，结束其完整概率的用途。
         if (finished && !pool.nodes.data.data[branchIndex].finished && !pool.nodes.data.data[branchIndex].prepared) --pool.probabilities.data[depth + 1]->remaining;
         pool.nodes.data.data[branchIndex].finished = finished;
     }
-    pool.nodes.data.data[index].value = frame.value;
-    pool.nodes.data.data[index].finished = frame.settled;
+    pool.nodes.data.data[index].value = sum;
+    pool.nodes.data.data[index].finished = settled;
     pool.nodes.data.data[index].expandedDepth = maxDepth;
-    if (pool.nodes.data.data[index].root && frame.settled) {
-        pool.nodes.data.data[index].progressMultiplier = 1.0L;
-        pool.rootCompensations.data[index] = 0.0L;
-    }
-    frame.nextOutcome = 0;
-    frame.value = 0.0L;
-    frame.settled = true;
+    return -1;
 }
 
 AnytimeSearch::Result AnytimeSearch::analyze(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details) {
@@ -369,15 +347,52 @@ AnytimeSearch::Result AnytimeSearch::analyze(PositionState &state, Pool &pool, c
 }
 
 void AnytimeSearch::update(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, SuggestResult::Details *details) {
-    if (config.nodeLimit == 0) return;
+    if (config.nodeLimit == 0 || result.finished) return;
+    vector<int> &path = getWorkspace().path;
+    vectorPool<int> &order = getWorkspace().order;
+    for (int index = pool.nextPosition; index >= 0; index = pool.nodes.data.data[index].parent)
+        path.push_back(index);
+    int nextPosition = -1;
     long long budget = config.nodeLimit;
     while (!result.finished) {
-        const int beforeDepth = result.completedDepth;
-        budget = AnytimeSearch().extend(result, state, pool, shapeConfig, config, fiftyConfig, fiftyPool, budget, beforeDepth + 1, details);
+        const int maxDepth = result.completedDepth + 1;
+        span<const int> resume(path.data, (int)path.size);
+        const int resumeMove = resume.size != 0 ? resume.data[--resume.size] : -1;
+        if (resumeMove < 0) {
+            for (int i = 0; i < (int)result.roots.count; ++i) {
+                const int index = (int)result.roots.offset + i;
+                Pool::Node &candidate = pool.nodes.data.data[index];
+                if (!candidate.finished) continue;
+                candidate.expandedDepth = maxDepth;
+                if (details) details->history.push_back(SuggestResult::Details::Layer(candidate.cell, maxDepth, pool.score(index)));
+            }
+        }
+        const vectorPool<int>::vector moves = orderMoves(pool, result.roots, maxDepth, resumeMove, order);
+        for (int i = 0; i < (int)moves.count; ++i) {
+            const int index = order.data.data[moves.offset + i];
+            nextPosition = extendCandidate(state, pool, index, maxDepth, shapeConfig, config, fiftyConfig, fiftyPool, budget, index == resumeMove ? resume : span<const int>());
+            if (nextPosition >= 0) break;
+            const Pool::Node &candidate = pool.nodes.data.data[index];
+            if (candidate.finished) pool.rootCompensations.data[index] = 0.0L;
+            if (details) {
+                // 只在整招完成后发布数字分，未完成时保留上一层。
+                int branch = 0;
+                for (int j = 0; j < (int)details->outcomes.size; ++j)
+                    if (details->outcomes.data[j].cell == candidate.cell) details->outcomes.data[j].value = pool.nodes.data.data[candidate.child.offset + branch++].value;
+                details->history.push_back(SuggestResult::Details::Layer(candidate.cell, maxDepth, pool.score(index)));
+            }
+        }
+        order.pop_back(moves);
+        path.resize(0);
         pool.releaseProbabilities();
-        if (result.completedDepth == beforeDepth)
-            break;
+        if (nextPosition >= 0) break;
+        result.completedDepth = maxDepth;
+        result.finished = true;
+        for (int i = 0; i < (int)result.roots.count; ++i)
+            result.finished = result.finished && pool.nodes.data.data[result.roots.offset + i].finished;
     }
+    pool.nextPosition = nextPosition;
+    result.nodes += config.nodeLimit - budget;
     if (result.finished) pool.clearProbabilities();
 }
 
