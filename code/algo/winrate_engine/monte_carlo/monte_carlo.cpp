@@ -5,12 +5,29 @@
 #include <limits>
 
 #include "core/assert.h"
+#include "game/game.h"
 
 namespace mss {
 
-MonteCarlo::Candidate::Candidate(ObservedBoard::CellId cell, long double prior, const Config &config) : cell(cell), samples(0), wins(0), prior(prior), chanceSamples(-1), chanceTarget(0.0L), chanceLog(0.0L) { MonteCarlo().estimate(*this, config); }
+struct MonteCarlo::Workspace {
+    Grid<char> mines;
+};
 
-MonteCarlo::Result::Result(SuggestResult &root, const Structure::Pool &shapes) : winrate(root.engine == SuggestResult::Engine::Safe || root.reason == SuggestResult::Reason::Finished), samples(0), wins(0), random(0xC0FFEE12345ULL, 0xD1B54A32D192ED03ULL), assignments(shapes) {
+__declspec(noinline) MonteCarlo::Workspace &MonteCarlo::getWorkspace() {
+    static thread_local Workspace workspace;
+    return workspace;
+}
+
+MonteCarlo::Candidate::Candidate(ObservedBoard::CellId cell)
+    : cell(cell), samples(0), wins(0), chanceSamples(-1), chanceTarget(0.0L), chanceLog(0.0L) {
+    MonteCarlo().estimate(*this);
+}
+
+MonteCarlo::Result::Result()
+    : winrate(false), samples(0), wins(0), random(0xC0FFEE12345ULL, 0xD1B54A32D192ED03ULL) {}
+
+MonteCarlo::Result::Result(SuggestResult &root) : Result() {
+    winrate = root.engine == SuggestResult::Engine::Safe || root.reason == SuggestResult::Reason::Finished;
     if (root.engine == SuggestResult::Engine::BruteForce) exact.swap(root);
     else if (winrate) safeCells.swap(root.suggest);
 }
@@ -18,18 +35,18 @@ MonteCarlo::Result::Result(SuggestResult &root, const Structure::Pool &shapes) :
 int MonteCarlo::Result::best() const {
     int best = 0;
     for (int i = 1; i < (int)candidates.size; ++i)
-        if (candidates.data[i].samples != 0 && (candidates.data[best].samples == 0 || candidates.data[i].mean > candidates.data[best].mean)) best = i;
+        if (candidates[i].samples != 0 && (candidates[best].samples == 0 || candidates[i].mean > candidates[best].mean)) best = i;
     return best;
 }
 
 ObservedBoard::CellId MonteCarlo::Result::recommended() const {
-    if (exact.engine == SuggestResult::Engine::BruteForce) return exact.suggest.size == 0 ? -1 : exact.suggest.data[0];
-    return winrate || candidates.size == 0 ? -1 : candidates.data[best()].cell;
+    if (exact.engine == SuggestResult::Engine::BruteForce) return exact.suggest.size == 0 ? -1 : exact.suggest[0];
+    return winrate || candidates.size == 0 ? -1 : candidates[best()].cell;
 }
 
-void MonteCarlo::estimate(Candidate &candidate, const Config &config) {
-    const long double count = candidate.samples + 2.0L + config.priorWeight;
-    candidate.mean = (candidate.wins + 1.0L + config.priorWeight * candidate.prior) / count;
+void MonteCarlo::estimate(Candidate &candidate) {
+    const long double count = candidate.samples + 2.0L;
+    candidate.mean = (candidate.wins + 1.0L) / count;
     candidate.variance = candidate.mean * (1.0L - candidate.mean) / (count + 1.0L);
 }
 
@@ -56,25 +73,27 @@ long double MonteCarlo::logChance(long double won, long double lost, long double
     }
 }
 
-int MonteCarlo::select(Result &result, const Config &config) {
+int MonteCarlo::select(Result &result) {
+    // 每个候选先采一次，再按采样结果分配后续对局。
+    if (result.samples < (long long)result.candidates.size) return (int)result.samples;
     const int reference = result.best();
-    if (result.candidates.size == 1 || result.candidates.data[reference].samples == 0) return reference;
+    const Candidate &leader = result.candidates[reference];
+    if (result.candidates.size == 1) return reference;
     int selected = reference;
     const long double zero = -std::numeric_limits<long double>::infinity();
     long double maximum = zero, pressure = zero;
-    const Candidate &leader = result.candidates.data[reference];
-    const long double leaderReduction = std::log(leader.variance / (leader.samples + 3.0L + config.priorWeight));
+    const long double leaderReduction = std::log(leader.variance / (leader.samples + 3.0L));
     for (int i = 0; i < (int)result.candidates.size; ++i) {
         if (i == reference) continue;
-        Candidate &candidate = result.candidates.data[i];
+        Candidate &candidate = result.candidates[i];
         if (candidate.chanceSamples != candidate.samples || candidate.chanceTarget != leader.mean) {
-            const long double won = candidate.wins + 1.0L + config.priorWeight * candidate.prior;
-            const long double lost = candidate.samples - candidate.wins + 1.0L + config.priorWeight * (1.0L - candidate.prior);
+            const long double won = candidate.wins + 1.0L;
+            const long double lost = candidate.samples - candidate.wins + 1.0L;
             candidate.chanceLog = logChance(won, lost, leader.mean);
             candidate.chanceSamples = candidate.samples;
             candidate.chanceTarget = leader.mean;
         }
-        const long double reduction = std::log(candidate.variance / (candidate.samples + 3.0L + config.priorWeight));
+        const long double reduction = std::log(candidate.variance / (candidate.samples + 3.0L));
         const long double sumMaximum = (std::max)(leaderReduction, reduction);
         const long double totalReduction = sumMaximum + std::log1p(std::exp((std::min)(leaderReduction, reduction) - sumMaximum));
         const long double leaderPressure = candidate.chanceLog + leaderReduction - totalReduction;
@@ -88,61 +107,38 @@ int MonteCarlo::select(Result &result, const Config &config) {
     return selected;
 }
 
-MonteCarlo::Result MonteCarlo::analyze(GameControl::Position &position, const Config &config, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &pool, const vector<ObservedBoard::CellId> *cells) {
-    SuggestResult evaluated;
-    position.suggest(policy, fiftyPool, pool, evaluated, cells);
-    Result result(evaluated, position.probabilityPool().shapes);
-    if (result.exact.engine == SuggestResult::Engine::BruteForce || result.winrate) return result;
-    assert_(evaluated.candidates.size != 0, "MonteCarlo: 非终局没有首招候选");
-    std::sort(evaluated.candidates.data, evaluated.candidates.data + evaluated.candidates.size, [](const SuggestResult::Candidate &left, const SuggestResult::Candidate &right) { return left.value > right.value; });
-    const long double maximum = evaluated.candidates.data[0].value;
-    long double total = 0.0L;
-    for (int i = 0; i < (int)evaluated.candidates.size; ++i) {
-        evaluated.candidates.data[i].value = std::exp((evaluated.candidates.data[i].value - maximum) / config.temperature);
-        total += evaluated.candidates.data[i].value;
-    }
-    for (int i = 0; i < (int)evaluated.candidates.size; ++i)
-        result.candidates.push_back(Candidate(evaluated.candidates.data[i].cell, evaluated.candidates.data[i].value / total, config));
+MonteCarlo::Result MonteCarlo::analyze(const Selection::Result &selected) {
+    assert_(selected.candidates.size != 0, "MonteCarlo: 非终局没有首招候选");
+    Result result;
+    result.candidates.resize(selected.candidates.size);
+    for (int i = 0; i < (int)selected.candidates.size; ++i)
+        result.candidates[i] = Candidate(selected.candidates[i].cell);
     return result;
 }
 
-bool MonteCarlo::simulate(Result &result, PositionState &state, long long sequence, ObservedBoard::CellId first, const ShapeSolverConfig &shapeConfig, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool) {
-    Grid<char> mines;
-    Probability().sampleMineBoard(state.board, state.basic, state.structure, result.assignments, state.combinations, U128(splitmix64(0x123456789ABCDEFULL + sequence), splitmix64(0xF123456789ABCDE0ULL + sequence)), mines);
-    ObservedBoard::Result observed = state.board;
-    for (int i = 0; i < (int)result.safeCells.size; ++i) {
-        const std::pair<int, int> position = observed.pos(result.safeCells.data[i]);
-        if (observed.cells[position.first][position.second] == ObservedBoard::CellState::ForcedSafe) observed.cells[position.first][position.second] = ObservedBoard::CellState::Hidden;
-    }
-    const GameControl::Config gameConfig{shapeConfig};
-    GameControl::Game game(GameControl::MineBoard(mines), observed, gameConfig, result.suggestions);
-    // 搜索池绑定本次模拟的局面，在整局建议调用之间复用。
-    Probability::Pool pendingProbabilities(game.position().probabilityPool().shapes, game.position().probabilityPool().distributions, game.position().probabilityPool().combinations);
-    JavaLite::Pool pending(pendingProbabilities);
-    AnytimeSearch::Pool pool(pending);
-    if (game.state() == GameControl::Game::State::Running)
-        game.play(result.winrate ? span<const ObservedBoard::CellId>(result.safeCells.data, (int)result.safeCells.size) : span<const ObservedBoard::CellId>(&first, 1));
-    vector<ObservedBoard::CellId> suggestion;
-    while (game.state() == GameControl::Game::State::Running) {
-        game.suggest(policy, fiftyPool, pool, suggestion);
-        if (suggestion.size == 0) assert_(false, "MonteCarlo: 对局未结束却没有建议");
-        game.play(span<const ObservedBoard::CellId>(suggestion.data, (int)suggestion.size));
-    }
-    return game.state() == GameControl::Game::State::Won;
-}
-
-void MonteCarlo::update(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Config &config, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool) {
+void MonteCarlo::update(Result &result, const Position::Result &position, const MovePolicy::Config &policy, Pool &pool) {
     if (result.exact.engine == SuggestResult::Engine::BruteForce) return;
-    const int selected = result.winrate ? -1 : select(result, config);
-    const long long sequence = result.winrate ? result.samples : result.candidates.data[selected].samples;
-    const bool won = MonteCarlo().simulate(result, state, sequence, result.winrate ? -1 : result.candidates.data[selected].cell, shapeConfig, policy, fiftyPool);
+    Candidate *candidate = result.winrate ? nullptr : &result.candidates[select(result)];
+    const long long sequence = candidate ? candidate->samples : result.samples;
+    // 不同首招的同序号样本使用同一张抽样雷盘。
+    const U128 seed{splitmix64(0x123456789ABCDEFULL + sequence), splitmix64(0xF123456789ABCDE0ULL + sequence)};
+    Grid<char> &mines = getWorkspace().mines;
+    Combination::Pool &combinations = pool.suggestions.combinations;
+    Probability().sampleMineBoard(position.board, position.basic, position.structure, pool.assignments, combinations, seed, mines);
+    Game game(mines, position.board, position.config(), combinations);
+    if (candidate) game.play(&candidate->cell, 1);
+    else game.play(result.safeCells.data, (int)result.safeCells.size);
+    while (game.state() == Game::State::Running) {
+        const SuggestResult suggestion = game.suggest(policy, pool.suggestions);
+        game.play(suggestion.suggest.data, (int)suggestion.suggest.size);
+    }
+    const bool won = game.state() == Game::State::Won;
     ++result.samples;
     result.wins += won;
-    if (selected >= 0) {
-        Candidate &candidate = result.candidates.data[selected];
-        ++candidate.samples;
-        candidate.wins += won;
-        estimate(candidate, config);
+    if (candidate) {
+        ++candidate->samples;
+        candidate->wins += won;
+        estimate(*candidate);
     }
 }
 

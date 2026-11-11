@@ -10,6 +10,9 @@
     <Filter Include="algo\probability_engine\basic">
       <UniqueIdentifier>{37201D9E-D59B-4F4F-906A-00E3756EB26D}</UniqueIdentifier>
     </Filter>
+    <Filter Include="algo\probability_engine\logic_component">
+      <UniqueIdentifier>{CB6758B8-0E42-414C-A97B-832994FFBD6D}</UniqueIdentifier>
+    </Filter>
     <Filter Include="algo\probability_engine\observed_board">
       <UniqueIdentifier>{2C17A80E-3F77-4328-A55E-11A9828429DD}</UniqueIdentifier>
     </Filter>
@@ -61,18 +64,6 @@
     <Filter Include="game">
       <UniqueIdentifier>{12F7C34E-DBB8-4B93-AE00-DAB957E2552B}</UniqueIdentifier>
     </Filter>
-    <Filter Include="ui">
-      <UniqueIdentifier>{FEF879E7-24C0-4113-811C-A7C39E6731B1}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="ui\internal">
-      <UniqueIdentifier>{F66B38BA-D7AA-41C2-A1C5-C34CA8817CD9}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="ui\web">
-      <UniqueIdentifier>{3FCE96F2-695E-4232-B5FE-0ED55E3547EC}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="algo\winrate_engine\java_lite">
-      <UniqueIdentifier>{91A87234-87D4-4DA9-9E77-B849A6108135}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\code\algo\probability_engine\basic\basic.cpp">
@@ -80,6 +71,12 @@
     </ClCompile>
     <ClInclude Include="..\code\algo\probability_engine\basic\basic.h">
       <Filter>algo\probability_engine\basic</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\probability_engine\logic_component\logic_component.cpp">
+      <Filter>algo\probability_engine\logic_component</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\probability_engine\logic_component\logic_component.h">
+      <Filter>algo\probability_engine\logic_component</Filter>
     </ClInclude>
     <ClCompile Include="..\code\algo\probability_engine\observed_board\observed_board.cpp">
       <Filter>algo\probability_engine\observed_board</Filter>
@@ -168,12 +165,6 @@
     <ClInclude Include="..\code\algo\winrate_engine\move_policy.h">
       <Filter>algo\winrate_engine</Filter>
     </ClInclude>
-    <ClCompile Include="..\code\algo\winrate_engine\java_lite\java_lite.cpp">
-      <Filter>algo\winrate_engine\java_lite</Filter>
-    </ClCompile>
-    <ClInclude Include="..\code\algo\winrate_engine\java_lite\java_lite.h">
-      <Filter>algo\winrate_engine\java_lite</Filter>
-    </ClInclude>
     <ClCompile Include="..\code\algo\winrate_engine\basic\java_eval\java_eval.cpp">
       <Filter>algo\winrate_engine\basic\java_eval</Filter>
     </ClCompile>
@@ -249,22 +240,10 @@
     <ClCompile Include="..\code\core\algorithm\combination.cpp">
       <Filter>core\algorithm</Filter>
     </ClCompile>
-    <ClCompile Include="..\code\game\game_control.cpp">
-      <Filter>game</Filter>
-    </ClCompile>
-    <ClInclude Include="..\code\game\game_control.h">
-      <Filter>game</Filter>
-    </ClInclude>
     <ClCompile Include="..\code\game\game.cpp">
       <Filter>game</Filter>
     </ClCompile>
     <ClInclude Include="..\code\game\game.h">
-      <Filter>game</Filter>
-    </ClInclude>
-    <ClCompile Include="..\code\game\position_state.cpp">
-      <Filter>game</Filter>
-    </ClCompile>
-    <ClInclude Include="..\code\game\position_state.h">
       <Filter>game</Filter>
     </ClInclude>
     <ClCompile Include="..\code\game\position.cpp">
@@ -274,51 +253,6 @@
       <Filter>game</Filter>
     </ClInclude>
     <ClCompile Include="..\code\main.cpp" />
-    <ClCompile Include="..\code\ui\http_server.cpp">
-      <Filter>ui</Filter>
-    </ClCompile>
-    <ClInclude Include="..\code\ui\internal\http_server.h">
-      <Filter>ui\internal</Filter>
-    </ClInclude>
-    <ClInclude Include="..\code\ui\internal\session.h">
-      <Filter>ui\internal</Filter>
-    </ClInclude>
-    <ClCompile Include="..\code\ui\session.cpp">
-      <Filter>ui</Filter>
-    </ClCompile>
-    <ClCompile Include="..\code\ui\ui.cpp">
-      <Filter>ui</Filter>
-    </ClCompile>
-    <ClInclude Include="..\code\ui\ui.h">
-      <Filter>ui</Filter>
-    </ClInclude>
-    <None Include="..\code\ui\web\analysis.js">
-      <Filter>ui\web</Filter>
-    </None>
-    <None Include="..\code\ui\web\anytime_search.js">
-      <Filter>ui\web</Filter>
-    </None>
-    <None Include="..\code\ui\web\game.js">
-      <Filter>ui\web</Filter>
-    </None>
-    <None Include="..\code\ui\web\index.html">
-      <Filter>ui\web</Filter>
-    </None>
-    <None Include="..\code\ui\web\main.js">
-      <Filter>ui\web</Filter>
-    </None>
-    <None Include="..\code\ui\web\monte_carlo.js">
-      <Filter>ui\web</Filter>
-    </None>
-    <None Include="..\code\ui\web\state.js">
-      <Filter>ui\web</Filter>
-    </None>
-    <None Include="..\code\ui\web\style.css">
-      <Filter>ui\web</Filter>
-    </None>
-    <None Include="..\code\ui\web\view.js">
-      <Filter>ui\web</Filter>
-    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\code\algo\winrate_engine\basic\lowrisk\lowrisk.cpp">
@@ -335,6 +269,9 @@
     </ClInclude>
     <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\fifty_fifty.h">
       <Filter>algo\winrate_engine\fifty_fifty</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\templates\template_catalog.h">
+      <Filter>algo\winrate_engine\fifty_fifty\templates</Filter>
     </ClInclude>
     <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\templates\template_data.h">
       <Filter>algo\winrate_engine\fifty_fifty\templates</Filter>

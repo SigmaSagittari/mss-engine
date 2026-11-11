@@ -6,47 +6,62 @@
 
 namespace mss {
 
-// 50-50 的两条完整路线，各自包含 Semi 检测和长期风险。
 struct FiftyFifty {
     enum class Algorithm { OldJava, Templates };
+
     struct TemplateConfig {
-        int prefix;
-        TemplateLongTermRisk::Config risk;
-        TemplateConfig(int prefix, TemplateLongTermRisk::Config risk) : prefix(prefix), risk(risk) {}
+        int prefix, eventLimit;
+
+        void hash(U128Hasher &hasher, bool longTermRisk) const {
+            hasher.mix(prefix);
+            if (longTermRisk) hasher.mix(eventLimit);
+        }
     };
+
     struct Config {
         Algorithm algorithm;
-        // 只借用所选路线的配置；另一指针可以为空。
+        // 借用所选后端的配置，另一指针可为空。
         const LongTermRisk::Config *oldJava;
         const TemplateConfig *templates;
-        Config(Algorithm algorithm, const LongTermRisk::Config *oldJava, const TemplateConfig *templates) : algorithm(algorithm), oldJava(oldJava), templates(templates) {}
-    };
-    struct Pool {
-        // 模板池由调用方持有，须覆盖本池及借用模板表的结果的使用期。
-        struct Templates {
-            TemplateSemi::Pool &semi;
-            TemplateLongTermRisk::Pool &risk;
-            Templates(TemplateSemi::Pool &semi, TemplateLongTermRisk::Pool &risk) : semi(semi), risk(risk) {}
-        } templates;
 
-        Pool(TemplateSemi::Pool &semi, TemplateLongTermRisk::Pool &risk) : templates(semi, risk) {}
+        void hash(U128Hasher &hasher, bool longTermRisk) const {
+            hasher.mix((int) algorithm);
+            if (algorithm == Algorithm::Templates) templates->hash(hasher, longTermRisk);
+            else if (longTermRisk) oldJava->hash(hasher);
+        }
     };
+
+    struct Pool {
+        FiftyFiftyData::Pool templates;
+        FiftyFiftyData::Pool coarseTemplates; // 粗 LTR 的前缀 100 表，按需编译。
+        int prefix; // 0 表示尚未编译。
+
+        Pool() : prefix(0) {}
+    };
+
     struct Result {
         LongTermRisk::Result oldJava;
         TemplateLongTermRisk::Result templates;
     };
 
-    int templateCount();
-    Semi::Kind detect(vector<ObservedBoard::CellId> &cells, const PositionState &state, const Probability::Pool &probabilities, const Config &config, Pool &pool);
-    // 准备风险；OldJava 可同时写入补找候选，命中时返回分类。
-    Semi::Kind prepareRisk(Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, Pool &pool, vector<ObservedBoard::CellId> *semiCells);
-    // 两条路线均返回除以全盘布局数后的无条件风险量。
-    long double influence(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, Result &result, const ShapeSolverConfig &shapeConfig, const Config &config);
-    LongTermRisk::Details describeOldJava(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const LongTermRisk::Config &config);
+    // 盘面和概率须匹配且有解。模板前缀为 [1, FiftyFiftyData::count()]。
+    Semi::Kind detect(vector<ObservedBoard::CellId> &cells, const Position::Result &position, const Position::ProbabilityResult &probability,
+                      const Probability::Pool &probabilities, const Config &config, Pool &pool,
+                      const vector<ObservedBoard::CellId> &dead);
+
+    // 完成当前盘面所选路线的风险扫描。模板后端可同时输出前缀 100、事件上限 1 的粗 LTR。
+    void prepareRisk(Result &result, Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
+                     Probability::Pool &probabilities, const Config &config,
+                     Pool &pool, Grid<long double> *coarse = nullptr);
+
+    // 使用同盘面、同路线完整扫描的结果。模板路线使用 prepareRisk 的池和前缀。
+    // 返回可直接加到根层评分的补偿概率。
+    long double influence(ObservedBoard::CellId cell, Result &result, Position::Result &position, Position::Pool &positions,
+                          const Position::ProbabilityResult &probability, Probability::Pool &probabilities,
+                          const Config &config, const Pool &pool);
 
   private:
-    struct Workspace;
-    Workspace &getWorkspace();
+    void prepareTemplates(FiftyFiftyData::Pool &templates, int &prefix, int requestedPrefix);
 };
 
 } // 命名空间 mss

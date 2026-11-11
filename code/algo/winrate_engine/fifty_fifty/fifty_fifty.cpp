@@ -2,38 +2,49 @@
 
 namespace mss {
 
-struct FiftyFifty::Workspace {
-    vector<ObservedBoard::CellId> description;
-};
-
-__declspec(noinline) FiftyFifty::Workspace &FiftyFifty::getWorkspace() {
-    static thread_local Workspace workspace;
-    return workspace;
+void FiftyFifty::prepareTemplates(FiftyFiftyData::Pool &templates, int &prefix, int requestedPrefix) {
+    if (prefix == requestedPrefix) return;
+    FiftyFiftyData().compile(templates, requestedPrefix);
+    prefix = requestedPrefix;
 }
 
-int FiftyFifty::templateCount() { return TemplateSemi().templateCount(); }
-
-Semi::Kind FiftyFifty::detect(vector<ObservedBoard::CellId> &cells, const PositionState &state, const Probability::Pool &probabilities, const Config &config, Pool &pool) {
-    if (config.algorithm == Algorithm::OldJava) return Semi().update(cells, state, probabilities, span<const ObservedBoard::CellId>());
-    return TemplateSemi().detect(cells, state, probabilities, config.templates->prefix, pool.templates.semi);
+Semi::Kind FiftyFifty::detect(vector<ObservedBoard::CellId> &cells, const Position::Result &position, const Position::ProbabilityResult &probability,
+                             const Probability::Pool &probabilities, const Config &config, Pool &pool,
+                             const vector<ObservedBoard::CellId> &dead) {
+    if (config.algorithm == Algorithm::OldJava)
+        return Semi().update(cells, position, probability, probabilities, dead);
+    prepareTemplates(pool.templates, pool.prefix, config.templates->prefix);
+    return TemplateSemi().detect(cells, position, probability, probabilities, pool.templates);
 }
 
-Semi::Kind FiftyFifty::prepareRisk(Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, Pool &pool, vector<ObservedBoard::CellId> *semiCells) {
-    if (config.algorithm == Algorithm::OldJava) return LongTermRisk().update(result.oldJava, state, probabilities, span<const ObservedBoard::CellId>(), shapeConfig, *config.oldJava, semiCells);
-    TemplateLongTermRisk().update(result.templates, state, probabilities, config.templates->prefix, config.templates->risk, pool.templates.risk);
-    return Semi::Kind::None;
+void FiftyFifty::prepareRisk(Result &result, Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
+                            Probability::Pool &probabilities, const Config &config,
+                            Pool &pool, Grid<long double> *coarse) {
+    if (config.algorithm == Algorithm::OldJava)
+        LongTermRisk().update(result.oldJava, position, positions, probability, probabilities, *config.oldJava);
+    else {
+        const TemplateConfig &templates = *config.templates;
+        prepareTemplates(pool.templates, pool.prefix, templates.prefix);
+        TemplateLongTermRisk risk;
+        if (coarse) {
+            constexpr int coarsePrefix = 100;
+            const bool shared = templates.prefix == coarsePrefix;
+            if (!shared && pool.coarseTemplates.patterns.size == 0) FiftyFiftyData().compile(pool.coarseTemplates, coarsePrefix);
+            const FiftyFiftyData::Pool &table = shared ? pool.templates : pool.coarseTemplates;
+            risk.update(result.templates, position, probability, probabilities, table, shared ? templates.eventLimit : 1);
+            risk.coarse(*coarse, result.templates, position, positions, probability, probabilities, table);
+            if (shared) return;
+        }
+        risk.update(result.templates, position, probability, probabilities, pool.templates, templates.eventLimit);
+    }
 }
 
-long double FiftyFifty::influence(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, Result &result, const ShapeSolverConfig &shapeConfig, const Config &config) {
-    if (config.algorithm == Algorithm::OldJava) return LongTermRisk().influence(cell, state, probabilities, result.oldJava, shapeConfig) / state.probability.candidates;
-    return TemplateLongTermRisk().influence(cell, state, probabilities, result.templates, shapeConfig);
-}
-
-LongTermRisk::Details FiftyFifty::describeOldJava(ObservedBoard::CellId cell, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const LongTermRisk::Config &config) {
-    Workspace &workspace = getWorkspace();
-    LongTermRisk::Details details = LongTermRisk().describe(cell, state, probabilities, shapeConfig, config);
-    if (Semi().update(workspace.description, state, probabilities, span<const ObservedBoard::CellId>(), cell) != Semi::Kind::None) details.body = 1.0L;
-    return details;
+long double FiftyFifty::influence(ObservedBoard::CellId cell, Result &result, Position::Result &position, Position::Pool &positions,
+                                 const Position::ProbabilityResult &probability, Probability::Pool &probabilities,
+                                 const Config &config, const Pool &pool) {
+    if (config.algorithm == Algorithm::OldJava)
+        return LongTermRisk().influence(cell, position, positions, probability, probabilities, result.oldJava).compensationWays / probability.totalWays;
+    return TemplateLongTermRisk().influence(cell, result.templates, position, positions, probability, probabilities, pool.templates).compensation;
 }
 
 } // 命名空间 mss

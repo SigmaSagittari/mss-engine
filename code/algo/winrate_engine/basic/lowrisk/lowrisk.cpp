@@ -2,31 +2,31 @@
 
 namespace mss {
 
-SuggestResult LowRisk::analyze(const PositionState &state, const vector<ObservedBoard::CellId> *cells) {
+SuggestResult LowRisk::analyze(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure,
+                               const Probability::BoxResult &boxes, const Probability::Pool &pool, const vector<ObservedBoard::CellId> *cells) {
     SuggestResult result(SuggestResult::Engine::LowRisk, SuggestResult::Reason::ScoreWins);
     if (cells) {
         for (int i = 0; i < (int)cells->size; ++i) {
             const ObservedBoard::CellId cell = cells->data[i];
-            const long double probability = Probability().mineProbability(state.probability, state.probabilityPool, cell, state.board, state.basic, state.structure);
-            if (probability != 1) result.candidates.push_back(SuggestResult::Candidate(cell, 1 - probability));
+            const long double risk = Probability().mineProbability(boxes, pool, cell, board, basic, structure);
+            if (risk != 1.0L)
+                result.candidates.push_back(SuggestResult::Candidate(cell, 1.0L - risk));
         }
-        result.recommend();
-        return result;
+    } else {
+        ObservedBoard::CellId safest = -1;
+        long double lowestRisk = 1.0L;
+        auto consider = [&](ObservedBoard::CellId cell, long double risk) {
+            if (risk < lowestRisk) {
+                lowestRisk = risk;
+                safest = cell;
+            }
+        };
+        boxes.frontierCells(pool, structure, consider);
+        if (basic.unknownSum != 0 && boxes.tCellProbability < lowestRisk)
+            consider(basic.firstT(), boxes.tCellProbability);
+        if (safest >= 0)
+            result.candidates.push_back(SuggestResult::Candidate(safest, 1.0L - lowestRisk));
     }
-    ObservedBoard::CellId safest = -1;
-    long double lowestRisk = 1;
-    auto consider = [&](ObservedBoard::CellId cell, long double probability) {
-        if (probability < lowestRisk) { lowestRisk = probability; safest = cell; }
-    };
-    state.probability.frontierCells(state.probabilityPool, state.structure, consider);
-    // T 格概率相同，仅在优于前沿时定位其中一个。
-    if (state.basic.unknownSum != 0 && state.probability.tCellProbability < lowestRisk) {
-        ObservedBoard::CellId cell = 0;
-        const int cols = state.board.cells.cols();
-        while (state.basic.marks[cell / cols][cell % cols] != Basic::Mark::T) ++cell;
-        consider(cell, Probability().mineProbability(state.probability, state.probabilityPool, cell, state.board, state.basic, state.structure));
-    }
-    if (safest >= 0) result.candidates.push_back(SuggestResult::Candidate(safest, 1 - lowestRisk));
     result.recommend();
     return result;
 }

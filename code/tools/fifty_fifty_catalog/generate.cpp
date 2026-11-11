@@ -3,19 +3,27 @@
 
 #include "core/assert.h"
 
-// 输入保留 P 顺序；运行时只加载本体，再生成旋转、封口和匹配前缀树。
 int main(int argc, char **argv) {
     mss::assert_(argc == 3, "参数：patterns.csv、输出头文件");
     std::ifstream input(argv[1]);
-    std::ofstream output(argv[2]);
-    mss::assert_(input.good() && output.good(), "无法打开模板目录或输出头文件");
-    output << "// 由 code/tools/fifty_fifty_catalog/generate.cpp 从 patterns.csv 生成。\n// / 分行，A/B 为可互换的两组本体格，. 为本体外位置；封口雷和边界条件由 Table 推导。\n#pragma once\n\nnamespace mss::FiftyFiftyData {\ninline constexpr const char *patterns[] = {\n";
+    mss::assert_(input.good(), "无法打开模板 CSV");
     std::string line;
     std::getline(input, line);
+    mss::assert_(line == "id,hit_probability_sum,pattern" || line == "id,hit_probability_sum,pattern\r", "模板 CSV 表头有误");
+    std::string header = "// 由 code/tools/fifty_fifty_catalog/generate.cpp 从 patterns.csv 生成。\n#pragma once\n\n"
+                         "namespace mss::FiftyFiftyCatalog {\ninline constexpr const char *patterns[] = {\n";
     while (std::getline(input, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        output << "    \"" << line.substr(line.find_last_of(',') + 1) << "\",\n";
+        if (line.ends_with('\r')) line.pop_back();
+        const std::size_t comma = line.rfind(',');
+        mss::assert_(comma != std::string::npos && comma + 1 < line.size() && line.find_first_not_of("AB./", comma + 1) == std::string::npos, "模板 CSV 的 pattern 列有误");
+        header += "    \"";
+        header.append(line, comma + 1);
+        header += "\",\n";
     }
-    output << "};\n} // 命名空间 mss::FiftyFiftyData\n";
+    mss::assert_(input.eof(), "读取模板 CSV 失败");
+    std::ofstream output(argv[2], std::ios::binary);
+    output << header << "};\n} // 命名空间 mss::FiftyFiftyCatalog\n";
+    output.close();
+    mss::assert_(output.good(), "写入模板头文件失败");
     return 0;
 }

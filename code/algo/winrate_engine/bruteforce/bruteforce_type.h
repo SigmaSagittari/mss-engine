@@ -4,6 +4,7 @@
 
 #include "algo/probability_engine/observed_board/observed_board.h"
 #include "core/datastructure/grid.h"
+#include "core/datastructure/hash.h"
 #include "core/datastructure/vector.h"
 
 namespace mss {
@@ -20,6 +21,11 @@ struct BruteForceType {
         bool parallel;
         // 并行线程总数（含调用线程），必须为正；串行时忽略。
         int threadCount;
+
+        void hash(U128Hasher &hasher) const {
+            hasher.mix(checkAllMoves, parallel);
+            if (parallel) hasher.mix(threadCount);
+        }
     };
 
     struct Result {

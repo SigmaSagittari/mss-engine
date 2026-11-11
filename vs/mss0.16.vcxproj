@@ -83,6 +83,7 @@
   <ItemGroup>
     <ClCompile Include="..\code\main.cpp" />
     <ClCompile Include="..\code\algo\probability_engine\basic\basic.cpp" />
+    <ClCompile Include="..\code\algo\probability_engine\logic_component\logic_component.cpp" />
     <ClCompile Include="..\code\algo\probability_engine\observed_board\observed_board.cpp" />
     <ClCompile Include="..\code\algo\probability_engine\probability\observe.cpp" />
     <ClCompile Include="..\code\algo\probability_engine\probability\probability.cpp" />
@@ -97,7 +98,6 @@
     <ClCompile Include="..\code\algo\winrate_engine\bruteforce\bruteforce_normal.cpp" />
     <ClCompile Include="..\code\algo\winrate_engine\move_policy.cpp" />
     <ClCompile Include="..\code\algo\winrate_engine\basic\java_eval\java_eval.cpp" />
-    <ClCompile Include="..\code\algo\winrate_engine\java_lite\java_lite.cpp" />
     <ClCompile Include="..\code\algo\winrate_engine\fifty_fifty\old_java\long_term_risk.cpp">
       <ObjectFileName>$(IntDir)old_java_long_term_risk.obj</ObjectFileName>
     </ClCompile>
@@ -107,16 +107,12 @@
     </ClCompile>
     <ClCompile Include="..\code\algo\winrate_engine\selection\selection.cpp" />
     <ClCompile Include="..\code\game\game.cpp" />
-    <ClCompile Include="..\code\game\game_control.cpp" />
     <ClCompile Include="..\code\core\algorithm\combination.cpp" />
     <ClCompile Include="..\code\game\position.cpp" />
-    <ClCompile Include="..\code\game\position_state.cpp" />
-    <ClCompile Include="..\code\ui\ui.cpp" />
-    <ClCompile Include="..\code\ui\session.cpp" />
-    <ClCompile Include="..\code\ui\http_server.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\code\algo\probability_engine\basic\basic.h" />
+    <ClInclude Include="..\code\algo\probability_engine\logic_component\logic_component.h" />
     <ClInclude Include="..\code\algo\probability_engine\observed_board\observed_board.h" />
     <ClInclude Include="..\code\algo\probability_engine\probability\observe.h" />
     <ClInclude Include="..\code\algo\probability_engine\probability\probability.h" />
@@ -134,7 +130,6 @@
     <ClInclude Include="..\code\algo\winrate_engine\bruteforce\bruteforce.h" />
     <ClInclude Include="..\code\algo\winrate_engine\move_policy.h" />
     <ClInclude Include="..\code\algo\winrate_engine\basic\java_eval\java_eval.h" />
-    <ClInclude Include="..\code\algo\winrate_engine\java_lite\java_lite.h" />
     <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\old_java\long_term_risk.h" />
     <ClInclude Include="..\code\algo\winrate_engine\monte_carlo\monte_carlo.h" />
     <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\old_java\semi.h" />
@@ -153,30 +148,13 @@
     <ClInclude Include="..\code\core\datastructure\span.h" />
     <ClInclude Include="..\code\core\datastructure\vector_pool.h" />
     <ClInclude Include="..\code\core\datastructure\vector.h" />
-    <ClInclude Include="..\code\game\game_control.h" />
     <ClInclude Include="..\code\game\game.h" />
-    <ClInclude Include="..\code\game\position_state.h" />
     <ClInclude Include="..\code\game\position.h" />
-    <ClInclude Include="..\code\ui\internal\http_server.h" />
-    <ClInclude Include="..\code\ui\internal\session.h" />
-    <ClInclude Include="..\code\ui\ui.h" />
-    <None Include="..\code\ui\web\analysis.js" />
-    <None Include="..\code\ui\web\anytime_search.js" />
-    <None Include="..\code\ui\web\game.js" />
-    <None Include="..\code\ui\web\index.html" />
-    <None Include="..\code\ui\web\main.js" />
-    <None Include="..\code\ui\web\monte_carlo.js" />
-    <None Include="..\code\ui\web\state.js" />
-    <None Include="..\code\ui\web\style.css" />
-    <None Include="..\code\ui\web\view.js" />
   </ItemGroup>
   <ItemDefinitionGroup>
     <ClCompile>
       <DisableSpecificWarnings>4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
-    <PostBuildEvent>
-      <Command>xcopy /Y /I "$(ProjectDir)..\code\ui\web\*" "$(OutDir)ui\"</Command>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />
@@ -188,6 +166,7 @@
     </ClCompile>
     <ClInclude Include="..\code\algo\winrate_engine\basic\lowrisk\lowrisk.h" />
     <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\fifty_fifty.h" />
+    <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\templates\template_catalog.h" />
     <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\templates\template_data.h" />
     <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\templates\long_term_risk.h" />
     <ClInclude Include="..\code\algo\winrate_engine\result_type.h" />

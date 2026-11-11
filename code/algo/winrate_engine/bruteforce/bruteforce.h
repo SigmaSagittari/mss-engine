@@ -1,12 +1,12 @@
 #pragma once
 
 #include "algo/probability_engine/basic/basic.h"
-#include "algo/probability_engine/shape_solver/shape_solver.h"
+#include "algo/probability_engine/logic_component/logic_component.h"
+#include "algo/probability_engine/observed_board/observed_board.h"
 #include "algo/probability_engine/structure/structure.h"
-#include "algo/winrate_engine/bruteforce/bruteforce_multimask.h"
-#include "algo/winrate_engine/bruteforce/bruteforce_normal.h"
 #include "algo/winrate_engine/bruteforce/bruteforce_type.h"
 #include "algo/winrate_engine/result_type.h"
+#include "core/datastructure/vector.h"
 
 namespace mss {
 
@@ -16,28 +16,25 @@ struct BruteForce {
     using Config = BruteForceType::Config;
     using Result = SuggestResult;
 
-    struct Build;
-
-    // board/basic/structure/shapes 必须来自同一刷新；shapes 是 structure 所属的池。
-    // 输出评分为最优后续获胜布局数除以总布局数；没有候选格时推荐与候选为空。
-    // checkAllMoves=false 只保留最佳首招，true 返回全部候选；Result 自行拥有输出数组。
-    void solve(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes, const Config &config, Result &result);
-
-    // components 是当前池中的 InstanceId，彼此不重叠；offFrontierCells 与组件格子不重叠。
-    // 只在 components 的 Box 格子和 offFrontierCells 里分配 mines 个雷，其余盘面不参与。
-    void solveComponent(const ObservedBoard::Result &board, const Basic::Result &basic, span<const Structure::InstanceId> components, span<const ObservedBoard::CellId> offFrontierCells, const Structure::Pool &shapes, int mines, const Config &config, Result &result);
+    // 块来自同一盘面且互不重叠，切片来自 componentPool，实例 ID 指向 shapes.instances.list。
+    // mines 是这些块的剩余总雷数，要求至少有一个合法布局。评分是最优后续能赢的布局占比。
+    // checkAllMoves 为真时返回全部候选，否则只保留最佳首招。
+    void solve(const ObservedBoard::Result &board, const Basic::Result &basic,
+               const vector<LogicComponent::Result::Component> &components, const LogicComponent::Pool &componentPool,
+               const Structure::Pool &shapes, int mines, const Config &config, Result &result);
 
   private:
+    struct Build;
     struct Workspace;
     Workspace &getWorkspace();
     void writeConfig(BruteForceType::Session &session, Build &build, bool writeConfigs);
     void enumerateTCells(BruteForceType::Session &session, Build &build, int start, int remaining, bool writeConfigs);
-    void enumerateBoxCells(BruteForceType::Session &session, Build &build, const Structure::Pool &shapes, span<const Structure::InstanceId> components, int component, int assignmentStart, int box, int cellStart, int remaining, int componentMines, int usedMines, bool writeConfigs);
-    void enumerateComponents(BruteForceType::Session &session, Build &build, const Structure::Pool &shapes, span<const Structure::InstanceId> components, int component, int usedMines, bool writeConfigs);
+    void enumerateBoxCells(BruteForceType::Session &session, Build &build, const Structure::Pool::Instances &instances, int instanceIndex, int assignmentStart, int box, int cellStart, int remaining, int instanceMines, int usedMines, bool writeConfigs);
+    void enumerateInstances(BruteForceType::Session &session, Build &build, const Structure::Pool::Instances &instances, int instanceIndex, int usedMines, bool writeConfigs);
     void writeResult(const BruteForceType::Result &raw, int count, Result &result);
-    void populateSession(BruteForceType::Session &session, Build &build, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Pool &shapes, span<const Structure::InstanceId> components, int mines);
-    void buildSession(BruteForceType::Session &session, Build &build, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes);
-    void buildComponentSession(BruteForceType::Session &session, Build &build, const ObservedBoard::Result &board, const Basic::Result &basic, span<const Structure::InstanceId> components, span<const ObservedBoard::CellId> offFrontierCells, const Structure::Pool &shapes, int mines);
+    void buildSession(BruteForceType::Session &session, Build &build, const ObservedBoard::Result &board, const Basic::Result &basic,
+                      const vector<LogicComponent::Result::Component> &components, const LogicComponent::Pool &componentPool,
+                      const Structure::Pool &shapes);
     void runBackend(const BruteForceType::Session &session, const BruteForceType::Config &config, BruteForceType::Result &result);
 };
 

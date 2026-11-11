@@ -54,7 +54,7 @@ struct ShapeSolverGraph::ObservedLayer {
     FlatHashTable<U128, int, U128Hash> index;
 
     void reset();
-    void advance(const StepGenerator::StepPlan &plan, ObservedLayer &next, const int *adjacentBoxCells, Structure::BoxId xBox) const;
+    void advance(const StepGenerator::StepPlan &plan, ObservedLayer &next, int adjacent, Structure::BoxId xBox) const;
     ObservedCount &findOrAddCount(State &state, int componentMines, int neighborMines);
 };
 
@@ -98,14 +98,14 @@ void ShapeSolverGraph::Layer::advance(const StepGenerator::StepPlan &plan, Layer
     next.frontierWords.resize(0);
     next.index.clear();
     next.momentBoxes = momentBoxes;
-    for (int i = 0; i < plan.closings.size; ++i)
+    for (int i = 0; i < (int)plan.closings.size; ++i)
         next.momentBoxes.push_back(plan.closings[i].box);
 
     for (int stateIndex = 0; stateIndex < (int)states.size; ++stateIndex) {
         const State &state = states.data[stateIndex];
         int minMine = 0;
         int maxMine = plan.boxSize;
-        for (int checkIndex = 0; checkIndex < plan.checks.size; ++checkIndex) {
+        for (int checkIndex = 0; checkIndex < (int)plan.checks.size; ++checkIndex) {
             const StepGenerator::Check &check = plan.checks[checkIndex];
             int partial = 0;
             for (int i = 0; i < check.readCount; ++i)
@@ -115,7 +115,7 @@ void ShapeSolverGraph::Layer::advance(const StepGenerator::StepPlan &plan, Layer
         }
         for (int mine = minMine; mine <= maxMine; ++mine) {
             const int packedOffset = (int)next.frontierWords.size;
-            for (int slot = 0; slot < plan.gather.size; ++slot) {
+            for (int slot = 0; slot < (int)plan.gather.size; ++slot) {
                 if ((slot & 15) == 0)
                     next.frontierWords.push_back(0);
                 const int source = plan.gather[slot];
@@ -163,7 +163,7 @@ void ShapeSolverGraph::Layer::advance(const StepGenerator::StepPlan &plan, Layer
                     long double &targetValue = next.momentValues.data[targetCount.momentOffset + slot];
                     targetValue = firstContribution ? contribution : targetValue + contribution;
                 }
-                for (int i = 0; i < plan.closings.size; ++i) {
+                for (int i = 0; i < (int)plan.closings.size; ++i) {
                     const StepGenerator::Closing &closing = plan.closings[i];
                     const long double boxMine = closing.oldSlot < 0 ? (long double)mine : (long double)frontierValue(state, closing.oldSlot);
                     const long double contribution = boxMine * ways;
@@ -198,13 +198,12 @@ ShapeSolverGraph::ObservedCount &ShapeSolverGraph::ObservedLayer::findOrAddCount
     return counts.data[index];
 }
 
-void ShapeSolverGraph::ObservedLayer::advance(const StepGenerator::StepPlan &plan, ObservedLayer &next, const int *adjacentBoxCells, Structure::BoxId xBox) const {
+void ShapeSolverGraph::ObservedLayer::advance(const StepGenerator::StepPlan &plan, ObservedLayer &next, int adjacent, Structure::BoxId xBox) const {
     // 推进同一 frontier 转移，同时把当前 Box 的雷分到点击格邻居和其余格中。
     next.states.resize(0);
     next.counts.resize(0);
     next.frontierValues.resize(0);
     next.index.clear();
-    const int adjacent = adjacentBoxCells[plan.box];
     const bool isXBox = plan.box == xBox;
     const int size = plan.boxSize;
     const int pool = isXBox ? size - 1 : size;
@@ -212,7 +211,7 @@ void ShapeSolverGraph::ObservedLayer::advance(const StepGenerator::StepPlan &pla
         const State &state = states.data[stateIndex];
         int minMine = 0;
         int maxMine = plan.boxSize;
-        for (int checkIndex = 0; checkIndex < plan.checks.size; ++checkIndex) {
+        for (int checkIndex = 0; checkIndex < (int)plan.checks.size; ++checkIndex) {
             const StepGenerator::Check &check = plan.checks[checkIndex];
             int partial = 0;
             for (int i = 0; i < check.readCount; ++i)
@@ -222,7 +221,7 @@ void ShapeSolverGraph::ObservedLayer::advance(const StepGenerator::StepPlan &pla
         }
         for (int mine = minMine; mine <= maxMine; ++mine) {
             U128Hasher hasher;
-            for (int slot = 0; slot < plan.gather.size; ++slot) {
+            for (int slot = 0; slot < (int)plan.gather.size; ++slot) {
                 const int source = plan.gather[slot];
                 const char value = source < 0 ? (char)mine : frontierValues.data[state.wordOffset + source];
                 hasher.mix((std::uint64_t)(unsigned char)value);
@@ -234,7 +233,7 @@ void ShapeSolverGraph::ObservedLayer::advance(const StepGenerator::StepPlan &pla
             } else {
                 const int id = (int)next.states.size;
                 next.states.push_back({(int)next.frontierValues.size, -1, -1});
-                for (int slot = 0; slot < plan.gather.size; ++slot) {
+                for (int slot = 0; slot < (int)plan.gather.size; ++slot) {
                     const int source = plan.gather[slot];
                     const char value = source < 0 ? (char)mine : frontierValues.data[state.wordOffset + source];
                     next.frontierValues.push_back(value);
@@ -267,15 +266,13 @@ void ShapeSolverGraph::ObservedLayer::advance(const StepGenerator::StepPlan &pla
     }
 }
 
-int ShapeSolverGraph::shapeBoxCount(const Structure::Shape &shape) { return (int)shape.boxSizes.count; }
-
-ShapeSolverType::Distribution ShapeSolverGraph::analyze(const Structure::Shape &shape, const Structure::Pool &shapes, const ShapeSolverConfig &config, vectorPool<long double> &values) {
+ShapeSolverType::Distribution ShapeSolverGraph::analyze(const Structure::Shape &shape, const Structure::Pool::Shapes &shapes, ShapeSolverType::Boxes boxes, const ShapeSolverConfig &config, vectorPool<long double> &values) {
     Workspace &workspace = getWorkspace();
-    const int boxCount = shapeBoxCount(shape);
+    const int boxCount = boxes.size;
     vector<int> &offsets = workspace.offsets;
     vector<Structure::BoxId> &adjacent = workspace.adjacent;
     vector<Structure::BoxId> &order = workspace.order;
-    StepGenerator().buildAdjacency(shape, shapes, offsets, adjacent);
+    StepGenerator().buildAdjacency(shape, shapes, boxCount, offsets, adjacent);
     StepGenerator().makeOrder(offsets, adjacent, config, order);
 
     Layer *current = &workspace.current;
@@ -283,15 +280,15 @@ ShapeSolverType::Distribution ShapeSolverGraph::analyze(const Structure::Shape &
     current->reset();
     next->reset();
     StepGenerator::Sequence &sequence = workspace.sequence;
-    const span<const Structure::BoxId> orderSpan(order.data, (int)order.size);
-    StepGenerator().prepareSteps(shape, shapes, orderSpan, sequence);
-    for (int step = 0; step < orderSpan.size; ++step) {
-        const StepGenerator::StepPlan plan = StepGenerator().makeStep(shape, shapes, orderSpan, step, sequence);
+    StepGenerator().prepareSteps(shape, shapes, order, sequence);
+    for (int step = 0; step < (int)order.size; ++step) {
+        const StepGenerator::StepPlan plan = StepGenerator().makeStep(shape, shapes, boxes, order, step, sequence);
         current->advance(plan, *next);
         std::swap(current, next);
     }
     ShapeSolverType::Distribution result;
     result.boxCount = boxCount;
+    result.tCount = 0;
     if (current->states.size == 0) {
         result.ways = {0, 0};
         result.expectations = {0, 0};
@@ -340,12 +337,12 @@ ShapeSolverType::Distribution ShapeSolverGraph::analyze(const Structure::Shape &
     return result;
 }
 
-void ShapeSolverGraph::observe(const Structure::Shape &shape, const Structure::Pool &shapes, span<const int> adjacentBoxCells, Structure::BoxId xBox, const ShapeSolverConfig &config, ShapeSolverType::Observed &result) {
+void ShapeSolverGraph::observe(const Structure::Shape &shape, const Structure::Pool::Shapes &shapes, ShapeSolverType::Boxes boxes, const vector<int> &adjacentBoxCells, Structure::BoxId xBox, const ShapeSolverConfig &config, ShapeSolverType::Observed &result) {
     Workspace &workspace = getWorkspace();
     vector<int> &offsets = workspace.offsets;
     vector<Structure::BoxId> &adjacent = workspace.adjacent;
     vector<Structure::BoxId> &order = workspace.order;
-    StepGenerator().buildAdjacency(shape, shapes, offsets, adjacent);
+    StepGenerator().buildAdjacency(shape, shapes, boxes.size, offsets, adjacent);
     StepGenerator().makeOrder(offsets, adjacent, config, order);
 
     result.values.data.resize(0);
@@ -354,11 +351,10 @@ void ShapeSolverGraph::observe(const Structure::Shape &shape, const Structure::P
     current->reset();
     next->reset();
     StepGenerator::Sequence &sequence = workspace.sequence;
-    const span<const Structure::BoxId> orderSpan(order.data, (int)order.size);
-    StepGenerator().prepareSteps(shape, shapes, orderSpan, sequence);
-    for (int step = 0; step < orderSpan.size; ++step) {
-        const StepGenerator::StepPlan plan = StepGenerator().makeStep(shape, shapes, orderSpan, step, sequence);
-        current->advance(plan, *next, adjacentBoxCells.data, xBox);
+    StepGenerator().prepareSteps(shape, shapes, order, sequence);
+    for (int step = 0; step < (int)order.size; ++step) {
+        const StepGenerator::StepPlan plan = StepGenerator().makeStep(shape, shapes, boxes, order, step, sequence);
+        current->advance(plan, *next, adjacentBoxCells[plan.box], xBox);
         std::swap(current, next);
     }
     int starts[9];

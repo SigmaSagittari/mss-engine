@@ -94,14 +94,9 @@ int NormalSolver::solve(const BruteForceType::Session &session, State &state, co
         if (need > count)
             return -count;
         BruteForceNormal::Layer &layer = workspace.layer(depth);
-        vector<int> &deaths = layer.deaths;
-        deaths.resize(session.candidateCount);
-        std::fill(deaths.data, deaths.data + deaths.size, 0);
-        for (int i = start; i < start + count; ++i)
-            for (int mine = 0; mine < session.minesPerConfig; ++mine)
-                ++deaths.data[session.mineCandidateIds[configs[i]][mine]];
         int best = 0;
-        state.unopenedCandidates.forEachSetBit([&](int candidate) {
+        // 根入口已将全部候选置为未揭。
+        for (int candidate = 0; candidate < session.candidateCount; ++candidate) {
             for (int reveal = 0; reveal < 9; ++reveal)
                 layer.groups[reveal].resize(0);
             for (int i = start; i < start + count; ++i) {
@@ -120,7 +115,7 @@ int NormalSolver::solve(const BruteForceType::Session &session, State &state, co
             state.unopenedCandidates.set(candidate);
             result.moves.data[candidate] = BruteForceType::Result::Move(session.candidates.data[candidate].cell, wins);
             best = (std::max)(best, wins);
-        });
+        }
         return best;
     } else {
         if (count <= 1) {

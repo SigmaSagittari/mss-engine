@@ -8,6 +8,7 @@
 
 - 代码风格与类型组织见 `style.md`（`docs/prompts/style.md`）。
 - 实现约束见 `implementation.md`（`docs/prompts/implementation.md`）。
+- 说话与回复方式见 `howToSpeaking.md`（`docs/prompts/howToSpeaking.md`）。
 
 ## 优先级
 

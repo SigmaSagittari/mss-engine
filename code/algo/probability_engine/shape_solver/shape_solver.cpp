@@ -1,25 +1,27 @@
 #include "algo/probability_engine/shape_solver/shape_solver.h"
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+
 #include "core/assert.h"
 
 namespace mss {
 
-ShapeSolver::DistributionId ShapeSolver::DistributionPool::find(U128 hash) const {
-    const DistributionId *found = index.find(hash);
-    return found == nullptr ? -1 : *found;
-}
+struct ShapeSolver::Workspace {
+    vector<DistributionId> factors;
+};
 
-ShapeSolver::DistributionId ShapeSolver::DistributionPool::insert(U128 hash, Distribution distribution) {
-    const DistributionId id = (DistributionId)list.size;
-    list.push_back(distribution);
-    index.emplace(hash, id);
-    return id;
+__declspec(noinline) ShapeSolver::Workspace &ShapeSolver::getWorkspace() {
+    static thread_local Workspace workspace;
+    return workspace;
 }
 
 void ShapeSolver::DistributionPool::clear() {
     values.data.resize(0);
     list.resize(0);
-    index.clear();
+    byShape.clear();
+    byComponent.clear();
 }
 
 const ShapeSolver::Assignments *ShapeSolver::AssignmentPool::find(Structure::ShapeId shape) const {
@@ -44,32 +46,109 @@ void ShapeSolver::AssignmentPool::clear() {
     index.clear();
 }
 
-ShapeSolver::DistributionId ShapeSolver::analyze(const Structure::Shape &shape, const Config &config, DistributionPool &pool) {
-    const Structure::Pool &shapes = pool.shapes;
-    const DistributionId cached = pool.find(shape.hash);
-    if (cached >= 0)
-        return cached;
-    Distribution distribution;
-    if ((int)shape.boxSizes.count < config.graphThreshold)
-        distribution = ShapeSolverDfs().analyze(shape, shapes, pool.values);
-    else
-        distribution = ShapeSolverGraph().analyze(shape, shapes, config, pool.values);
-    return pool.insert(shape.hash, distribution);
-}
-
-void ShapeSolver::observe(const Structure::Shape &shape, const Structure::Pool &shapes, span<const int> adjacentBoxCells, Structure::BoxId xBox, const Config &config, Observed &result) {
-    if ((int)shape.boxSizes.count < config.graphThreshold)
-        ShapeSolverDfs().observe(shape, shapes, adjacentBoxCells, xBox, result);
-    else
-        ShapeSolverGraph().observe(shape, shapes, adjacentBoxCells, xBox, config, result);
-}
-
-const ShapeSolver::Assignments &ShapeSolver::assignments(Structure::ShapeId shapeId, const Structure::Shape &shape, AssignmentPool &pool) {
-    const Structure::Pool &shapes = pool.shapes;
-    if (const Assignments *cached = pool.find(shapeId))
+ShapeSolver::DistributionId ShapeSolver::analyze(const Structure::Instance &instance, const Config &config, DistributionPool &pool) {
+    if (const DistributionId *cached = pool.byShape.find(instance.shape))
         return *cached;
-    const Assignments assignments = ShapeSolverDfs().buildAssignments(shape, shapes, pool.storage);
-    return pool.insert(shapeId, assignments);
+    const Structure::Pool &shapes = pool.shapes;
+    const Structure::Shape &shape = shapes.shapes.list.data[instance.shape];
+    const ShapeSolverType::Boxes boxes(shapes.instances.boxes.data.data + instance.boxes.offset, (int)instance.boxes.count);
+    const Distribution distribution = boxes.size < config.graphThreshold
+        ? ShapeSolverDfs().analyze(shape, shapes.shapes, boxes, pool.values)
+        : ShapeSolverGraph().analyze(shape, shapes.shapes, boxes, config, pool.values);
+    const DistributionId id = (DistributionId)pool.list.size;
+    pool.list.push_back(distribution);
+    pool.byShape.emplace(instance.shape, id);
+    return id;
+}
+
+ShapeSolver::DistributionId ShapeSolver::analyzeComponent(const LogicComponent::Result::Component &component, const LogicComponent::Pool &components,
+                                                         const Config &config, DistributionPool &pool) {
+    Workspace &workspace = getWorkspace();
+    vector<DistributionId> &factors = workspace.factors;
+    factors.resize(0);
+    for (Structure::InstanceId instance : components.instanceIds.span(component.instanceIds))
+        factors.push_back(analyze(pool.shapes.instances.list.data[instance], config, pool));
+
+    // 排序让同一组因子共享缓存；重复 ID 对应不同实例，每次都参与卷积。
+    if (factors.size > 1)
+        std::sort(factors.data, factors.data + factors.size);
+    return combine(factors, (int)component.tCells.count, pool);
+}
+
+ShapeSolver::DistributionId ShapeSolver::analyzeFreeCells(int tCount, DistributionPool &pool) {
+    Workspace &workspace = getWorkspace();
+    vector<DistributionId> &factors = workspace.factors;
+    factors.resize(0);
+    return combine(factors, tCount, pool);
+}
+
+ShapeSolver::DistributionId ShapeSolver::combine(const vector<DistributionId> &factors, int tCount, DistributionPool &pool) {
+    U128Hasher hasher;
+    hasher.mix(tCount);
+    hasher.mix(factors.size);
+    for (std::size_t i = 0; i < factors.size; ++i)
+        hasher.mix(factors[i]);
+    const U128 key = hasher.finalize();
+    if (const DistributionId *cached = pool.byComponent.find(key))
+        return *cached;
+
+    vector<long double> &values = pool.values.data;
+    vectorPool<long double>::vector ways{values.size, 1};
+    int start = 0;
+    for (std::size_t i = 0; i < factors.size; ++i) {
+        const Distribution &dist = pool.list[factors[i]];
+        if (dist.ways.count == 0) {
+            ways.count = 0;
+            start = 0;
+            break;
+        }
+        ways.count += dist.ways.count - 1;
+        start += dist.start;
+    }
+
+    values.resize(ways.offset + ways.count);
+    if (ways.count != 0) {
+        // 危险：新切片未初始化。每轮从高次向低次写，只读取上一轮已写入且次数不超过当前项的系数。
+        values.data[ways.offset] = 1.0L;
+        std::size_t count = 1;
+        for (std::size_t factor = 0; factor < factors.size; ++factor) {
+            const vectorPool<long double>::vector terms = pool.list[factors[factor]].ways;
+            const std::size_t nextCount = count + terms.count - 1;
+            for (std::size_t remaining = nextCount; remaining > 0; --remaining) {
+                const std::size_t degree = remaining - 1;
+                const std::size_t begin = degree >= terms.count ? degree - terms.count + 1 : 0;
+                const std::size_t end = (std::min)(count, remaining);
+                long double total = 0.0L;
+                for (std::size_t i = begin; i < end; ++i)
+                    total += values.data[ways.offset + i] * values.data[terms.offset + degree - i];
+                values.data[ways.offset + degree] = total;
+            }
+            count = nextCount;
+        }
+    }
+    const DistributionId id = (DistributionId)pool.list.size;
+    pool.list.push_back({ways, pool.values.push_back(), start, 0, tCount});
+    pool.byComponent.emplace(key, id);
+    return id;
+}
+
+void ShapeSolver::observe(const Structure::Instance &instance, const Structure::Pool &shapes, const vector<int> &adjacentBoxCells, Structure::BoxId xBox, const Config &config, Observed &result) {
+    const Structure::Shape &shape = shapes.shapes.list.data[instance.shape];
+    const ShapeSolverType::Boxes boxes(shapes.instances.boxes.data.data + instance.boxes.offset, (int)instance.boxes.count);
+    if (boxes.size < config.graphThreshold)
+        ShapeSolverDfs().observe(shape, shapes.shapes, boxes, adjacentBoxCells, xBox, result);
+    else
+        ShapeSolverGraph().observe(shape, shapes.shapes, boxes, adjacentBoxCells, xBox, config, result);
+}
+
+const ShapeSolver::Assignments &ShapeSolver::assignments(const Structure::Instance &instance, AssignmentPool &pool) {
+    if (const Assignments *cached = pool.find(instance.shape))
+        return *cached;
+    const Structure::Pool &shapes = pool.shapes;
+    const Structure::Shape &shape = shapes.shapes.list.data[instance.shape];
+    const ShapeSolverType::Boxes boxes(shapes.instances.boxes.data.data + instance.boxes.offset, (int)instance.boxes.count);
+    const Assignments assignments = ShapeSolverDfs().buildAssignments(shape, shapes.shapes, boxes, pool.storage);
+    return pool.insert(instance.shape, assignments);
 }
 
 span<const char> ShapeSolver::sampleAssignment(const AssignmentPool &pool, const Assignments &assignments, int componentMines, long double unit) {

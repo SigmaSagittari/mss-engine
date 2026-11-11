@@ -1,87 +1,107 @@
 #pragma once
 
-#include "algo/winrate_engine/java_lite/java_lite.h"
-#include "algo/winrate_engine/fifty_fifty/fifty_fifty.h"
+#include "algo/probability_engine/probability/observe.h"
 #include "core/datastructure/grid.h"
-#include "core/datastructure/hash.h"
-#include "core/datastructure/vector.h"
-#include "game/position_state.h"
+#include "core/datastructure/span.h"
+#include "game/position.h"
 
 namespace mss {
 
-// 生成候选、过滤死格并完成单格评分；根层补偿和候选消耗由同一入口结算。
 struct Selection {
-    // JavaEval 允许必安和短 Forced 直接评分；Root 完整评估根层；Inner 不计算根层 LTR。
-    enum class Mode { JavaEval, Root, Inner };
+  private:
+    friend struct AnytimeSearch;
+    enum class Range : unsigned char { First, Second, Fallback };
 
-    // 候选短期评分与根层补偿各保存一份；最终选招分在这里组合。
-    struct Evaluation {
-        JavaLite::Result javaLite;
-        long double compensation; // 根层长期风险加法补偿，树内固定为 0。
+    struct Cell {
         ObservedBoard::CellId cell;
-        int preparationNodes; // 本候选评分前实际执行的概率查询次数。
+        long double mine;
+        bool preferred;
+        Range range;
+        bool removed;
+    };
 
-        Evaluation(ObservedBoard::CellId cell, const JavaLite::Result &javaLite, long double compensation, int preparationNodes) : javaLite(javaLite), compensation(compensation), cell(cell), preparationNodes(preparationNodes) {}
-        long double score() const { return javaLite.value * javaLite.progressMultiplier + compensation; }
-        int nodes() const { return preparationNodes + javaLite.nodes; }
+    struct Frontier {
+        struct Cell {
+            ObservedBoard::CellId id;
+            long double mine;
+        };
+        vector<Cell> cells;
+        int knownSafe;
+
+        Frontier() : knownSafe(-1) {}
+    };
+
+  public:
+    struct Config {
+        // 允许粗 LTR 让原本筛掉的格进入候选。给首招打分时也计入 LTR 补偿。
+        bool longTermRisk;
+        // 比较相邻的两个候选。看这两个候选之外、只挨着其中一个的格子。
+        // 如果这些格子都确定是雷，就只留先处理的候选。
+        bool interchangeable;
+        // 两个候选雷率一样，且每种合法摆法里两格要么都是雷、要么都安全，就只留先处理的格。
+        bool equivalence;
+        // A 的雷率比 B 低。如果 A 有雷的每种摆法里 B 也有雷，就剪掉 B。
+        bool dominance;
+        // 用 LogicComponent 分块。如果有候选来自至少有 spaceThreshold 个可点格的块，
+        // 就跳过较小块里的猜测格。候选都来自较小块时照常选。设为 1 或更小可关闭。
+        int spaceThreshold;
+        long double selectionThreshold; // 与最低雷率的允许差值，非负。
+        long double selectionThreshold2; // 第二档允许比全盘最低雷率高多少，非负。
+
+        void hash(U128Hasher &hasher) const {
+            hasher.mix(longTermRisk, interchangeable, equivalence, dominance, spaceThreshold, selectionThreshold, selectionThreshold2);
+        }
+    };
+
+    struct Candidate {
+      private:
+        friend struct Selection;
+        friend struct AnytimeSearch;
+        int linkedClears; // 已知本格安全时确定的格数，-1 表示剪枝未计算。
+
+      public:
+        ObservedBoard::CellId cell;
+        Observe::Result observation;
+
+        Candidate(ObservedBoard::CellId cell, const Observe::Result &observation)
+            : linkedClears(-1), cell(cell), observation(observation) {}
     };
 
     struct Result {
-        // Ordinary：按安全率和空间挑选；Safe：内层已有必安；Specified：调用方指定。
-        // Forced：封闭 50-50；Semi：假设候选为雷后必然形成死猜。
-        enum class Source { Ordinary, Safe, Specified, Forced, Semi };
-        vector<ObservedBoard::CellId> cells;
-        vector<Observe::Result> observations; // direct 时不使用，否则与 cells 一一对应。
-        vector<ObservedBoard::CellId> prepared; // 对换判断使用已经通过评分前剪枝的格子。
-        // 危险：复用容器时不重建 Result；begin 完整写入这些局面字段后才能调用 next。
-        Source source;
-        int next;
-        int remainingSafe, forcedSafes;
-        Mode mode;
-        bool direct;
-        FiftyFifty::Result fiftyFifty;
+        vector<Candidate> candidates;
+        int nodes; // 本次实际执行的 Observe 和条件概率分析次数。
 
-        SuggestResult::Reason reason() const { return source == Source::Forced ? SuggestResult::Reason::Forced : source == Source::Semi ? SuggestResult::Reason::Semi : SuggestResult::Reason::ScoreWins; }
+        Result() : nodes(0) {}
     };
 
-    struct Config {
-        // 优先保留与最高安全率相差不超过此值的候选。
-        long double selectionThreshold1;
-        // 前沿候选不足两格时允许放宽的安全率差距。
-        long double selectionThreshold2;
-        // 优先保留能连到至少这么多未知格的位置。
-        int spaceThreshold;
-        bool interchangeable; // 对换去重：两格独占邻位都是必雷或棋盘外。
-        bool equivalence; // 等价类去重：假设安全后得到相同的必安候选集合。
-        bool dominance; // 支配去重：假设本格安全后，有一个原本更安全的候选必安。
-
-        long double progressContribution;
-
-        Config(long double selectionThreshold1, long double selectionThreshold2, int spaceThreshold, bool interchangeable, bool equivalence, bool dominance, long double progressContribution) : selectionThreshold1(selectionThreshold1), selectionThreshold2(selectionThreshold2), spaceThreshold(spaceThreshold), interchangeable(interchangeable), equivalence(equivalence), dominance(dominance), progressContribution(progressContribution) {}
-        void hash(U128Hasher &hasher) const;
-    };
-    // state 已同步且概率有效，probabilities 为 state.probability 所属池；初始化候选与根层风险，返回实际 Observe 次数。
-    // cells 非空时格子互异且未揭开，保持输入顺序并关闭评分前剪枝；空数组得到空结果。
-    // mode 决定评分规则；Result 须持续存活，每次 next 的 state 须回到 begin 的局面。
-    int begin(PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, Mode mode, const vector<ObservedBoard::CellId> *cells = nullptr);
-    // 消费一个候选并返回评分；被剪掉时 javaLite.valid=false，nodes() 仍包含本次实际工作量。
-    // pool 非空时保存数字结局增量及完整概率，切片借用该池；快捷评分没有增量。
-    // 调用前 next<cells.size；每个候选完整计算后才返回，Anytime 完成本局面的全部候选后才因预算暂停。
-    // 只有 Inner 允许剪枝，floor 提供比较下界；负数表示尚无下界，根层忽略 floor。
-    Evaluation next(Result &result, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, JavaLite::Pool *pool, long double floor, SuggestResult::Details *details = nullptr);
-    bool offEdgeCandidate(const ObservedBoard::Result &board, ObservedBoard::CellId cell);
+    // 写出筛完的候选及每格点开后出现各个数字或踩雷的概率。
+    // probability 对应当前盘面，切片来自 probabilities。positions 用于临时改盘，返回时盘面已恢复。
+    // requested 为空时先筛常规候选，不足两格才筛第二档。
+    // 第二档筛完仍不足两格时，再从更外面按雷率补一个可用的前沿格。
+    // T 格安全率须高于全盘最高安全率的 95%，有必安时跳过这批 T 格。
+    // longTermRisk 开启时，借用与盘面同尺寸的 influences。旧 Java 传布局数，模板传补偿概率。
+    // requested 非空时只在这组互异的 Hidden 或 ForcedSafe 格内按三个开关筛选，启用支配剪枝时先按雷率排序。
+    // result.nodes 记录计算数字概率和重算条件概率的次数。
+    void select(Result &result, Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
+                Probability::Pool &probabilities, const Config &config,
+                span<const ObservedBoard::CellId> requested = {}, const Grid<long double> *influences = nullptr, bool oldJava = false);
 
   private:
     struct Workspace;
     Workspace &getWorkspace();
-    Result::Source find(PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Result &result, const vector<ObservedBoard::CellId> *cells);
-    int removeDead(Result &result, Result::Source source, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig);
-    bool prepare(Result &result, int index, PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Config &config, int &linkedClears, int &nodes);
-    bool interchangeable(const PositionState &state, const Probability::Pool &probabilities, ObservedBoard::CellId lhs, ObservedBoard::CellId rhs);
-    bool contains(span<const ObservedBoard::CellId> cells, ObservedBoard::CellId cell);
-    bool meetsSpaceThreshold(int startRow, int startCol, const PositionState &state, const Probability::Pool &probabilities, int threshold);
-    void selectOrdinary(vector<ObservedBoard::CellId> &result, const PositionState &state, const Probability::Pool &probabilities, const LongTermRisk::Result *risk, span<const ObservedBoard::CellId> offEdge, span<const ObservedBoard::CellId> witnesses, ObservedBoard::CellId firstOffEdge, const Config &config);
+    // 用当前盘面的雷率筛选并排序，覆盖 cells。每格保留常规范围、第二范围或兜底的归属，供调用方逐格筛选。
+    void collect(vector<Cell> &cells, Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
+                 const Probability::Pool &probabilities, const Config &config, span<const ObservedBoard::CellId> requested,
+                 const Grid<long double> *influences, bool oldJava);
+    bool offEdgeCandidate(const ObservedBoard::Result &board, ObservedBoard::CellId cell);
     bool isDead(const Observe::Result &observation);
+    bool interchangeable(const Position::Result &position, const Position::ProbabilityResult &probability,
+                         const Probability::Pool &probabilities, ObservedBoard::CellId lhs, ObservedBoard::CellId rhs);
+    // 假设 candidate 是雷，按等价和支配规则标记 following 中要删的格。只检查 lastRange 及之前的范围。
+    // 返回重算概率的次数，并保存 candidate 为安时带出的必安格数。调用结束时恢复盘面。
+    int removeExchange(Candidate &candidate, span<Cell> following, Range lastRange, Frontier &frontier,
+                       Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
+                       Probability::Pool &probabilities, const Config &config);
 };
 
 } // 命名空间 mss

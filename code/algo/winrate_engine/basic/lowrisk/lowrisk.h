@@ -1,15 +1,15 @@
 #pragma once
 
+#include "algo/probability_engine/probability/probability.h"
 #include "algo/winrate_engine/result_type.h"
-#include "game/position_state.h"
 
 namespace mss {
 
-// 只比较本次点击的安全率；不展开数字，不使用 50-50 或长期风险。
 struct LowRisk {
-    // state 已同步且概率有效；自动模式用于无安全格的局面，只返回一个最小雷率候选。
-    // cells 非空时直接评估指定格；输入格互异且未揭开，必雷不作为招法。
-    SuggestResult analyze(const PositionState &state, const vector<ObservedBoard::CellId> *cells = nullptr);
+    // 输入来自同一有解盘面。默认从 H、T 格中选雷率最低的非必雷格；同率时 H 优先，T 取最小格号。
+    // 指定 cells 时按输入顺序给互异的未揭格评分，跳过必雷格；分数为点击安全率。
+    SuggestResult analyze(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure,
+                          const Probability::BoxResult &boxes, const Probability::Pool &pool, const vector<ObservedBoard::CellId> *cells = nullptr);
 };
 
 } // 命名空间 mss

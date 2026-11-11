@@ -1,9 +1,11 @@
 #include "algo/winrate_engine/bruteforce/bruteforce.h"
 
 #include <algorithm>
-#include <cstdio>
-#include <functional>
+#include <cstddef>
 
+#include "algo/probability_engine/shape_solver/dfs_solver.h"
+#include "algo/winrate_engine/bruteforce/bruteforce_multimask.h"
+#include "algo/winrate_engine/bruteforce/bruteforce_normal.h"
 #include "core/algorithm/neighbors.h"
 #include "core/algorithm/rng.h"
 #include "core/datastructure/bit_mask.h"
@@ -12,11 +14,12 @@ namespace mss {
 
 // 构建过程复用的临时数组；每次构建覆写有效范围，Session 不借用它们。
 struct BruteForce::Build {
+    vector<Structure::InstanceId> instanceIds;
     vector<ObservedBoard::CellId> candidateCells;
     vector<int> candidateAt; // 棋盘 CellId → 候选下标，-1 表示不在本次候选里。
     vector<BruteForceType::CandidateId> tCells; // 待分配雷数的非前沿格。
     vector<BruteForceType::CandidateId> placed; // 当前正在拼接的完整雷盘中的雷位。
-    // 各前沿块的布局起点、数量，以及展开后的格子赋值。
+    // 与 instanceIds 对齐，记录各实例的 Box 赋值起点、数量和连续赋值。
     vector<int> assignmentOffsets;
     vector<int> assignmentCounts;
     vector<char> assignments;
@@ -36,16 +39,14 @@ __declspec(noinline) BruteForce::Workspace &BruteForce::getWorkspace() {
     return workspace;
 }
 
-using BruteForceSessionBuild = BruteForce::Build;
-
-void BruteForce::writeConfig(BruteForceType::Session &session, BruteForceSessionBuild &build, bool writeConfigs) {
+void BruteForce::writeConfig(BruteForceType::Session &session, Build &build, bool writeConfigs) {
     if (writeConfigs)
         for (int i = 0; i < session.minesPerConfig; ++i)
             session.mineCandidateIds[session.possibilityCount][i] = build.placed.data[i];
     ++session.possibilityCount;
 }
 
-void BruteForce::enumerateTCells(BruteForceType::Session &session, BruteForceSessionBuild &build, int start, int remaining, bool writeConfigs) {
+void BruteForce::enumerateTCells(BruteForceType::Session &session, Build &build, int start, int remaining, bool writeConfigs) {
     if (remaining == 0) {
         writeConfig(session, build, writeConfigs);
         return;
@@ -58,54 +59,84 @@ void BruteForce::enumerateTCells(BruteForceType::Session &session, BruteForceSes
 }
 
 
-void BruteForce::enumerateBoxCells(BruteForceType::Session &session, BruteForceSessionBuild &build, const Structure::Pool &shapes, span<const Structure::InstanceId> components, int component, int assignmentStart, int box, int cellStart, int remaining, int componentMines, int usedMines, bool writeConfigs) {
-    const Structure::Instance &instance = shapes.instances.list.data[components[component]];
-    const int *boxOf = shapes.instances.boxOf.data.data + instance.boxOf.offset;
-    const Structure::CellId *cells = shapes.instances.cells.data.data + instance.cells.offset;
-    const int boxCount = (int)instance.boxOf.count - 1;
+void BruteForce::enumerateBoxCells(BruteForceType::Session &session, Build &build, const Structure::Pool::Instances &instances, int instanceIndex, int assignmentStart, int box, int cellStart, int remaining, int instanceMines, int usedMines, bool writeConfigs) {
+    const Structure::Instance &instance = instances.list.data[build.instanceIds.data[instanceIndex]];
+    const int boxCount = (int)instance.boxes.count;
     if (remaining == 0) {
         if (box + 1 == boxCount) {
-            enumerateComponents(session, build, shapes, components, component + 1, usedMines + componentMines, writeConfigs);
+            enumerateInstances(session, build, instances, instanceIndex + 1, usedMines + instanceMines, writeConfigs);
             return;
         }
-        enumerateBoxCells(session, build, shapes, components, component, assignmentStart, box + 1, 0, build.assignments.data[assignmentStart + box + 1], componentMines, usedMines, writeConfigs);
+        enumerateBoxCells(session, build, instances, instanceIndex, assignmentStart, box + 1, 0, build.assignments.data[assignmentStart + box + 1], instanceMines, usedMines, writeConfigs);
         return;
     }
-    const int first = boxOf[box];
-    const int cellCount = boxOf[box + 1] - first;
+    const vectorPool<Structure::CellId>::vector cells = instances.boxes.data.data[instance.boxes.offset + box];
+    const int cellCount = (int)cells.count;
     for (int i = cellStart; i <= cellCount - remaining; ++i) {
-        build.placed.push_back((BruteForceType::CandidateId)build.candidateAt.data[cells[first + i]]);
-        enumerateBoxCells(session, build, shapes, components, component, assignmentStart, box, i + 1, remaining - 1, componentMines, usedMines, writeConfigs);
+        const Structure::CellId cell = instances.cells.data.data[cells.offset + i];
+        build.placed.push_back((BruteForceType::CandidateId)build.candidateAt.data[cell]);
+        enumerateBoxCells(session, build, instances, instanceIndex, assignmentStart, box, i + 1, remaining - 1, instanceMines, usedMines, writeConfigs);
         build.placed.size -= 1;
     }
 }
 
-void BruteForce::enumerateComponents(BruteForceType::Session &session, BruteForceSessionBuild &build, const Structure::Pool &shapes, span<const Structure::InstanceId> components, int component, int usedMines, bool writeConfigs) {
-    if (component == components.size) {
+void BruteForce::enumerateInstances(BruteForceType::Session &session, Build &build, const Structure::Pool::Instances &instances, int instanceIndex, int usedMines, bool writeConfigs) {
+    if (instanceIndex == (int)build.instanceIds.size) {
         const int remaining = session.minesPerConfig - usedMines;
         if (remaining >= 0 && remaining <= (int)build.tCells.size)
             enumerateTCells(session, build, 0, remaining, writeConfigs);
         return;
     }
-    const Structure::Instance &instance = shapes.instances.list.data[components[component]];
-    const Structure::Shape &shape = shapes.shapes.list.data[instance.shape];
-    const int boxCount = (int)shape.boxSizes.count;
-    const int assignmentOffset = build.assignmentOffsets.data[component];
-    for (int assignment = 0; assignment < build.assignmentCounts.data[component]; ++assignment) {
+    const Structure::Instance &instance = instances.list.data[build.instanceIds.data[instanceIndex]];
+    const int boxCount = (int)instance.boxes.count;
+    const int assignmentOffset = build.assignmentOffsets.data[instanceIndex];
+    for (int assignment = 0; assignment < build.assignmentCounts.data[instanceIndex]; ++assignment) {
         const int assignmentStart = assignmentOffset + assignment * boxCount;
-        int componentMines = 0;
+        int instanceMines = 0;
         for (int box = 0; box < boxCount; ++box)
-            componentMines += build.assignments.data[assignmentStart + box];
-        if (usedMines + componentMines > session.minesPerConfig)
+            instanceMines += build.assignments.data[assignmentStart + box];
+        if (usedMines + instanceMines > session.minesPerConfig)
             continue;
-        if (boxCount == 0)
-            enumerateComponents(session, build, shapes, components, component + 1, usedMines, writeConfigs);
-        else
-            enumerateBoxCells(session, build, shapes, components, component, assignmentStart, 0, 0, build.assignments.data[assignmentStart], componentMines, usedMines, writeConfigs);
+        enumerateBoxCells(session, build, instances, instanceIndex, assignmentStart, 0, 0, build.assignments.data[assignmentStart], instanceMines, usedMines, writeConfigs);
     }
 }
 
-void BruteForce::populateSession(BruteForceType::Session &session, Build &build, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Pool &shapes, span<const Structure::InstanceId> components, int mines) {
+void BruteForce::buildSession(BruteForceType::Session &session, Build &build, const ObservedBoard::Result &board, const Basic::Result &basic,
+                              const vector<LogicComponent::Result::Component> &components, const LogicComponent::Pool &componentPool,
+                              const Structure::Pool &shapes) {
+    const Structure::Pool::Instances &instances = shapes.instances;
+    build.instanceIds.resize(0);
+    build.candidateCells.resize(0);
+    for (std::size_t i = 0; i < components.size; ++i) {
+        const LogicComponent::Result::Component &component = components.data[i];
+        for (Structure::InstanceId id : componentPool.instanceIds.span(component.instanceIds)) {
+            build.instanceIds.push_back(id);
+            const Structure::Instance &instance = instances.list.data[id];
+            for (const vectorPool<Structure::CellId>::vector &box : instances.boxes.span(instance.boxes))
+                for (Structure::CellId cell : instances.cells.span(box))
+                    build.candidateCells.push_back(cell);
+        }
+        for (ObservedBoard::CellId cell : componentPool.tCells.span(component.tCells))
+            build.candidateCells.push_back(cell);
+    }
+
+    // 按原盘格号排序，沿用整盘求解的候选编号顺序。
+    if (build.candidateCells.size > 1)
+        std::sort(build.candidateCells.data, build.candidateCells.data + build.candidateCells.size);
+    session.candidateCount = (int)build.candidateCells.size;
+    session.candidates.resize(0);
+    session.links.resize(0);
+    build.candidateAt.resize((std::size_t)board.cells.rows() * board.cells.cols());
+    std::fill_n(build.candidateAt.data, build.candidateAt.size, -1);
+    build.tCells.resize(0);
+    const Basic::Mark *marks = basic.marks[0];
+    for (int candidate = 0; candidate < session.candidateCount; ++candidate) {
+        const ObservedBoard::CellId cell = build.candidateCells.data[candidate];
+        build.candidateAt.data[cell] = candidate;
+        if (marks[cell] == Basic::Mark::T)
+            build.tCells.push_back((BruteForceType::CandidateId)candidate);
+    }
+
     // links 只列候选邻格；F 邻格提前写入 fixedMines，搜索表中的揭示值仍是 0~8。
     for (int candidate = 0; candidate < session.candidateCount; ++candidate) {
         const ObservedBoard::CellId cell = build.candidateCells.data[candidate];
@@ -122,87 +153,31 @@ void BruteForce::populateSession(BruteForceType::Session &session, Build &build,
         session.candidates.push_back({cell, linksOffset, (std::uint8_t)(session.links.size - linksOffset), fixedMines});
     }
 
-    build.assignmentOffsets.resize((int)components.size + 1);
-    build.assignmentCounts.resize((int)components.size);
-    std::fill(build.assignmentCounts.data, build.assignmentCounts.data + build.assignmentCounts.size, 0);
+    build.assignmentOffsets.resize(build.instanceIds.size);
+    build.assignmentCounts.resize(build.instanceIds.size);
     build.assignments.resize(0);
-    for (int component = 0; component < components.size; ++component) {
-        build.assignmentOffsets.data[component] = (int)build.assignments.size;
-        const Structure::Instance &instance = shapes.instances.list.data[components[component]];
+    for (std::size_t i = 0; i < build.instanceIds.size; ++i) {
+        build.assignmentOffsets.data[i] = (int)build.assignments.size;
+        build.assignmentCounts.data[i] = 0;
+        const Structure::Instance &instance = instances.list.data[build.instanceIds.data[i]];
         const Structure::Shape &shape = shapes.shapes.list.data[instance.shape];
-        ShapeSolverDfs().forEachAssignment(shape, shapes, [&build, component](const vector<char> &assignment, long double) {
+        const ShapeSolverType::Boxes boxes(instances.boxes.data.data + instance.boxes.offset, (int)instance.boxes.count);
+        ShapeSolverDfs().forEachAssignment(shape, shapes.shapes, boxes, [&build, i](const vector<char> &assignment, long double) {
             for (int box = 0; box < (int)assignment.size; ++box)
                 build.assignments.push_back(assignment.data[box]);
-            ++build.assignmentCounts.data[component];
+            ++build.assignmentCounts.data[i];
         });
     }
-    build.assignmentOffsets.data[components.size] = (int)build.assignments.size;
-
     session.possibilityCount = 0;
     build.placed.resize(0);
     // 先数方案，再分配二维表；两遍枚举顺序一致。
-    enumerateComponents(session, build, shapes, components, 0, 0, false);
-    session.mineCandidateIds.resize(session.possibilityCount, mines, 0);
+    enumerateInstances(session, build, instances, 0, 0, false);
+    session.mineCandidateIds.resize(session.possibilityCount, session.minesPerConfig, 0);
     session.possibilityCount = 0;
-    enumerateComponents(session, build, shapes, components, 0, 0, true);
+    enumerateInstances(session, build, instances, 0, 0, true);
     session.configHashes.resize(session.possibilityCount);
     for (int config = 0; config < session.possibilityCount; ++config)
         session.configHashes.data[config] = splitmix64(config);
-}
-
-void BruteForce::buildSession(BruteForceType::Session &session, Build &build, const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes) {
-    session.candidateCount = 0;
-    session.possibilityCount = 0;
-    session.candidates.resize(0);
-    session.links.resize(0);
-    build.candidateCells.resize(0);
-    const int rows = board.cells.rows();
-    const int cols = board.cells.cols();
-    build.candidateAt.resize(rows * cols);
-    std::fill(build.candidateAt.data, build.candidateAt.data + build.candidateAt.size, -1);
-    build.tCells.resize(0);
-    for (int row = 0; row < rows; ++row)
-        for (int col = 0; col < cols; ++col) {
-            if (board.cells[row][col] != ObservedBoard::CellState::Hidden)
-                continue;
-            const Basic::Mark mark = basic.marks[row][col];
-            if (mark != Basic::Mark::H && mark != Basic::Mark::T)
-                continue;
-            const ObservedBoard::CellId cell = board.id(row, col);
-            build.candidateAt.data[cell] = session.candidateCount++;
-            build.candidateCells.push_back(cell);
-            if (mark == Basic::Mark::T)
-                build.tCells.push_back((BruteForceType::CandidateId)build.candidateAt.data[cell]);
-        }
-    populateSession(session, build, board, basic, shapes, span<const Structure::InstanceId>(structure.components.data, (int)structure.components.size), board.totalMines - basic.mineSum);
-}
-
-void BruteForce::buildComponentSession(BruteForceType::Session &session, Build &build, const ObservedBoard::Result &board, const Basic::Result &basic, span<const Structure::InstanceId> components, span<const ObservedBoard::CellId> offFrontierCells, const Structure::Pool &shapes, int mines) {
-    session.candidateCount = 0;
-    session.possibilityCount = 0;
-    session.candidates.resize(0);
-    session.links.resize(0);
-    build.candidateCells.resize(0);
-    const int rows = board.cells.rows();
-    const int cols = board.cells.cols();
-    build.candidateAt.resize(rows * cols);
-    std::fill(build.candidateAt.data, build.candidateAt.data + build.candidateAt.size, -1);
-    build.tCells.resize(0);
-    for (int component = 0; component < components.size; ++component) {
-        const Structure::Instance &instance = shapes.instances.list.data[components[component]];
-        const Structure::CellId *cells = shapes.instances.cells.data.data + instance.cells.offset;
-        for (int i = 0; i < (int)instance.cells.count; ++i) {
-            build.candidateAt.data[cells[i]] = session.candidateCount++;
-            build.candidateCells.push_back(cells[i]);
-        }
-    }
-    for (int i = 0; i < offFrontierCells.size; ++i) {
-        const ObservedBoard::CellId cell = offFrontierCells.data[i];
-        build.candidateAt.data[cell] = session.candidateCount++;
-        build.tCells.push_back((BruteForceType::CandidateId)build.candidateAt.data[cell]);
-        build.candidateCells.push_back(cell);
-    }
-    populateSession(session, build, board, basic, shapes, components, mines);
 }
 
 void BruteForce::runBackend(const BruteForceType::Session &session, const BruteForceType::Config &config, BruteForceType::Result &result) {
@@ -223,29 +198,17 @@ void BruteForce::writeResult(const BruteForceType::Result &raw, int count, Resul
     result.recommend();
 }
 
-void BruteForce::solve(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Structure::Pool &shapes, const Config &config, Result &result) {
+void BruteForce::solve(const ObservedBoard::Result &board, const Basic::Result &basic,
+                       const vector<LogicComponent::Result::Component> &components, const LogicComponent::Pool &componentPool,
+                       const Structure::Pool &shapes, int mines, const Config &config, Result &result) {
     Workspace &workspace = getWorkspace();
-    BruteForceSessionBuild &build = workspace.buildStorage;
-    vector<BruteForceType::Session::Candidate> &candidates = workspace.candidates;
-    vector<BruteForceType::CandidateId> &links = workspace.links;
-    Grid<BruteForceType::CandidateId> &mineCandidateIds = workspace.mineCandidateIds;
-    vector<std::uint64_t> &configHashes = workspace.configHashes;
-    BruteForceType::Session session(candidates, links, mineCandidateIds, configHashes, board.totalMines - basic.mineSum);
-    buildSession(session, build, board, basic, structure, shapes);
-    BruteForceType::Result raw;
-    runBackend(session, config, raw);
-    writeResult(raw, session.possibilityCount, result);
-}
-
-void BruteForce::solveComponent(const ObservedBoard::Result &board, const Basic::Result &basic, span<const Structure::InstanceId> components, span<const ObservedBoard::CellId> offFrontierCells, const Structure::Pool &shapes, int mines, const Config &config, Result &result) {
-    Workspace &workspace = getWorkspace();
-    BruteForceSessionBuild &build = workspace.buildStorage;
+    Build &build = workspace.buildStorage;
     vector<BruteForceType::Session::Candidate> &candidates = workspace.candidates;
     vector<BruteForceType::CandidateId> &links = workspace.links;
     Grid<BruteForceType::CandidateId> &mineCandidateIds = workspace.mineCandidateIds;
     vector<std::uint64_t> &configHashes = workspace.configHashes;
     BruteForceType::Session session(candidates, links, mineCandidateIds, configHashes, mines);
-    buildComponentSession(session, build, board, basic, components, offFrontierCells, shapes, mines);
+    buildSession(session, build, board, basic, components, componentPool, shapes);
     BruteForceType::Result raw;
     runBackend(session, config, raw);
     writeResult(raw, session.possibilityCount, result);

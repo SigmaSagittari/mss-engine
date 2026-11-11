@@ -1,79 +1,133 @@
 #pragma once
 
-#include <string>
+#include <cstdint>
 
+#include "algo/probability_engine/logic_component/logic_component.h"
 #include "algo/probability_engine/probability/observe.h"
-#include "algo/winrate_engine/move_policy.h"
-#include "core/datastructure/span.h"
+#include "algo/probability_engine/probability/probability.h"
 #include "core/datastructure/vector.h"
-#include "game/game_control.h"
-#include "game/position_state.h"
 
 namespace mss {
 
-namespace GameControl {
-
-// 人工观测入口会检查局部数字约束和全盘可满足性；失败写入 error()，这是预期错误。
-// 同一 Position 的查询须串行；算法在执行线程取得并复用工作区。
 struct Position {
-    // 人工观测入口：检查局部数字约束和全盘可满足性，错误写入 error()。
-    Position(const ObservedBoard::Result &board, const Config &config);
+    struct Config {
+        ShapeSolver::Config shapeSolver;
 
-    Position(const Position &) = delete;
-    Position &operator=(const Position &) = delete;
+        void hash(U128Hasher &hasher) const;
+    };
 
-    const ObservedBoard::Result &observedBoard() const;
-    // 空串表示合法；非空是预期错误文案，不应继续查询。
-    const std::string &error() const;
-    bool valid() const;
+    struct LogicComponentResult {
+        LogicComponent::Result result;
+        LogicComponent::Pool pool;
 
-    // 以下查询要求局面合法；会按需合并结构、计算并缓存概率，所以不是 const。
-    const Basic::Result &basic() const;
-    const Structure::Result &structure();
-    const Structure::Pool &shapePool();
-    const Probability::Result &probability();
-    // 返回本局面的概率池及其依赖，供调用方绑定独立的结果池；不触发分析。
-    Probability::Pool &probabilityPool();
-    // 状态引用；调用时确保结构已同步、概率已计算。winrate 可在此临时强制标记并恢复。
-    PositionState &state();
+        LogicComponentResult() : version(0), valid(false) {}
 
-    // 已知 S/F 直接返回 0/1，其余格按需查询全盘概率。
-    long double mineProbability(ObservedBoard::CellId cell);
-    // cell 必须是 Hidden 或 ForcedSafe；返回揭开后的数字与爆炸概率。
-    void observe(ObservedBoard::CellId cell, Observe::Result &result);
-    // 优先返回 Basic 推导的安全格；没有时统一检查前沿和 T 格的全盘零雷概率。
-    span<const ObservedBoard::CellId> safeMoves();
-    // 完整评分快照，不读写推荐缓存；fiftyPool 由调用方持有并跨查询复用。
-    // cells 非空时至少一格，只比较指定首招；安全格始终优先。
-    // search 非空时接收 Anytime 续搜句柄，借用 searchPool 和当前根状态。
-    // details 只转交 JavaEval/Anytime，由对应算法重置；其他分派不写明细。
-    void suggest(const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, SuggestResult &result, const vector<ObservedBoard::CellId> *cells = nullptr, AnytimeSearch::Result *search = nullptr, SuggestResult::Details *details = nullptr);
-    // 只查询推荐格，使用盘面及有效配置缓存；安全时返回全部安全格。
-    void suggest(const MovePolicy &policy, SuggestPool &pool, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, vector<ObservedBoard::CellId> &result);
+      private:
+        friend struct Position;
+        std::uint64_t version;
+        bool valid;
+    };
+
+    struct Result {
+        ObservedBoard::Result board;
+        Basic::Result basic;
+        Structure::Result structure; // 实例 ID 来自 Pool::structure。update 后在查询同步前仍是旧划分。
+
+        Result(const ObservedBoard::Result &board, const Config &config)
+            : board(board), config_(config), pendingBoard{}, pendingBasic{}, probabilityVersion(0) {}
+        const Config &config() const { return config_; }
+
+      private:
+        friend struct Position;
+        Config config_; // 该盘面及其所有假设局面共用的概率求解配置。
+        LogicComponentResult logicComponents;
+        ObservedBoard::Delta pendingBoard;
+        Basic::Delta pendingBasic;
+        std::uint64_t probabilityVersion;
+    };
+
+    struct CheckedResult {
+        Result result;
+        const char *error; // nullptr 表示 result 可用，否则指向静态报错文本。
+    };
+
+    struct ProbabilityResult {
+        Probability::BoxResult boxes; // 外层切片来自 Probability::Pool::instanceBoxes，内层来自 boxProbabilities。
+        long double totalWays; // 满足全盘约束的布局数；为零时 boxes 为空。
+    };
+
+    // 各层增量的切片来自 Pool 中的同名字段，退池或清空后失效。
+    struct Delta {
+        ObservedBoard::Delta board;
+        Basic::Delta basic;
+        Structure::Delta structure;
+
+        Delta(const ObservedBoard::Delta &board, const Basic::Delta &basic, const Structure::Delta &structure)
+            : board(board), basic(basic), structure(structure), logicComponentVersion(0) {}
+
+      private:
+        friend struct Position;
+        std::uint64_t logicComponentVersion; // 变更前的分块版本，0 表示当时没有可用结果。
+    };
+
+    struct Pool {
+        ObservedBoard::Pool board;
+        Basic::Pool basic;
+        Structure::Pool structure;
+        ShapeSolver::DistributionPool distributions;
+        Probability::Pool probabilities;
+
+        Pool(Combination::Pool &combinations)
+            : basic(board), distributions(structure), probabilities(distributions, combinations),
+              logicComponentVersion(0), probabilityVersion(0), cachedProbability{} {}
+        Pool(const Pool &) = delete;
+        Pool &operator=(const Pool &) = delete;
+
+        void clear();
+        // 从 delta 的四个起点截断池尾。截掉的增量记录须已用完。
+        void popDelta(const Delta &delta);
+
+      private:
+        friend struct Position;
+        std::uint64_t logicComponentVersion; // 同一个池里的分块分析使用不同版本号。
+        std::uint64_t probabilityVersion; // 对应 cachedProbability 的版本，Result 用零表示待重算。
+        ProbabilityResult cachedProbability;
+    };
+
+    // 从可信盘面构建 Basic 和 Structure。
+    Result analyze(const ObservedBoard::Result &board, Pool &pool, const Config &config);
+    // 从人工盘面构建局面并校验全盘有解。probabilityPool.distributions 绑定 pool.structure。
+    CheckedResult analyzeChecked(const ObservedBoard::Result &board, Pool &pool, const Config &config, Probability::Pool &probabilityPool);
+
+    // 更新盘面和 Basic，保留池尾增量供下次查询时合并更新 Structure。
+    // 同一局面的待处理增量须连续追加到同一个池。
+    // 同批格号互异，previous 是当前观测值。支持 Hidden 变为数字、ForcedMine 或 ForcedSafe，以及 ForcedSafe 揭成数字。
+    void update(Result &result, const vector<ObservedBoard::Delta::Change> &changes, Pool &pool);
+    // 合并应用待处理的变更，供直接读取 Structure 的调用者使用。
+    void updateStructure(Result &result, Pool &pool);
+    // 用于搜索：先同步根局面，再应用本批变更并记录可重放、可撤回的三层增量。
+    Delta updateWithDelta(Result &result, const vector<ObservedBoard::Delta::Change> &changes, Pool &pool);
+    // 正向要求 result 对应变更前的局面，逆向要求 result 对应变更后的局面；两者均保留增量记录。
+    void applyDelta(Result &result, const Delta &delta, const Pool &pool, bool reverse = false);
+
+    // 同一盘面复用概率。局面改动后下次调用重算，返回的切片借用 pool.probabilities。
+    ProbabilityResult analyzeProbability(Result &result, Pool &pool);
+    // 先同步 Structure，再向指定的概率池追加本次结果。probabilities.distributions 绑定 pool.structure。
+    ProbabilityResult analyzeProbability(Result &result, Pool &pool, Probability::Pool &probabilities);
+
+    // 计算点开 cell 后出现 0～8 或踩雷的概率。cell 是隐藏格或未揭必安格。
+    // position 的 Structure 已同步。probability 对应当前盘面，切片来自 probabilities。
+    void observe(const Result &position, const ProbabilityResult &probability, const Probability::Pool &probabilities,
+                 ObservedBoard::CellId cell, Observe::Result &result);
+
+    // 按需分析当前盘面。返回结果和切片借用 result，重新分析后失效，实例 ID 来自 pool.structure。
+    const LogicComponentResult &analyzeLogicComponents(Result &result, Pool &pool);
 
   private:
-    friend struct Game;
-    enum class Check { User, Trusted };
-
-    Position(const ObservedBoard::Result &board, const Config &config, Check check);
-    U128 suggestionKey(const ObservedBoard::Result &board, const MovePolicy &policy) const;
-    // 两个查询入口排除安全格后共用分派；缓存未命中时不再重复安全检查。
-    void suggest(PositionState &current, const MovePolicy &policy, FiftyFifty::Pool &fiftyPool, AnytimeSearch::Pool &searchPool, SuggestResult &result, const vector<ObservedBoard::CellId> *cells, AnytimeSearch::Result *search, SuggestResult::Details *details);
-
-    void initialize();
-    void reset(const ObservedBoard::Result &board);
-    void update(ObservedBoard::Delta &delta);
-    void updateStructure();
-
-    PositionState state_;
-    std::string error_;
-    vector<ObservedBoard::CellId> safeCells_;
-    // Basic 推导出的安全格增量集合；safeMoves 只复查这些格，不再全盘扫描。
-    vector<ObservedBoard::CellId> basicSafeCells_;
-    vector<unsigned char> basicSafeSeen_;
-    Config config_;
+    struct Workspace;
+    Workspace &getWorkspace();
+    ObservedBoard::Delta updateBoard(ObservedBoard::Result &board, const vector<ObservedBoard::Delta::Change> &changes, ObservedBoard::Pool &pool);
+    void analyzeDistributions(const Result &result, ShapeSolver::DistributionPool &pool, vector<ShapeSolver::DistributionId> &distributionIds);
 };
-
-} // 命名空间 GameControl
 
 } // 命名空间 mss

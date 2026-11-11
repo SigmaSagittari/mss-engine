@@ -5,7 +5,7 @@
 
 namespace mss {
 
-// 各算法的完整评分快照；不借用搜索树或工作区，推荐缓存另行查询。
+// 选招结果由调用方持有。
 struct SuggestResult {
     enum class Engine { None, Safe, LowRisk, JavaEval, Anytime, BruteForce };
     // 已结束、已有必安、强制死猜、Semi 本体，或普通评分选优；不记录候选是如何传入的。

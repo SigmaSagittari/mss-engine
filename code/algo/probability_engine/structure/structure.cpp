@@ -1,44 +1,22 @@
 #include "algo/probability_engine/structure/structure.h"
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
-#include <cstdint>
-#include <cstring>
-#include <utility>
 
 #include "core/algorithm/neighbors.h"
 
 namespace mss {
 
-// 临时空间：analyze 和 update 各用一套遍历区，互不依赖上次调用留下的状态。
 struct Structure::Workspace {
-    struct Analyze {
-        Grid<char> visited;
-        // H 格 -> Box 下标，建组件时逐格写入。
-        Grid<int> boxOfCell;
-        vector<CellId> cells;
-    } analyze;
+    struct Build {
+        vector<CellId> digits;
+    } build;
 
-    // update 专用：遍历区、脏格与本次被删的旧组件
     struct Update {
-        Grid<char> visited;
-        Grid<int> boxOfCell;
-        vector<CellId> cells;
-        Grid<char> dirty;
-        vector<CellId> dirtyCells;
-        // 按发现顺序追加，写 Delta 前按组件下标降序排序。
-        vector<ComponentId> removed;
+        vector<std::uint8_t> selected;
+        vector<std::uint8_t> seenMarks;
     } update;
-
-    // Box 归并
-    struct Boxes {
-        FlatHashTable<U128, BoxId, U128Hash> hashBox;
-        struct Bucket {
-            CellId cells[9];
-        };
-        vector<Bucket> buckets;
-        vector<char> boxUsed;
-    } boxes;
 };
 
 __declspec(noinline) Structure::Workspace &Structure::getWorkspace() {
@@ -46,117 +24,26 @@ __declspec(noinline) Structure::Workspace &Structure::getWorkspace() {
     return workspace;
 }
 
-// 一个 H 格的数字邻接签名：只依赖相邻数字格坐标，全盘分析和增量更新得到相同签名。
-U128 Structure::cellSignature(int row, int col, const ObservedBoard::Result &board) {
-    const int rows = board.cells.rows();
-    const int cols = board.cells.cols();
-    U128 hash;
-    forEachAdjacent(row, col, rows, cols, [&](int neighborRow, int neighborCol) {
-        if (!ObservedBoard().isNumber(board.cells[neighborRow][neighborCol]))
-            return;
-        const std::uint64_t position = ((std::uint64_t)neighborRow << 32) | (std::uint64_t)neighborCol;
-        hash += U128{splitmix64(position), splitmix64(position + 0x9e3779b97f4a7c15ULL)};
-    });
-    return hash;
+void Structure::growFlags(vector<std::uint8_t> &flags, std::size_t count) {
+    const std::size_t previousSize = flags.size;
+    if (count <= previousSize)
+        return;
+    flags.resize(count);
+    std::fill_n(flags.data + previousSize, count - previousSize, 0);
 }
 
-// 把实例的 Box 和数字约束登记到 cellLoc；component 是当前 Result 中的组件下标。
-void Structure::remapInstance(Structure::InstanceId id, Structure::ComponentId component, const Structure::Pool &pool, Structure::Result &result) {
-    const Structure::Instance &instance = pool.instances.list.data[id];
-    const int *boxOf = pool.instances.boxOf.data.data + instance.boxOf.offset;
-    const Structure::CellId *cells = pool.instances.cells.data.data + instance.cells.offset;
-    const int boxCount = (int)instance.boxOf.count - 1;
-    for (int box = 0; box < boxCount; ++box)
-        for (int i = boxOf[box]; i < boxOf[box + 1]; ++i)
-            result.cellLoc.data[cells[i]] = Structure::Result::CellLocation{component, box};
-    const Structure::CellId *constraintCells = pool.instances.constraintCells.data.data + instance.constraintCells.offset;
-    for (int i = 0; i < (int)instance.constraintCells.count; ++i)
-        result.cellLoc.data[constraintCells[i]] = Structure::Result::CellLocation{component, -1};
-}
-
-// 清掉实例占用的格子登记，cellLoc 回到“不属于组件”。
-void Structure::clearInstance(Structure::InstanceId id, const Structure::Pool &pool, Structure::Result &result) {
-    const Structure::Instance &instance = pool.instances.list.data[id];
-    const Structure::CellId *cells = pool.instances.cells.data.data + instance.cells.offset;
-    for (int i = 0; i < (int)instance.cells.count; ++i)
-        result.cellLoc.data[cells[i]] = Structure::Result::CellLocation{};
-    const Structure::CellId *constraintCells = pool.instances.constraintCells.data.data + instance.constraintCells.offset;
-    for (int i = 0; i < (int)instance.constraintCells.count; ++i)
-        result.cellLoc.data[constraintCells[i]] = Structure::Result::CellLocation{};
-}
-
-// 沿“数字—相邻 H 格”二部关系收集一个连通组件；T 格不参与遍历。
-void Structure::collectComponent(Structure::CellId start, const ObservedBoard::Result &board, const Basic::Result &basic, Grid<char> &visited, vector<Structure::CellId> &cells) {
-    const int rows = board.cells.rows();
-    const int cols = board.cells.cols();
-    const std::pair<int, int> startPosition = board.pos(start);
-    visited[startPosition.first][startPosition.second] = 1;
-    cells.push_back(start);
-    for (int i = 0; i < (int)cells.size; ++i) {
-        const std::pair<int, int> position = board.pos(cells.data[i]);
-        const int row = position.first;
-        const int col = position.second;
-        if (ObservedBoard().isNumber(board.cells[row][col]))
-            forEachAdjacent(row, col, rows, cols, [&](int neighborRow, int neighborCol) {
-                if (basic.marks[neighborRow][neighborCol] == Basic::Mark::H && !visited[neighborRow][neighborCol]) {
-                    visited[neighborRow][neighborCol] = 1;
-                    cells.push_back(board.id(neighborRow, neighborCol));
-                }
-            });
-        if (basic.marks[row][col] == Basic::Mark::H)
-            forEachAdjacent(row, col, rows, cols, [&](int neighborRow, int neighborCol) {
-                if (ObservedBoard().isNumber(board.cells[neighborRow][neighborCol]) && !visited[neighborRow][neighborCol]) {
-                    visited[neighborRow][neighborCol] = 1;
-                    cells.push_back(board.id(neighborRow, neighborCol));
-                }
-            });
-    }
-}
-
-// 对 Box 大小和数字约束序列生成 Shape 的内容身份。
-U128 Structure::computeShapeHash(vectorPool<int>::vector boxSizes, vectorPool<Structure::Shape::Constraint>::vector constraints, const Structure::Pool::Shapes &pool) {
-    U128Hasher hasher;
-    const int *sizes = pool.boxSizes.data.data + boxSizes.offset;
-    for (int i = 0; i < (int)boxSizes.count; ++i)
-        hasher.mix((std::uint64_t)sizes[i]);
-    const Structure::Shape::Constraint *records = pool.constraints.data.data + constraints.offset;
-    const Structure::BoxId *ids = pool.boxIds.data.data;
-    for (int i = 0; i < (int)constraints.count; ++i) {
-        hasher.mix((std::uint64_t)records[i].sum);
-        const Structure::BoxId *members = ids + records[i].boxIds.offset;
-        for (int k = 0; k < (int)records[i].boxIds.count; ++k)
-            hasher.mix((std::uint64_t)members[k] + 0x9e3779b9ULL);
-    }
-    return hasher.finalize();
-}
-
-// 对 Shape ID、Box 布局和数字约束格生成 Instance 的内容身份。
-U128 Structure::computeInstanceHash(const Structure::Instance &instance, const Structure::Pool::Instances &pool) {
-    U128Hasher hasher;
-    hasher.mix((std::uint64_t)instance.shape);
-    const Structure::CellId *cells = pool.cells.data.data + instance.cells.offset;
-    hasher.mix((std::uint64_t)instance.cells.count);
-    for (int i = 0; i < (int)instance.cells.count; ++i)
-        hasher.mix(cells[i]);
-    const int *boxOf = pool.boxOf.data.data + instance.boxOf.offset;
-    hasher.mix((std::uint64_t)instance.boxOf.count);
-    for (int i = 0; i < (int)instance.boxOf.count; ++i)
-        hasher.mix((std::uint64_t)boxOf[i]);
-    const Structure::CellId *constraintCells = pool.constraintCells.data.data + instance.constraintCells.offset;
-    hasher.mix((std::uint64_t)instance.constraintCells.count);
-    for (int i = 0; i < (int)instance.constraintCells.count; ++i)
-        hasher.mix(constraintCells[i]);
-    return hasher.finalize();
+int Structure::neighborDirection(int deltaRow, int deltaCol) {
+    const int index = (deltaRow + 1) * 3 + deltaCol + 1;
+    return index - (index > 4);
 }
 
 void Structure::Pool::clear() {
-    shapes.boxSizes.data.resize(0);
     shapes.constraints.data.resize(0);
     shapes.boxIds.data.resize(0);
     shapes.list.resize(0);
     shapes.index.clear();
     instances.cells.data.resize(0);
-    instances.boxOf.data.resize(0);
+    instances.boxes.data.resize(0);
     instances.constraintCells.data.resize(0);
     instances.list.resize(0);
     instances.index.clear();
@@ -164,265 +51,352 @@ void Structure::Pool::clear() {
     deltas.added.data.resize(0);
 }
 
-Structure::ShapeId Structure::Pool::Shapes::intern(Shape shape) {
-    const ShapeId *found = index.find(shape.hash);
+Structure::ShapeId Structure::Pool::Shapes::intern(Shape shape, const BoxPool &boxPool, BoxPool::vector boxes) {
+    U128Hasher hash;
+    hash.mix((std::uint64_t) boxes.count);
+    for (const vectorPool<CellId>::vector &box : boxPool.span(boxes))
+        hash.mix((std::uint64_t) box.count);
+    hash.mix((std::uint64_t) shape.constraints.count);
+    for (const Shape::Constraint &constraint : constraints.span(shape.constraints)) {
+        hash.mix(constraint.sum);
+        hash.mix((std::uint64_t) constraint.boxIds.count);
+        for (BoxId box : boxIds.span(constraint.boxIds))
+            hash.mix(box);
+    }
+
+    const U128 key = hash.finalize();
+    const ShapeId *found = index.find(key);
     if (found != nullptr) {
-        boxSizes.pop_back(shape.boxSizes);
         constraints.pop_back(shape.constraints);
         boxIds.pop_back(shape.boxIds);
         return *found;
     }
-    const ShapeId id = (ShapeId)list.size;
+    const ShapeId id = (ShapeId) list.size;
     list.push_back(shape);
-    index.emplace(shape.hash, id);
+    index.emplace(key, id);
     return id;
 }
 
 Structure::InstanceId Structure::Pool::Instances::intern(Instance instance) {
-    const U128 hash = Structure().computeInstanceHash(instance, *this);
-    const InstanceId *found = index.find(hash);
+    U128Hasher hash;
+    hash.mix(instance.shape);
+    for (const vectorPool<CellId>::vector &box : boxes.span(instance.boxes))
+        for (CellId cell : cells.span(box))
+            hash.mix(cell);
+    for (CellId cell : constraintCells.span(instance.constraintCells))
+        hash.mix(cell);
+
+    const U128 key = hash.finalize();
+    const InstanceId *found = index.find(key);
+    // 命中时把本次追加的数据整段退掉：格号按 Box 顺序连续追加，首个 Box 切片的位置就是这段格号的
+    // 起点，退到那里即可。
     if (found != nullptr) {
-        cells.pop_back(instance.cells);
-        boxOf.pop_back(instance.boxOf);
+        cells.pop_back(boxes.data.data[instance.boxes.offset]);
+        boxes.pop_back(instance.boxes);
         constraintCells.pop_back(instance.constraintCells);
         return *found;
     }
-    const InstanceId id = (InstanceId)list.size;
+    const InstanceId id = (InstanceId) list.size;
     list.push_back(instance);
-    index.emplace(hash, id);
+    index.emplace(key, id);
     return id;
 }
 
-// 按数字邻接签名合并 H 格为 Box，并构造扣除相邻 F 后的约束。
-Structure::InstanceId Structure::buildComponent(const vector<Structure::CellId> &componentCells, const ObservedBoard::Result &board, const Basic::Result &basic, Grid<int> &boxOfCell, Structure::Pool &pool) {
+Structure::InstanceId Structure::buildInstance(CellId start, Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool) {
     Workspace &workspace = getWorkspace();
+    vector<CellId> &digits = workspace.build.digits;
+    vector<Result::CellLocation> &locations = result.cellLoc;
+    std::uint8_t *adjacentH = result.adjacentH[0];
+    int *adjacentDigits = result.adjacentDigits[0];
+    const ObservedBoard::CellState *states = board.cells[0];
+    const Basic::Mark *marks = basic.marks[0];
     const int rows = board.cells.rows();
     const int cols = board.cells.cols();
-    Structure::Workspace::Boxes &boxes = workspace.boxes;
-    boxes.hashBox.clear();
-    vectorPool<int>::vector shapeBoxSizes = pool.shapes.boxSizes.push_back();
-    vectorPool<Structure::Shape::Constraint>::vector shapeConstraints = pool.shapes.constraints.push_back();
-    vectorPool<Structure::BoxId>::vector shapeBoxIds = pool.shapes.boxIds.push_back();
-    for (int i = 0; i < (int)componentCells.size; ++i) {
-        const std::pair<int, int> position = board.pos(componentCells.data[i]);
-        const int row = position.first;
-        const int col = position.second;
-        if (basic.marks[row][col] != Basic::Mark::H)
-            continue;
-        const U128 hash = cellSignature(row, col, board);
-        Structure::BoxId box;
-        const Structure::BoxId *found = boxes.hashBox.find(hash);
-        if (found != nullptr)
-            box = *found;
-        else {
-            box = (Structure::BoxId)shapeBoxSizes.count;
-            pool.shapes.boxSizes.push_back(shapeBoxSizes, 0);
-            boxes.hashBox.emplace(hash, box);
-            if ((int)boxes.buckets.size < (int)shapeBoxSizes.count)
-                boxes.buckets.resize(shapeBoxSizes.count);
-        }
-        int &size = pool.shapes.boxSizes.data.data[shapeBoxSizes.offset + box];
-        boxes.buckets.data[box].cells[size++] = componentCells.data[i];
-        boxOfCell[row][col] = box;
-    }
+    const int instanceIndex = (int) result.instanceIds.size;
+    const int offsets[8] = {-cols - 1, -cols, -cols + 1, -1, 1, cols - 1, cols, cols + 1};
+    constexpr int shifts[8] = {0, 1, 2, 5, 7, 10, 11, 12};
 
-    vectorPool<Structure::CellId>::vector instanceCells = pool.instances.cells.push_back();
-    vectorPool<int>::vector instanceBoxOf = pool.instances.boxOf.push_back();
-    vectorPool<Structure::CellId>::vector instanceConstraintCells = pool.instances.constraintCells.push_back();
-    pool.instances.boxOf.push_back(instanceBoxOf, 0);
-    int cellOffset = 0;
-    for (int box = 0; box < (int)shapeBoxSizes.count; ++box) {
-        const int size = pool.shapes.boxSizes.data.data[shapeBoxSizes.offset + box];
-        for (int i = 0; i < size; ++i)
-            pool.instances.cells.push_back(instanceCells, boxes.buckets.data[box].cells[i]);
-        cellOffset += size;
-        pool.instances.boxOf.push_back(instanceBoxOf, cellOffset);
-    }
-
-    const int boxCount = (int)shapeBoxSizes.count;
-    boxes.boxUsed.resize(boxCount);
-    std::memset(boxes.boxUsed.data, 0, (std::size_t)boxCount);
-    for (int i = 0; i < (int)componentCells.size; ++i) {
-        const Structure::CellId cell = componentCells.data[i];
-        const std::pair<int, int> position = board.pos(cell);
-        const int row = position.first;
-        const int col = position.second;
-        if (!ObservedBoard().isNumber(board.cells[row][col]))
-            continue;
-        int sum = ObservedBoard().numberValue(board.cells[row][col]);
-        const int start = (int)shapeBoxIds.count;
-        forEachAdjacent(row, col, rows, cols, [&](int neighborRow, int neighborCol) {
-            if (basic.marks[neighborRow][neighborCol] == Basic::Mark::F)
-                --sum;
-            if (basic.marks[neighborRow][neighborCol] != Basic::Mark::H)
-                return;
-            const Structure::BoxId box = (Structure::BoxId)boxOfCell[neighborRow][neighborCol];
-            if (boxes.boxUsed.data[box] == 0) {
-                boxes.boxUsed.data[box] = 1;
-                pool.shapes.boxIds.push_back(shapeBoxIds, box);
+    // 边界处理：先假设 8 个方向都有效，再按所在边把整条越界的方向去掉。
+    // 位号就是 offsets 的下标：低 3 位是左上、上、右上，高 3 位是左下、下、右下；
+    // 左列占位 0、3、5，右列占位 2、4、7，被中心位隔断，所以两个列的常量看不出是一条边。
+    auto validDirections = [&](CellId cell) {
+        const auto [row, col] = board.pos(cell);
+        unsigned valid = 0xff;
+        if (row == 0) valid &= ~0b00000111u;
+        if (row + 1 == rows) valid &= ~0b11100000u;
+        if (col == 0) valid &= ~0b00101001u;
+        if (col + 1 == cols) valid &= ~0b10010100u;
+        return valid;
+    };
+    // H 首次出现时立即展开，只把数字入队，保留二部图 BFS 中的数字顺序。
+    auto visitHidden = [&](CellId cell) {
+        if (locations.data[cell].instanceIndex >= 0)
+            return;
+        locations.data[cell].instanceIndex = instanceIndex;
+        int mask = 0;
+        for (unsigned bits = validDirections(cell); bits; bits &= bits - 1) {
+            const int direction = std::countr_zero(bits);
+            const CellId digit = cell + offsets[direction];
+            if (ObservedBoard().isNumber(states[digit])) {
+                mask |= 1 << shifts[direction];
+                if (locations.data[digit].instanceIndex < 0) {
+                    locations.data[digit].instanceIndex = instanceIndex;
+                    digits.push_back(digit);
+                }
             }
-        });
-        const int count = (int)shapeBoxIds.count - start;
-        const Structure::BoxId *boxIds = pool.shapes.boxIds.data.data + shapeBoxIds.offset;
-        for (int k = start; k < start + count; ++k)
-            boxes.boxUsed.data[boxIds[k]] = 0;
-        pool.shapes.constraints.push_back(shapeConstraints, {sum, {shapeBoxIds.offset + (std::size_t)start, (std::size_t)count}});
-        pool.instances.constraintCells.push_back(instanceConstraintCells, cell);
-    }
+        }
+        adjacentDigits[cell] = mask;
+    };
 
-    const Structure::Shape shape{shapeBoxSizes, shapeConstraints, shapeBoxIds, computeShapeHash(shapeBoxSizes, shapeConstraints, pool.shapes)};
-    const Structure::ShapeId shapeId = pool.shapes.intern(shape);
-    const Structure::Instance instance{shapeId, instanceCells, instanceBoxOf, instanceConstraintCells};
-    return pool.instances.intern(instance);
+    Pool::Shapes &shapes = pool.shapes;
+    Pool::Instances &instances = pool.instances;
+    Shape shape{shapes.constraints.push_back(), shapes.boxIds.push_back()};
+    Pool::BoxPool::vector instanceBoxes = instances.boxes.push_back();
+    vectorPool<CellId>::vector constraintCells = instances.constraintCells.push_back();
+    visitHidden(start);
+    for (std::size_t i = 0; i < digits.size; ++i) {
+        const CellId digit = digits.data[i];
+        int sum = ObservedBoard().numberValue(states[digit]);
+        unsigned hidden = 0;
+        for (unsigned bits = validDirections(digit); bits; bits &= bits - 1) {
+            const int direction = std::countr_zero(bits);
+            const CellId cell = digit + offsets[direction];
+            const Basic::Mark mark = marks[cell];
+            sum -= mark == Basic::Mark::F;
+            if (mark == Basic::Mark::H) {
+                hidden |= 1u << direction;
+                visitHidden(cell);
+            }
+        }
+        adjacentH[digit] = hidden;
+
+        // 归组：当前数字的邻格里，邻接数字集合和首格相同的 H 并成一个 Box。
+        // 两份掩码各自左移「它相对当前数字」的位号，都移到了当前数字的坐标系，比的是同一批实际
+        // 数字格，掩码相等就是集合相同。
+        // 同一 Box 的成员邻接的数字集合相同，任意一个数字的邻格里都包含它的全部成员，扫一遍就能
+        // 收齐，不需要并查集。
+        const std::size_t begin = shapes.boxIds.data.size;
+        while (hidden) {
+            const int direction = std::countr_zero(hidden);
+            hidden &= hidden - 1;
+            const CellId cell = digit + offsets[direction];
+            BoxId box = locations.data[cell].box;
+            if (box >= 0) {
+                // 首成员在每个共有数字的邻格里都出现，由它写这一段 Box 编号，其余成员跳过。
+                const vectorPool<CellId>::vector &members = instances.boxes.data.data[instanceBoxes.offset + box];
+                if (instances.cells.data.data[members.offset] != cell)
+                    continue;
+            } else {
+                box = (BoxId) instanceBoxes.count;
+                vectorPool<CellId>::vector members = instances.cells.push_back();
+                instances.cells.push_back(members, cell);
+                locations.data[cell].box = box;
+                const int pattern = adjacentDigits[cell] << shifts[direction];
+                for (unsigned bits = hidden; bits; bits &= bits - 1) {
+                    const int other = std::countr_zero(bits);
+                    const CellId neighbor = digit + offsets[other];
+                    if ((adjacentDigits[neighbor] << shifts[other]) == pattern) {
+                        instances.cells.push_back(members, neighbor);
+                        locations.data[neighbor].box = box;
+                        hidden &= ~(1u << other);
+                    }
+                }
+                instances.boxes.push_back(instanceBoxes, members);
+            }
+            shapes.boxIds.push_back(shape.boxIds, box);
+        }
+        shapes.constraints.push_back(shape.constraints, {sum, {begin, shapes.boxIds.data.size - begin}});
+        instances.constraintCells.push_back(constraintCells, digit);
+    }
+    digits.resize(0);
+    const ShapeId shapeId = shapes.intern(shape, instances.boxes, instanceBoxes);
+    return instances.intern({shapeId, instanceBoxes, constraintCells});
+}
+
+void Structure::setLocations(Result &result, const Pool &pool, InstanceId id, int instanceIndex) {
+    const Instance &instance = pool.instances.list.data[id];
+    BoxId box = 0;
+    for (const vectorPool<CellId>::vector &cells : pool.instances.boxes.span(instance.boxes)) {
+        const Result::CellLocation location{instanceIndex, instanceIndex < 0 ? -1 : box};
+        for (CellId cell : pool.instances.cells.span(cells)) {
+            result.cellLoc.data[cell] = location;
+            if (instanceIndex < 0)
+                result.adjacentDigits[0][cell] = 0;
+        }
+        ++box;
+    }
+    for (CellId cell : pool.instances.constraintCells.span(instance.constraintCells)) {
+        result.cellLoc.data[cell] = {instanceIndex, -1};
+        if (instanceIndex < 0)
+            result.adjacentH[0][cell] = 0;
+    }
+}
+
+void Structure::setInstanceMasks(Result &result, const Pool &pool, InstanceId id) {
+    const Instance &instance = pool.instances.list.data[id];
+    const Shape &shape = pool.shapes.list.data[instance.shape];
+    const vectorPool<CellId>::vector *boxes = pool.instances.boxes.span(instance.boxes).begin();
+    const CellId *digits = pool.instances.constraintCells.span(instance.constraintCells).begin();
+    const int cols = result.adjacentH.cols();
+    std::uint8_t *adjacentH = result.adjacentH[0];
+    int *adjacentDigits = result.adjacentDigits[0];
+    for (const Shape::Constraint &constraint : pool.shapes.constraints.span(shape.constraints)) {
+        const CellId digit = *digits++;
+        const int row = digit / cols;
+        const int col = digit % cols;
+        std::uint8_t mask = 0;
+        for (BoxId box : pool.shapes.boxIds.span(constraint.boxIds))
+            for (CellId cell : pool.instances.cells.span(boxes[box])) {
+                const int deltaRow = cell / cols - row;
+                const int deltaCol = cell % cols - col;
+                mask |= 1u << neighborDirection(deltaRow, deltaCol);
+                adjacentDigits[cell] |= 1 << (6 - 5 * deltaRow - deltaCol);
+            }
+        adjacentH[digit] = mask;
+    }
 }
 
 void Structure::analyze(Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool) {
-    Workspace &workspace = getWorkspace();
     const int rows = board.cells.rows();
     const int cols = board.cells.cols();
-    const std::size_t cellCount = (std::size_t)rows * cols;
-    result.components.resize(0);
+    const std::size_t cellCount = (std::size_t) rows * cols;
+    result.instanceIds.resize(0);
     result.cellLoc.resize(cellCount);
-    for (std::size_t i = 0; i < cellCount; ++i)
-        result.cellLoc.data[i] = Result::CellLocation{};
+    std::fill_n(result.cellLoc.data, cellCount, Result::CellLocation{});
+    result.adjacentH.resize(rows, cols, 0);
+    result.adjacentDigits.resize(rows, cols, 0);
 
-    Grid<char> &visited = workspace.analyze.visited;
-    Grid<int> &boxOfCell = workspace.analyze.boxOfCell;
-    if (visited.rows() != rows || visited.cols() != cols) {
-        visited.resize(rows, cols, 0);
-        boxOfCell.resize(rows, cols, 0);
-    } else
-        visited.fill(0);
-
-    vector<CellId> &cells = workspace.analyze.cells;
     for (int row = 0; row < rows; ++row)
-        for (int col = 0; col < cols; ++col)
-            if (basic.marks[row][col] == Basic::Mark::H && !visited[row][col]) {
-                cells.resize(0);
-                collectComponent(board.id(row, col), board, basic, visited, cells);
-                result.components.push_back(buildComponent(cells, board, basic, boxOfCell, pool));
-            }
-    for (int component = 0; component < (int)result.components.size; ++component)
-        remapInstance(result.components.data[component], component, pool, result);
+        for (int col = 0; col < cols; ++col) {
+            const CellId cell = board.id(row, col);
+            if (basic.marks[row][col] == Basic::Mark::H && result.cellLoc.data[cell].instanceIndex < 0)
+                result.instanceIds.push_back(buildInstance(cell, result, board, basic, pool));
+        }
 }
 
-Structure::Delta Structure::update(Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool, const CellId *changedCells, int changedCount) {
+Structure::Delta Structure::update(Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool,
+                                   const ObservedBoard::Delta &observed, const Basic::Delta &marks, const Basic::Pool &basicPool) {
+    Delta delta{pool.deltas.removed.push_back(), pool.deltas.added.push_back()};
+    if (observed.changes.count == 0 && marks.changes.count == 0)
+        return delta;
+
     Workspace &workspace = getWorkspace();
+    vector<std::uint8_t> &selected = workspace.update.selected;
+    vector<std::uint8_t> &seenMarks = workspace.update.seenMarks;
+    const vector<Result::CellLocation> &locations = result.cellLoc;
+    const Basic::Mark *finalMarks = basic.marks[0];
+    const ObservedBoard::CellState *finalCells = board.cells[0];
     const int rows = board.cells.rows();
     const int cols = board.cells.cols();
-    Workspace::Update &scratch = workspace.update;
-    Grid<char> &visited = scratch.visited;
-    Grid<int> &boxOfCell = scratch.boxOfCell;
-    if (visited.rows() != rows || visited.cols() != cols) {
-        visited.resize(rows, cols, 0);
-        boxOfCell.resize(rows, cols, 0);
-    }
-    if (scratch.dirty.rows() != rows || scratch.dirty.cols() != cols)
-        scratch.dirty.resize(rows, cols, 0);
+    growFlags(seenMarks, locations.size);
+    growFlags(selected, result.instanceIds.size);
 
-    Delta delta{pool.deltas.removed.push_back(), pool.deltas.added.push_back()};
-    scratch.dirtyCells.resize(0);
-    scratch.removed.resize(0);
-
-    auto markDirty = [&](int row, int col) {
-        if (scratch.dirty[row][col])
+    auto invalidate = [&](int index) {
+        if (selected.data[index])
             return;
-        scratch.dirty[row][col] = 1;
-        scratch.dirtyCells.push_back(board.id(row, col));
-    };
-    auto invalidate = [&](ComponentId component) {
-        scratch.removed.push_back(component);
-        const Instance &instance = pool.instances.list.data[result.components.data[component]];
-        const CellId *cells = pool.instances.cells.data.data + instance.cells.offset;
-        for (int i = 0; i < (int)instance.cells.count; ++i) {
-            const std::pair<int, int> position = board.pos(cells[i]);
-            markDirty(position.first, position.second);
-            result.cellLoc.data[cells[i]] = Result::CellLocation{};
-        }
-        const CellId *constraintCells = pool.instances.constraintCells.data.data + instance.constraintCells.offset;
-        for (int i = 0; i < (int)instance.constraintCells.count; ++i) {
-            const std::pair<int, int> position = board.pos(constraintCells[i]);
-            markDirty(position.first, position.second);
-            result.cellLoc.data[constraintCells[i]] = Result::CellLocation{};
-        }
+        selected.data[index] = 1;
+        pool.deltas.removed.push_back(delta.removed, {index, result.instanceIds.data[index]});
     };
 
-    for (int i = 0; i < changedCount; ++i) {
-        const std::pair<int, int> position = board.pos(changedCells[i]);
-        markDirty(position.first, position.second);
-        forEachAdjacent(position.first, position.second, rows, cols, [&](int neighborRow, int neighborCol) { markDirty(neighborRow, neighborCol); });
-    }
-    // 每个受影响的旧组件整体标脏后重建，重建只读最终状态。
-    for (int i = 0; i < (int)scratch.dirtyCells.size; ++i) {
-        const Result::CellLocation location = result.cellLoc.data[scratch.dirtyCells.data[i]];
-        if (location.component == -1)
+    // 每格取首次记录的旧标记，与最终标记比较。
+    for (const Basic::Delta::Change &change : basicPool.changes.span(marks.changes)) {
+        const CellId cell = change.cell;
+        if (seenMarks.data[cell])
             continue;
-        invalidate(location.component);
+        seenMarks.data[cell] = 1;
+        const Basic::Mark next = finalMarks[cell];
+        if (change.previous == Basic::Mark::H && next != Basic::Mark::H) {
+            // 这个 H 的旧数字都在同一块里，作废这一块就够。
+            invalidate(locations.data[cell].instanceIndex);
+        } else if ((change.previous == Basic::Mark::F) != (next == Basic::Mark::F)) {
+            const auto [row, col] = board.pos(cell);
+            forEachAdjacent(row, col, rows, cols, [&](int r, int c) {
+                const Result::CellLocation location = locations.data[board.id(r, c)];
+                if (location.instanceIndex >= 0 && location.box < 0)
+                    invalidate(location.instanceIndex);
+            });
+        }
     }
-    vector<CellId> &cells = scratch.cells;
-    for (int i = 0; i < (int)scratch.dirtyCells.size; ++i) {
-        const std::pair<int, int> position = board.pos(scratch.dirtyCells.data[i]);
-        if (basic.marks[position.first][position.second] != Basic::Mark::H || visited[position.first][position.second])
+
+    // 新数字把挨着的旧块连成一片：这些块整块作废，重建时从其中任一个 H 出发就会连到一起。
+    for (const ObservedBoard::Delta::Change &change : basicPool.board.changes.span(observed.changes)) {
+        if (ObservedBoard().isNumber(change.previous) || !ObservedBoard().isNumber(finalCells[change.cell]))
             continue;
-        cells.resize(0);
-        collectComponent(scratch.dirtyCells.data[i], board, basic, visited, cells);
-        pool.deltas.added.push_back(delta.added, buildComponent(cells, board, basic, boxOfCell, pool));
+        const auto [row, col] = board.pos(change.cell);
+        forEachAdjacent(row, col, rows, cols, [&](int r, int c) {
+            const CellId cell = board.id(r, c);
+            const Result::CellLocation location = locations.data[cell];
+            if (finalMarks[cell] == Basic::Mark::H && location.box >= 0)
+                invalidate(location.instanceIndex);
+        });
     }
-    // 被删除的旧组件按下标降序记录，逆序恢复时可直接补回尾部。
-    if (scratch.removed.size > 0)
-        std::sort(scratch.removed.data, scratch.removed.data + scratch.removed.size, [](ComponentId lhs, ComponentId rhs) { return lhs > rhs; });
-    for (int i = 0; i < (int)scratch.removed.size; ++i) {
-        const ComponentId component = scratch.removed.data[i];
-        pool.deltas.removed.push_back(delta.removed, {component, result.components.data[component]});
+
+    if (delta.removed.count > 1) {
+        Delta::Change *removed = pool.deltas.removed.data.data + delta.removed.offset;
+        std::sort(removed, removed + delta.removed.count,
+                  [](const Delta::Change &a, const Delta::Change &b) { return a.instanceIndex > b.instanceIndex; });
     }
     applyDelta(result, delta, pool);
 
-    // 新连接只会出现在变化格及其邻格；远端传播落在已命中的旧组件中，整组格子已在 invalidate 中标脏。
-    for (int i = 0; i < (int)scratch.dirtyCells.size; ++i) {
-        const std::pair<int, int> position = board.pos(scratch.dirtyCells.data[i]);
-        scratch.dirty[position.first][position.second] = 0;
-        visited[position.first][position.second] = 0;
+    auto rebuild = [&](CellId cell) {
+        if (finalMarks[cell] != Basic::Mark::H || locations.data[cell].instanceIndex >= 0)
+            return;
+        const InstanceId id = buildInstance(cell, result, board, basic, pool);
+        result.instanceIds.push_back(id);
+        pool.deltas.added.push_back(delta.added, id);
+    };
+    // 旧块的存活 H 和本批新 H 覆盖所有待建块。建图可能扩池，跨调用只保留下标和切片。
+    for (const Delta::Change &change : pool.deltas.removed.span(delta.removed)) {
+        selected.data[change.instanceIndex] = 0;
+        const Instance previous = pool.instances.list.data[change.previous];
+        for (std::size_t i = 0; i < previous.boxes.count; ++i) {
+            const vectorPool<CellId>::vector members = pool.instances.boxes.data.data[previous.boxes.offset + i];
+            for (std::size_t j = 0; j < members.count; ++j)
+                rebuild(pool.instances.cells.data.data[members.offset + j]);
+        }
+    }
+    for (const Basic::Delta::Change &change : basicPool.changes.span(marks.changes)) {
+        seenMarks.data[change.cell] = 0;
+        rebuild(change.cell);
     }
     return delta;
 }
 
+// 删除用尾元素补空位，块的下标会跟着变：removed 按 instanceIndex 降序记录，删除时下标更小的块
+// 还没被交换碰过；撤回按升序走，把当初换进来的尾元素换回末尾，下标就复原。
 void Structure::applyDelta(Result &result, const Delta &delta, const Pool &pool, bool reverse) {
-    const Delta::Change *removed = pool.deltas.removed.data.data + delta.removed.offset;
-    const InstanceId *added = pool.deltas.added.data.data + delta.added.offset;
-    const int removedCount = (int)delta.removed.count;
-    const int addedCount = (int)delta.added.count;
+    vector<InstanceId> &instanceIds = result.instanceIds;
     if (reverse) {
-        for (int i = addedCount - 1; i >= 0; --i) {
-            clearInstance(result.components.data[result.components.size - 1], pool, result);
-            result.components.size -= 1;
-        }
-        for (int i = removedCount - 1; i >= 0; --i) {
-            const Delta::Change &change = removed[i];
-            const int tail = (int)result.components.size;
-            if (change.component != tail) {
-                result.components.push_back(result.components.data[change.component]);
-                remapInstance(result.components.data[tail], tail, pool, result);
-                result.components.data[change.component] = change.previous;
+        for (std::size_t i = 0; i < delta.added.count; ++i)
+            setLocations(result, pool, instanceIds.data[--instanceIds.size], -1);
+        for (const Delta::Change &change : pool.deltas.removed.reverseSpan(delta.removed)) {
+            const int tail = (int) instanceIds.size;
+            if (change.instanceIndex != tail) {
+                const InstanceId moved = instanceIds.data[change.instanceIndex];
+                instanceIds.push_back(moved);
+                setLocations(result, pool, moved, tail);
+                instanceIds.data[change.instanceIndex] = change.previous;
             } else
-                result.components.push_back(change.previous);
-            remapInstance(result.components.data[change.component], change.component, pool, result);
+                instanceIds.push_back(change.previous);
+            setLocations(result, pool, change.previous, change.instanceIndex);
+            setInstanceMasks(result, pool, change.previous);
         }
         return;
     }
-    for (int i = 0; i < removedCount; ++i) {
-        const Delta::Change &change = removed[i];
-        clearInstance(result.components.data[change.component], pool, result);
-        const int last = (int)result.components.size - 1;
-        if (change.component != last) {
-            result.components.data[change.component] = result.components.data[last];
-            remapInstance(result.components.data[change.component], change.component, pool, result);
+
+    for (const Delta::Change &change : pool.deltas.removed.span(delta.removed)) {
+        const int instanceIndex = change.instanceIndex;
+        setLocations(result, pool, instanceIds.data[instanceIndex], -1);
+        const int tail = (int) --instanceIds.size;
+        if (instanceIndex != tail) {
+            instanceIds.data[instanceIndex] = instanceIds.data[tail];
+            setLocations(result, pool, instanceIds.data[instanceIndex], instanceIndex);
         }
-        result.components.size -= 1;
     }
-    for (int i = 0; i < addedCount; ++i) {
-        const int component = (int)result.components.size;
-        result.components.push_back(added[i]);
-        remapInstance(added[i], component, pool, result);
+    for (InstanceId id : pool.deltas.added.span(delta.added)) {
+        setLocations(result, pool, id, (int) instanceIds.size);
+        setInstanceMasks(result, pool, id);
+        instanceIds.push_back(id);
     }
 }
 

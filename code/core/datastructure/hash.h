@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <functional>
 
 #include "core/algorithm/rng.h"
 
@@ -35,6 +37,20 @@ class U128Hasher {
 
     void mix(std::uint64_t value) { lo_ = splitmix64(lo_ + value); hi_ = splitmix64(hi_ + value + kMixOffset); }
     void mix(int value) { mix((std::uint64_t)value); }
+    void mix(long double value) { mix((std::uint64_t) std::hash<long double>{}(value)); }
+    void mix(double value) { mix((long double) value); }
+    template <typename First, typename Second, typename... Rest> void mix(First first, Second second, Rest... rest) {
+        mix(first); mix(second); (mix(rest), ...);
+    }
+    void mixBytes(const void *data, std::size_t count) {
+        const unsigned char *bytes = (const unsigned char *) data;
+        for (; count >= sizeof(std::uint64_t); bytes += sizeof(std::uint64_t), count -= sizeof(std::uint64_t)) {
+            std::uint64_t word;
+            std::memcpy(&word, bytes, sizeof(word));
+            mix(word);
+        }
+        for (std::size_t i = 0; i < count; ++i) mix(bytes[i]);
+    }
     U128 finalize() const { return {lo_, hi_}; }
 
   private:

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <chrono>
-#include <cmath>
 #include <utility>
 
 #include "core/algorithm/rng.h"
@@ -12,117 +11,35 @@ namespace test {
 
 struct Config {
     int cols, rows, mines;
-    long double time;
-    int games, threads;
-
-    Config(int cols, int rows, int mines, long double time, int games, int threads) : cols(cols), rows(rows), mines(mines), time(time), games(games), threads(threads) {
-        mss::assert_(cols > 0 && rows > 0 && mines >= 0 && mines < rows * cols, "test::Config: 棋盘参数无效");
-        mss::assert_(std::isfinite(time) && time > 0.0L && games > 0 && threads > 0 && threads <= games, "test::Config: 时限、局数和线程数无效");
-    }
+    int maxGames;
+    long double seconds;
+    mss::U128 seed;
+    mss::Position::Config position;
 };
 
-inline const Config config{
-    /* cols 列数 */ 30,
-    /* rows 行数 */ 16,
-    /* mines 雷数 */ 99,
-    /* time 时限，秒 */ 900.0L,
-    /* games 局数上限 */ 200000,
-    /* threads 对局线程数 */ 1
-};
-inline const mss::GameControl::Config gameConfig{
-    /* shapeSolver 概率求解器 */ {
-        /* graphThreshold 切换 Graph 的 Box 数阈值 */ 24,
-        /* order 消元顺序 */ mss::ShapeSolverConfig::Order::Auto,
-        /* window3Threshold 尝试优化顺序的前沿阈值 */ 24,
-        /* sa 模拟退火 */ {
-            /* rounds 退火轮数 */ 4,
-            /* iterations 每轮迭代次数 */ 1000,
-            /* startTemperature 起始温度 */ 4.0,
-            /* endTemperature 结束温度 */ 0.01
-        }
-    }
-};
-inline const mss::JavaEval::Config javaEvalConfig{
-    /* selectionThreshold1 第一筛选阈值 */ 0.10L,
-    /* selectionThreshold2 第二筛选阈值 */ 0.20L,
-    /* spaceThreshold 空间阈值 */ 8,
-    /* interchangeable 对换去重 */ false,
-    /* equivalence 等价类去重 */ false,
-    /* dominance 支配去重 */ true,
-    /* progressContribution 推进加分 */ 0.001L
-};
-inline const mss::AnytimeSearch::Config anytimeConfig{
-    /* selection 候选选择与单步评分 */ {
-        /* selectionThreshold1 第一筛选阈值 */ javaEvalConfig.selectionThreshold1,
-        /* selectionThreshold2 第二筛选阈值 */ javaEvalConfig.selectionThreshold2,
-        /* spaceThreshold 空间阈值 */ javaEvalConfig.spaceThreshold,
-        /* interchangeable 对换去重 */ true,
-        /* equivalence 等价类去重 */ true,
-        /* dominance 支配去重 */ true,
-        /* progressContribution 推进加分 */ javaEvalConfig.progressContribution
-    },
-    /* nodeLimit 全盘概率分析与 Observe 次数预算 */ 10000,
-    /* width[0] 第一层宽度 */ 6,
-    /* width[1] 第二层宽度 */ 3,
-    /* width[2] 后续层宽度 */ 1
-};
-inline const mss::FiftyFifty::TemplateConfig templateConfig{
-    /* prefix Semi / LTR 共用模板前缀 */ 100,
-    /* risk 模板长期风险 */ mss::TemplateLongTermRisk::Config(15)
-};
-inline const mss::LongTermRisk::Config riskConfig{
-    /* influenceThreshold 影响量阈值 */ 0.025L
-};
-inline const mss::BruteForce::Config bruteConfig{
-    /* checkAllMoves 返回全部候选 */ false,
-    /* parallel 根节点并行 */ false,
-    /* threadCount 暴力线程数 */ 1
-};
-inline const mss::MovePolicy policy{
-    /* basic 普通算法 */ {
-        /* algorithm 算法 */ mss::MovePolicy::Basic::Algorithm::Anytime,
-        /* javaEval 单步算法配置 */ nullptr,
-        /* anytime 搜索算法配置 */ &anytimeConfig
-    },
-    /* fiftyFifty 50-50 算法 */ {
-        /* algorithm 算法 */ mss::FiftyFifty::Algorithm::Templates,
-        /* oldJava 旧路线配置，未使用 */ nullptr,
-        /* templates 模板 Semi / LTR 配置 */ &templateConfig
-    },
-    /* brute 暴力接管 */ {
-        /* limit 摆法数阈值，0 关闭 */ 10000,
-        /* config 关闭时可传 nullptr */ &bruteConfig
-    }
-};
-
-// time/games 为有限正数，在整局之间检查；首点固定右上角，每次调用拥有独立的池和工作区。
-// callback(const Game &) 在空盘和每次 play 后调用，包括终局；引用只在本次回调中有效。
+// 开局空盘和每次 play 后调用 callback(const Game &)，包括终局。引用只在回调中有效。
+// 局数和时限在两局之间检查，返回从构造首局到最后一局结束的实际秒数。
 template <typename Callback>
-void runGames(const Config &config, const mss::MovePolicy &policy, mss::U128 seed, Callback &&callback) {
-    using Game = mss::GameControl::Game;
-    const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
-    mss::GameControl::SuggestPool suggestions;
-    mss::TemplateSemi::Pool semiPool;
-    mss::TemplateLongTermRisk::Pool riskPool;
-    mss::FiftyFifty::Pool fiftyPool(semiPool, riskPool);
-    mss::vector<mss::ObservedBoard::CellId> moves;
-    mss::Random random(seed.lo, seed.hi);
-    Game game(config.rows, config.cols, config.mines, {random.next(), random.next()}, gameConfig, suggestions);
-    mss::Probability::Pool pendingProbabilities(game.position().probabilityPool().shapes, game.position().probabilityPool().distributions, game.position().probabilityPool().combinations);
-    mss::JavaLite::Pool pending(pendingProbabilities);
-    mss::AnytimeSearch::Pool searchPool(pending);
+long double runGames(const Config &config, const mss::MovePolicy::Config &policyConfig, Callback &&callback) {
+    using Clock = std::chrono::steady_clock;
+    mss::Suggest::Pool suggestions;
+    mss::Random random(config.seed.lo, config.seed.hi);
     const mss::ObservedBoard::CellId first = config.cols - 1;
-    for (int games = 0; games < config.games && std::chrono::duration<long double>(std::chrono::steady_clock::now() - start).count() < config.time; ++games) {
+    const Clock::time_point start = Clock::now();
+    mss::Game game(config.rows, config.cols, config.mines, {random.next(), random.next()}, config.position, suggestions.combinations);
+    for (int games = 0; games < config.maxGames && std::chrono::duration<long double>(Clock::now() - start).count() < config.seconds; ++games) {
         if (games != 0) game.reset({random.next(), random.next()});
         callback(std::as_const(game));
-        game.play({&first, 1});
+        game.play(&first, 1);
         for (;;) {
             callback(std::as_const(game));
-            if (game.state() != Game::State::Running) break;
-            game.suggest(policy, fiftyPool, searchPool, moves);
-            game.play({moves.data, (int)moves.size});
+            if (game.state() != mss::Game::State::Running) break;
+            const mss::SuggestResult result = game.suggest(policyConfig, suggestions);
+            mss::assert_(result.suggest.size != 0, "整局测试没有可点的建议格");
+            game.play(result.suggest.data, (int) result.suggest.size);
         }
     }
+    return std::chrono::duration<long double>(Clock::now() - start).count();
 }
 
-}
+} // 命名空间 test

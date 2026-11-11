@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+
 #include "algo/probability_engine/basic/basic.h"
 #include "core/datastructure/flat_hashtable.h"
 #include "core/datastructure/grid.h"
@@ -10,131 +13,118 @@
 namespace mss {
 
 struct Structure {
-    using ComponentId = int;
+    using CellId = ObservedBoard::CellId;
     using BoxId = int;
     using ShapeId = int;
     using InstanceId = int;
-    using CellId = ObservedBoard::CellId;
 
-    // 位置无关的形状，内容切片都存放在 Pool::Shapes 里；切片只在池存活期间有效。
+    // 清池或截断对应段后，切片失效。
     struct Shape {
-        // 单条数字约束；boxIds 是 Pool::Shapes::boxIds 的绝对切片，不是相对 Shape 的偏移。
         struct Constraint {
-            // 扣除相邻 F 后，仍需由相邻 H 格承担的雷数。
-            int sum;
-            // 本条约束涉及的 Box；单条数字约束最多 8 个 Box。
-            vectorPool<BoxId>::vector boxIds;
+            int sum; // 数字扣掉相邻的已知雷后剩下的雷数。
+            vectorPool<BoxId>::vector boxIds; // 本条约束的 Box 编号，来自 Pool::shapes.boxIds。
         };
 
-        // 每个 Box 的格子数；同一 Box 的 H 格共享非空数字邻接集合，因此最多 8 格。
-        vectorPool<int>::vector boxSizes;
-        vectorPool<Constraint>::vector constraints;
-        vectorPool<BoxId>::vector boxIds;
-        // 内容哈希同时作为池去重身份，不再做结构相等核验。
-        U128 hash;
+        vectorPool<Constraint>::vector constraints; // 来自 Pool::shapes.constraints。
+        vectorPool<BoxId>::vector boxIds; // 本形状所有约束的 Box 编号整段，来自 Pool::shapes.boxIds。
     };
 
-    // Instance 把 Shape 的 Box 和数字约束映射回当前盘面。
+    // shape 索引 Pool::shapes.list。清池或截断对应段后，坐标切片失效。
     struct Instance {
         ShapeId shape;
-        // 按 Box 连续排列的盘面格子，CellId 使用零起始编号。
-        vectorPool<CellId>::vector cells;
-        // Box 前缀和，长度 = Box 数 + 1；首项恒为 0，末项恒等于 cells.count。
-        vectorPool<int>::vector boxOf;
-        // 与 Shape::constraints 一一对应，保存每条数字约束所在的 CellId。
+        // 外层切片属于 Pool::instances.boxes，内层格号切片属于 Pool::instances.cells。
+        vectorPool<vectorPool<CellId>::vector>::vector boxes;
+        // 来自 Pool::instances.constraintCells，顺序与 Shape::constraints 一致。
         vectorPool<CellId>::vector constraintCells;
     };
 
     struct Result {
         struct CellLocation {
-            // components 下标；-1 表示该格不属于组件，数字约束格属于组件但不属于 Box。
-            ComponentId component;
-            // H 格指向所属 Box；数字约束格为 -1。
-            BoxId box;
+            int instanceIndex; // instanceIds 下标，-1 表示该格不在任何实例中。
+            BoxId box; // 数字格和实例之外的格子为 -1。
 
-            CellLocation() : component(-1), box(-1) {}
-            CellLocation(ComponentId component, BoxId box) : component(component), box(box) {}
+            CellLocation() : instanceIndex(-1), box(-1) {}
+            CellLocation(int instanceIndex, BoxId box) : instanceIndex(instanceIndex), box(box) {}
         };
 
-        // 每项是 Pool 中的 InstanceId；ComponentId 是此数组中的位置，不是 InstanceId。
-        vector<InstanceId> components;
-        // 按 CellId 索引，长度为 rows * cols。
+        // 指向 Pool::instances，清池后失效。
+        vector<InstanceId> instanceIds;
         vector<CellLocation> cellLoc;
+        // 位 0 到 7 依次为左上、上、右上、左、右、左下、下、右下。
+        Grid<std::uint8_t> adjacentH; // 已揭数字的邻接 H 掩码，其余位置为零。
+        // H 的邻接数字按行跨度 5 编码，中心位为 6。其他格子的掩码为零。
+        Grid<int> adjacentDigits;
     };
 
     struct Delta {
         struct Change {
-            ComponentId component;
-            // 更新前占据该组件位置的 InstanceId。
+            int instanceIndex;
             InstanceId previous;
         };
 
-        // 被删除的旧组件按下标降序记录，逆序恢复时依赖此顺序。
-        vectorPool<Change>::vector removed;
-        // 按追加顺序保存实例 ID；撤回先弹出这些尾项。
-        vectorPool<InstanceId>::vector added;
+        // 清池或截断对应段后，切片失效。
+        vectorPool<Change>::vector removed; // 来自 Pool::deltas.removed，按原实例下标降序删除。
+        vectorPool<InstanceId>::vector added; // 来自 Pool::deltas.added，按追加顺序记录实例 ID。
     };
 
-    // 本层的数据、索引和 Delta 记录共用一个池，引用的 Basic 池须覆盖本池的使用期。
-    // ID 只在本池未清空时有效，切片在池扩容后仍有效。
     struct Pool {
-        Basic::Pool &basic;
+        using BoxPool = vectorPool<vectorPool<CellId>::vector>;
 
-        // Shape 内容、本体与去重索引
         struct Shapes {
-            vectorPool<int> boxSizes;
             vectorPool<Shape::Constraint> constraints;
             vectorPool<BoxId> boxIds;
             vector<Shape> list;
             FlatHashTable<U128, ShapeId, U128Hash> index;
 
-            // 按内容哈希复用已有形状；命中时退掉传入 Shape 的内容切片。
-            ShapeId intern(Shape shape);
+            // boxes 属于 boxPool，Box 大小取自其成员切片的 count。
+            // 复用已有形状时退掉本次追加的约束和 Box 编号。
+            ShapeId intern(Shape shape, const BoxPool &boxPool, BoxPool::vector boxes);
         } shapes;
 
-        // Instance 内容、本体与去重索引
         struct Instances {
             vectorPool<CellId> cells;
-            vectorPool<int> boxOf;
+            BoxPool boxes;
             vectorPool<CellId> constraintCells;
             vector<Instance> list;
             FlatHashTable<U128, InstanceId, U128Hash> index;
 
-            // 按 Shape ID 和盘面布局哈希复用已有实例；命中时退掉传入 Instance 的内容切片。
+            // Box 格号按顺序连续追加，命中已有实例时退掉本次追加的数据。
             InstanceId intern(Instance instance);
         } instances;
 
-        // Delta 记录
         struct Deltas {
             vectorPool<Delta::Change> removed;
             vectorPool<InstanceId> added;
         } deltas;
 
-        Pool(Basic::Pool &basic) : basic(basic) {}
-        // 只清空本层存储；调用方同步清空依赖这些 Shape/Instance 的缓存和结果。
         void clear();
     };
 
-    // 输入必须尺寸相同、Basic 与此观测盘面一致；只为 H 和相邻数字建立组件，不收录 T。
     void analyze(Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool);
-
-    // changedCells 覆盖自 result 状态以来的全部观测变化；board/basic 是最终状态，Pool 与 result 匹配。
-    // 只重建受影响组件，delta 记录回到调用前 result 所需的信息。
-    Delta update(Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool, const CellId *changedCells, int changedCount);
-
-    // 正向时 result 对应更新前状态；reverse 时对应更新后状态且必须后进先出。池不得清空。
+    // board 和 basic 已更新。两段切片分别来自 basicPool.board 和 basicPool，覆盖上次同步后的全部正向变更。
+    // 三份输入不在同一时刻：cellLoc 是旧的划分，board/basic 是最终盘面，两段切片是中间发生的变化。
+    // 只作废受影响的块，共三种变动：H 不再是候选格，所在块少了一格；数字旁的已知雷数变了，约束
+    // 跟着变；新揭的数字挨着旧块，几个块被它连成一片。
+    // 新 H 只会由新揭的数字带入，所以新块里总有「作废块里的 H」或「本批变化的格子」：其余 H 的旧块
+    // 没作废，它们仍在原来那块里。以这两类格子为种子重建，就能走全每个新块。
+    Delta update(Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool,
+                 const ObservedBoard::Delta &observed, const Basic::Delta &marks, const Basic::Pool &basicPool);
+    // 正向时 result 是改动前的划分，reverse 时是改动后的划分。
     void applyDelta(Result &result, const Delta &delta, const Pool &pool, bool reverse = false);
 
   private:
     struct Workspace;
+    // 取当前线程复用的构建工作区。
     Workspace &getWorkspace();
-    U128 cellSignature(int row, int col, const ObservedBoard::Result &board);
-    void remapInstance(Structure::InstanceId id, Structure::ComponentId component, const Structure::Pool &pool, Structure::Result &result);
-    void clearInstance(Structure::InstanceId id, const Structure::Pool &pool, Structure::Result &result);
-    void collectComponent(Structure::CellId start, const ObservedBoard::Result &board, const Basic::Result &basic, Grid<char> &visited, vector<Structure::CellId> &cells);
-    U128 computeShapeHash(vectorPool<int>::vector boxSizes, vectorPool<Structure::Shape::Constraint>::vector constraints, const Structure::Pool::Shapes &pool);
-    U128 computeInstanceHash(const Structure::Instance &instance, const Structure::Pool::Instances &pool);
-    InstanceId buildComponent(const vector<CellId> &componentCells, const ObservedBoard::Result &board, const Basic::Result &basic, Grid<int> &boxOfCell, Pool &pool);
+    // 扩展标记数组，只清零新增槽位。
+    void growFlags(vector<std::uint8_t> &flags, std::size_t count);
+    int neighborDirection(int deltaRow, int deltaCol);
+    // 从一个 H 格出发构建实例，同时写入邻接掩码和格子索引。
+    InstanceId buildInstance(CellId start, Result &result, const ObservedBoard::Result &board, const Basic::Result &basic, Pool &pool);
+    // 更新实例的格子索引，instanceIndex 为 -1 时同时清除对应的邻接掩码。
+    void setLocations(Result &result, const Pool &pool, InstanceId id, int instanceIndex);
+    // 应用增量时，从加入的实例恢复邻接掩码。
+    void setInstanceMasks(Result &result, const Pool &pool, InstanceId id);
 };
 
 } // 命名空间 mss

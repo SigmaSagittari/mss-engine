@@ -13,7 +13,7 @@ namespace mss {
 
 struct Observe::Workspace {
     struct Components {
-        vector<Structure::ComponentId> captured;
+        vector<int> captured;
         vector<char> seen;
         vector<int> adjacentBoxCells;
         // 每个被捕获组件复用同一份观测结果；下一次 observe 会覆盖它。
@@ -38,18 +38,17 @@ __declspec(noinline) Observe::Workspace &Observe::getWorkspace() {
 }
 
 // 两个多项式卷积到调用方缓冲区；输出不与输入重叠。
-void Observe::multiplyPoly(const Poly &left, const Poly &right, vector<long double> &output) {
+void Observe::multiplyPoly(const vector<long double> &left, const Poly &right, vector<long double> &output) {
     output.resize(0);
-    if (left.size() == 0 || right.size() == 0)
+    if (left.size == 0 || right.size() == 0)
         return;
-    const int size = left.size() + right.size() - 1;
+    const int size = (int)left.size + right.size() - 1;
     output.resize(size);
     std::fill(output.data, output.data + size, 0.0L);
-    const long double *leftData = left.data();
     const long double *rightData = right.data();
-    for (int i = 0; i < left.size(); ++i)
+    for (int i = 0; i < (int)left.size; ++i)
         for (int j = 0; j < right.size(); ++j)
-            output.data[i + j] += leftData[i] * rightData[j];
+            output[i + j] += left[i] * rightData[j];
 }
 
 // 交换两个系数数组的存储，避免整份复制。
@@ -65,9 +64,11 @@ long double Observe::choose(int n, int k, Combination::Pool &combinations) {
     return Combination().chooseLarge(n, k, combinations);
 }
 
-void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure, const Probability::Result &probability, const Probability::Pool &probabilities, const ShapeSolver::Config &config, ObservedBoard::CellId cell, Result &result) {
+void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure,
+                      const Probability::BoxResult &boxes, long double totalWays, const Probability::Pool &probabilities,
+                      const ShapeSolver::Config &config, ObservedBoard::CellId cell, Result &result) {
     Workspace &workspace = getWorkspace();
-    const Structure::Pool &pool = probabilities.shapes;
+    const Structure::Pool &pool = probabilities.distributions.shapes;
     ShapeSolver::DistributionPool &distributions = probabilities.distributions;
     Workspace::Components &components = workspace.components;
     Workspace::Convolution &convolution = workspace.convolution;
@@ -77,15 +78,16 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
     const int col = position.second;
     const Basic::Mark mark = basic.marks[row][col];
     const int totalMines = board.totalMines - basic.mineSum;
-    result.probability[9] = Probability().mineProbability(probability, probabilities, cell, board, basic, structure);
+    result = Result();
+    result.probability[9] = Probability().mineProbability(boxes, probabilities, cell, board, basic, structure);
     if (mark == Basic::Mark::F)
         return;
 
     const Structure::Result::CellLocation &clicked = structure.cellLoc.data[cell];
     const bool clickedT = mark == Basic::Mark::T;
-    const Structure::ComponentId clickedComponent = clicked.component;
+    const int clickedComponent = clicked.instanceIndex;
     const Structure::BoxId clickedBox = clicked.box;
-    const int componentCount = (int)structure.components.size;
+    const int componentCount = (int)structure.instanceIds.size;
 
     int fixedMines = 0;
     int tNeighbors = 0;
@@ -103,7 +105,7 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
             ++tNeighbors;
             return;
         }
-        const Structure::ComponentId component = structure.cellLoc.data[board.id(neighborRow, neighborCol)].component;
+        const int component = structure.cellLoc.data[board.id(neighborRow, neighborCol)].instanceIndex;
         if (component < 0 || components.seen.data[component])
             return;
         components.seen.data[component] = 1;
@@ -112,11 +114,9 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
 
     int maxCapturedMines = tNeighbors;
     for (int index = 0; index < (int)components.captured.size; ++index) {
-        const Structure::Instance &instance = pool.instances.list.data[structure.components.data[components.captured.data[index]]];
-        const Structure::Shape &shape = pool.shapes.list.data[instance.shape];
-        const int *boxSizes = pool.shapes.boxSizes.data.data + shape.boxSizes.offset;
-        for (int box = 0; box < (int)shape.boxSizes.count; ++box)
-            maxCapturedMines += boxSizes[box];
+        const Structure::Instance &instance = pool.instances.list.data[structure.instanceIds.data[components.captured.data[index]]];
+        for (const vectorPool<Structure::CellId>::vector &box : pool.instances.boxes.span(instance.boxes))
+            maxCapturedMines += (int)box.count;
     }
     const int stride = maxCapturedMines + 1;
 
@@ -129,26 +129,27 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
     int neighborLimit = 0;
     int capturedLimit = 0;
     for (int index = 0; index < (int)components.captured.size; ++index) {
-        const Structure::Instance &instance = pool.instances.list.data[structure.components.data[components.captured.data[index]]];
-        const Structure::Shape &shape = pool.shapes.list.data[instance.shape];
-        const int boxCount = (int)shape.boxSizes.count;
+        const Structure::Instance &instance = pool.instances.list.data[structure.instanceIds.data[components.captured.data[index]]];
+        const int boxCount = (int)instance.boxes.count;
         components.adjacentBoxCells.resize(boxCount);
         std::fill(components.adjacentBoxCells.data, components.adjacentBoxCells.data + boxCount, 0);
-        const int *boxOf = pool.instances.boxOf.data.data + instance.boxOf.offset;
-        const Structure::CellId *cells = pool.instances.cells.data.data + instance.cells.offset;
-        for (int box = 0; box < boxCount; ++box)
-            for (int i = boxOf[box]; i < boxOf[box + 1]; ++i) {
-                const std::pair<int, int> boxPosition = board.pos(cells[i]);
+        int instanceCells = 0;
+        for (int box = 0; box < boxCount; ++box) {
+            const vectorPool<Structure::CellId>::vector cells = pool.instances.boxes.data.data[instance.boxes.offset + box];
+            instanceCells += (int)cells.count;
+            for (Structure::CellId boxCell : pool.instances.cells.span(cells)) {
+                const std::pair<int, int> boxPosition = board.pos(boxCell);
                 const int rowDistance = boxPosition.first - row;
                 const int colDistance = boxPosition.second - col;
                 if (rowDistance >= -1 && rowDistance <= 1 && colDistance >= -1 && colDistance <= 1 && (rowDistance != 0 || colDistance != 0))
                     ++components.adjacentBoxCells.data[box];
             }
+        }
 
         int addedLimit = 0;
         for (int box = 0; box < boxCount; ++box) addedLimit += components.adjacentBoxCells.data[box];
         const Structure::BoxId xBox = components.captured.data[index] == clickedComponent ? clickedBox : -1;
-        ShapeSolver().observe(shape, pool, span<const int>(components.adjacentBoxCells.data, boxCount), xBox, config, components.observed);
+        ShapeSolver().observe(instance, pool, components.adjacentBoxCells, xBox, config, components.observed);
         next->resize(neighborLimit + addedLimit + 1, stride, 0.0L);
         for (int currentNeighborMines = 0; currentNeighborMines <= neighborLimit; ++currentNeighborMines)
             for (int addedNeighborMines = 0; addedNeighborMines <= addedLimit; ++addedNeighborMines) {
@@ -162,7 +163,7 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
                         (*next)[currentNeighborMines + addedNeighborMines][capturedMines + components.observed.start[addedNeighborMines] + i] += base * segmentWays[i];
                 }
             }
-        capturedLimit += boxOf[boxCount];
+        capturedLimit += instanceCells;
         neighborLimit += addedLimit;
         std::swap(current, next);
     }
@@ -190,14 +191,12 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
     for (int component = 0; component < componentCount; ++component) {
         if (components.seen.data[component])
             continue;
-        const Structure::Instance &instance = pool.instances.list.data[structure.components.data[component]];
-        const Structure::Shape &shape = pool.shapes.list.data[instance.shape];
-        const ShapeSolver::DistributionId id = ShapeSolver().analyze(shape, config, distributions);
+        const Structure::Instance &instance = pool.instances.list.data[structure.instanceIds.data[component]];
+        const ShapeSolver::DistributionId id = ShapeSolver().analyze(instance, config, distributions);
         const ShapeSolver::Distribution &distribution = distributions.list.data[id];
-        const Poly left{restStart, span<const long double>(rest.coefficients.data, (int)rest.coefficients.size)};
         const Poly right{distribution.start, span<const long double>(distributions.values.data.data + distribution.ways.offset, (int)distribution.ways.count)};
         const int nextStart = restStart + distribution.start;
-        multiplyPoly(left, right, rest.scratch);
+        multiplyPoly(rest.coefficients, right, rest.scratch);
         swapValues(rest.coefficients, rest.scratch);
         restStart = nextStart;
     }
@@ -229,7 +228,7 @@ void Observe::observe(const ObservedBoard::Result &board, const Basic::Result &b
         }
 
     for (int neighborMines = 0; neighborMines + fixedMines <= 8; ++neighborMines)
-        result.probability[fixedMines + neighborMines] = neighborWays[neighborMines] / probability.candidates;
+        result.probability[fixedMines + neighborMines] = neighborWays[neighborMines] / totalWays;
 }
 
 } // 命名空间 mss

@@ -1,41 +1,23 @@
 #pragma once
 
-#include <cstdint>
-
 #include "algo/winrate_engine/fifty_fifty/old_java/semi.h"
-#include "core/datastructure/vector_pool.h"
+#include "algo/winrate_engine/fifty_fifty/templates/template_data.h"
 
 namespace mss {
 
 struct TemplateSemi {
-    // 一个模板前缀编译出的只读匹配表，包含旋转、镜像和边界/雷墙判断。
-    // 相同前缀由 Pool 共享；构表缓冲由 Workspace 复用，不依赖具体盘面。
-    struct Pool {
-        enum class Kind : unsigned char;
-        struct Point;
-        struct Test;
-        struct Check;
-        struct Prefix;
-        struct Table;
-        vectorPool<Check> checks;
-        vectorPool<Prefix> prefixes;
-        vectorPool<Point> runs;
-        vectorPool<int> starts;
-        vector<Table> tables;
-        Pool();
-        Pool(const Pool &) = delete;
-        Pool &operator=(const Pool &) = delete;
-    };
-
-    int templateCount();
-    Semi::Kind detect(vector<ObservedBoard::CellId> &cells, const PositionState &state, const Probability::Pool &probabilities, int prefix, Pool &pool);
+    // templates 已按所需目录前缀编译；输出按格号升序，存在 Forced 时只返回 Forced 格。
+    Semi::Kind detect(vector<ObservedBoard::CellId> &cells, const Position::Result &position,
+                      const Position::ProbabilityResult &probability, const Probability::Pool &probabilities,
+                      const FiftyFiftyData::Pool &templates);
 
   private:
+    struct Facts;
     struct Workspace;
     Workspace &getWorkspace();
-    struct Facts;
-    static constexpr long double halfTolerance = 1e-9L;
-    int matchPrefix(const Pool::Table &table, const Pool &pool, int node, const Facts &facts, int root);
+    void propagate(Facts &facts, vector<int> &pending, vector<unsigned char> &queued);
+    bool matches(const FiftyFiftyData::Pool &templates, const FiftyFiftyData::Rooted &rooted,
+                 const Facts &facts, ObservedBoard::CellId root);
 };
 
 } // 命名空间 mss

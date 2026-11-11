@@ -8,7 +8,6 @@
 #include "algo/probability_engine/structure/structure.h"
 #include "core/datastructure/flat_hashtable.h"
 #include "core/datastructure/hash.h"
-#include "core/datastructure/span.h"
 #include "core/datastructure/vector.h"
 #include "core/datastructure/vector_pool.h"
 
@@ -18,14 +17,13 @@ namespace mss {
 struct ShapeSolverGraph {
     using StepGenerator = ShapeSolverGraphStep;
 
-    ShapeSolverType::Distribution analyze(const Structure::Shape &shape, const Structure::Pool &shapes, const ShapeSolverConfig &config, vectorPool<long double> &values);
+    ShapeSolverType::Distribution analyze(const Structure::Shape &shape, const Structure::Pool::Shapes &shapes, ShapeSolverType::Boxes boxes, const ShapeSolverConfig &config, vectorPool<long double> &values);
     // 结果完整覆写，values 由结果自己持有。
-    void observe(const Structure::Shape &shape, const Structure::Pool &shapes, span<const int> adjacentBoxCells, Structure::BoxId xBox, const ShapeSolverConfig &config, ShapeSolverType::Observed &result);
+    void observe(const Structure::Shape &shape, const Structure::Pool::Shapes &shapes, ShapeSolverType::Boxes boxes, const vector<int> &adjacentBoxCells, Structure::BoxId xBox, const ShapeSolverConfig &config, ShapeSolverType::Observed &result);
 
   private:
     struct Workspace;
     Workspace &getWorkspace();
-    int shapeBoxCount(const Structure::Shape &shape);
     struct State;
     struct Count;
     struct Layer;

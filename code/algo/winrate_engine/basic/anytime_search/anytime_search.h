@@ -1,119 +1,130 @@
 #pragma once
 
+#include "algo/winrate_engine/result_type.h"
 #include "algo/winrate_engine/selection/selection.h"
-#include "core/datastructure/vector_pool.h"
-#include "game/position_state.h"
+#include "core/datastructure/grid.h"
 
 namespace mss {
 
-// 反复加深首招的后续搜索。analyze 建树并推进一次，update 用新预算接着推进。
-// Pool 保存树和中断位置；Result 是查询句柄。
 struct AnytimeSearch {
     struct Config {
-        Selection::Config selection;
-        // 续搜的全盘概率分析与 Observe 次数预算；每次各计 1，0 不续搜，根层初始化另算。
-        // 一次局面到招法的评估、筛选及转存完整执行，可超支；开始下一局面前检查预算。
-        long long nodeLimit;
-        // 根层、第二步、更深层分别保留多少个候选；指定首招时根层不截断。
+        Selection::Config selection; // 子局面的候选筛选。
+        long double progressContribution; // 非负。
+        long long nodeLimit; // 本次续搜预算，0 只保留已完成的评分。根层初始化另计。
+        // 首招数、第二步候选数、更深的候选数。首招数为 0 时保留全部传入候选，后两项为正。
         int width[3];
 
-        Config(Selection::Config selection, long long nodeLimit, int width0, int width1, int width2) : selection(selection), nodeLimit(nodeLimit) {
-            width[0] = width0;
-            width[1] = width1;
-            width[2] = width2;
+        void hash(U128Hasher &hasher) const {
+            selection.hash(hasher);
+            hasher.mix(progressContribution, (std::uint64_t) nodeLimit, width[0], width[1], width[2]);
         }
     };
 
     struct Pool {
-        // 树交替存放“点击哪个格”的候选节点和“显示某个数字后”的局面节点。
-        // 候选节点用 cell，局面节点用 deltaIndex；child 分别指向数字结局或下一步候选。
-        struct Node {
-            // 最新完整后续分，不含推进奖励或根层补偿。
-            // 危险：未展开局面为避免提前生成候选而延迟计算 value；必须原位构造，extendPosition 返回或 extendCandidate 结算本结局后才可读取。
-            long double value;
-            // JavaLite 首评推进乘数，用于续搜排序。
-            long double progressMultiplier;
-            // 同一 Pool 内的子节点切片；扩容后 offset/count 仍有效。
-            vectorPool<Node>::vector child;
-            union {
-                ObservedBoard::CellId cell;
-                int deltaIndex; // 对应 Pool::deltas 中的一条揭格增量。
-            };
-            // 未准备局面索引本层概率结果；招法为 -1，局面准备或终结后不再读取。
-            int probabilityIndex;
-            // depth 是当前点击步数；expandedDepth 是已完成评分的最深步数，根从 0 开始。
-            int depth;
-            int parent; // 父节点在同一 Pool 内的下标；根为 -1。
-            int expandedDepth;
-            // 后续已求完，无需继续加深。
+        struct Branch;
+        struct ProbabilityLayer;
+
+        struct Move {
+            ObservedBoard::CellId cell;
+            int depth, parent; // parent 索引父局面，根候选为 -1。
+            int expandedDepth; // 已发布的评分深度。
             bool finished;
-            // 根候选另有根补偿。
-            bool root;
-            // 分支位置是否已准备候选；expandedDepth 是该候选/位置已展开到的最大深度。
-            bool prepared;
-            Node(const Selection::Evaluation &evaluation, int depth, int parent) : value(evaluation.javaLite.value), progressMultiplier(evaluation.javaLite.progressMultiplier), child{}, cell(evaluation.cell), probabilityIndex(-1), depth(depth), parent(parent), expandedDepth(0), finished(evaluation.javaLite.deltas.count == 0), root(depth == 0), prepared(false) {}
-            Node(int deltaIndex, int probabilityIndex, int depth, int parent) : progressMultiplier(1.0L), child{}, deltaIndex(deltaIndex), probabilityIndex(probabilityIndex), depth(depth), parent(parent), expandedDepth(0), finished(false), root(false), prepared(false) {}
+            long double value, progressMultiplier; // 原始分与排序时使用的推进乘数。
+            vectorPool<Branch>::vector children; // 数字结局在同一池内的切片。
         };
 
-        vectorPool<Node> nodes;
-        // 根候选占 nodes 的首个切片；补偿按 Node 下标保存，不能用 CellId 索引。
-        vector<long double> rootCompensations;
-        // 每个数字结局的概率及状态增量；其中切片借用 analyze 输入的 PositionState 记录池。
-        vector<JavaLite::Delta> deltas;
-        // 每层独立持有概率数组；节点只保存本层结果下标，释放不影响节点和分支权重。
-        struct ProbabilityLayer;
-        // 按局面深度索引，0 不使用；每层通过 new/delete 独立创建和释放。
-        vector<ProbabilityLayer *> probabilities;
-        int nextPosition; // 下次要推进的数字局面下标；-1 表示没有中断。
-        JavaLite::Pool &pending; // 调用方持有的小池；只转存保留招法，须覆盖搜索池使用期。
+        struct Branch {
+            Position::Delta delta; // 借用 analyze 所用 Position::Pool 的记录，搜索完成或清池后失效。
+            long double probability, value;
+            int digit, knownSafe, parent;
+            int expandedDepth;
+            int probabilityIndex; // 本深度概率结果的下标，已消费为 -1。
+            bool finished;
+            vectorPool<Move>::vector children;
+        };
 
-        Pool(JavaLite::Pool &pending) : nextPosition(-1), pending(pending) {}
+        vectorPool<Move> moves;
+        vectorPool<Branch> branches;
+        vector<long double> rootCompensations;
+        vector<ProbabilityLayer *> probabilities;
+        Position::Delta deltaStart; // 搜索开始前，四份 Delta 记录在 Position::Pool 中的起点。
+        bool hasDeltas;
+        int remainingSafe, nextBranch;
+
+        Pool() : deltaStart({}, {}, {}), hasDeltas(false), remainingSafe(0), nextBranch(-1) {}
         ~Pool();
         Pool(const Pool &) = delete;
         Pool &operator=(const Pool &) = delete;
-        void clear();
+
+        // 放弃搜索并使本池的 Result 失效。未完成时传入原盘的 Position::Pool，在改动原盘前调用。
+        // 若原盘的 Position::Pool 仍在使用，销毁本池前也须先清理未完成的搜索。
+        void clear(Position::Pool &positions);
         void clearProbabilities();
-        // 只在递归已经退出、state.probability 恢复根结果后调用。
-        void releaseProbabilities();
-        long double score(int index) const { const Node &candidate = nodes.data.data[index]; return candidate.value + (candidate.root ? rootCompensations.data[index] : 0.0L); }
     };
 
     struct Result {
-        // 各根以 expandedDepth 发布最新完整评分，completedDepth 是所有根均已完成的层。
-        vectorPool<Pool::Node>::vector roots;
-        long long nodes; // 根层及续搜的全盘概率分析与 Observe 总次数；不含独立 LTR。
+        vectorPool<Pool::Move>::vector roots; // 借用同一次搜索的 Pool，清池或重新 analyze 后失效。
+        long long nodes; // 全盘概率分析与 Observe 次数；独立 LTR 不计入。
         SuggestResult::Reason reason;
-        int completedDepth; // 所有根都已完成的最深层；部分根可能已经更深。
-        bool finished; // 所有根都已求完，或者这是没有根的空句柄。
+        int completedDepth;
+        bool finished;
 
         Result() : roots{}, nodes(0), reason(SuggestResult::Reason::Finished), completedDepth(0), finished(true) {}
-        // 先比较各根已发布深度，再比较该层评分；相同时保留原顺序。
         ObservedBoard::CellId recommended(const Pool &pool) const;
-        // 复制当前完整分和推荐格；返回值自行拥有数组，不借用 Pool。
         SuggestResult snapshot(const Pool &pool) const;
     };
 
-    // analyze/update 期间及续搜前须保持根盘面与 state 的池有效。
-    // pool.pending 引用的概率池须绑定 state 的结构池和分布缓存。
-    // cells=nullptr 要求入口已排除安全格，自动选根；否则按给定顺序保留全部根，内层仍自动选点。
-    // 每次 update 从 config.nodeLimit 读取本次计算节点预算；analyze 先完成根层评分，再使用预算。
-    // 续搜只允许调整预算；显式首招按输入顺序全部保留，内层照常剪枝和限制宽度。
-    // details 由调用方持有；analyze 重置并记录第 0 层，update 追加完成层，同时发布该层子评分。
-    Result analyze(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, const vector<ObservedBoard::CellId> *cells = nullptr, SuggestResult::Details *details = nullptr);
-    void update(Result &result, PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, SuggestResult::Details *details = nullptr);
+    // 候选、概率及 remainingSafe 对应同一盘面，Structure 已同步。longTermRisk 按盘面行列存放各首招的补偿。
+    // width[0] 为 0 时按输入顺序保留全部首招。为正数时按含 LTR 的分数取前 width[0] 格。
+    // scaleCompensation 为真时，按根层初始分除以本格安全率折算补偿，续搜沿用该值。
+    // 根局面、Position::Pool 的增量记录及概率池借用的分布和组合数池须覆盖续搜期。
+    // 用本池搜索另一盘前，先用原盘的 Position::Pool 清理未完成的搜索。
+    Result analyze(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
+                   Probability::Pool &probabilities, const Selection::Result &selected, const Grid<long double> &longTermRisk,
+                   int remainingSafe, const Config &config, Pool &pool, bool scaleCompensation = false);
+    Result analyze(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
+                   Probability::Pool &probabilities, const Selection::Result &selected, const Grid<long double> &longTermRisk,
+                   int remainingSafe, const Config &config, Pool &pool, SuggestResult::Details &details, bool scaleCompensation = false);
+
+    // 每次推进使用 config.nodeLimit，续搜只调整预算。返回前恢复根盘面，搜完后回收本次搜索的 Delta。
+    // 记录明细时，传入 analyze 初始化的同一份 details，只在首招完成一层后更新。
+    void update(Result &result, Position::Result &position, Position::Pool &positions, const Config &config, Pool &pool);
+    void update(Result &result, Position::Result &position, Position::Pool &positions, const Config &config, Pool &pool,
+                SuggestResult::Details &details);
 
   private:
     struct Workspace;
+    struct Outcome;
+    struct Evaluation;
+
     Workspace &getWorkspace();
-    void selectCandidates(vector<Selection::Evaluation> &evaluatedMoves, int limit);
-    void selectRoot(Result &result, PositionState &state, const ShapeSolverConfig &shapeConfig, const Selection::Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Selection::Result &selected, vector<Selection::Evaluation> &evaluatedMoves, JavaLite::Pool &pending, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details);
-    long long prepareNode(PositionState &state, const Probability::Pool &probabilities, const ShapeSolverConfig &shapeConfig, const Selection::Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, Selection::Result &selected, vector<Selection::Evaluation> &evaluatedMoves, JavaLite::Pool &pending, int width);
-    vectorPool<int>::vector orderMoves(const Pool &pool, vectorPool<Pool::Node>::vector children, int maxDepth, int resumeMove, vectorPool<int> &order);
-    void appendDeltas(Pool &pool, int index, const JavaLite::Result &evaluated, const JavaLite::Pool &values);
-    Result buildRoot(PositionState &state, Pool &pool, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, const vector<ObservedBoard::CellId> *cells, SuggestResult::Details *details);
-    // 完成返回 -1；预算耗尽返回待推进局面的下标。
-    int extendPosition(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, long long &budget, span<const int> resume);
-    int extendCandidate(PositionState &state, Pool &pool, int index, int maxDepth, const ShapeSolverConfig &shapeConfig, const Config &config, const FiftyFifty::Config &fiftyConfig, FiftyFifty::Pool &fiftyPool, long long &budget, span<const int> resume);
+    Evaluation evaluate(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
+                        Probability::Pool &probabilities, const Config &config, const Selection::Candidate &candidate,
+                        int remaining, long double floor, vectorPool<Outcome> &outcomes, long double compensation = 0.0L, bool scaleCompensation = false);
+    vectorPool<Pool::Move>::vector appendMoves(Pool &pool, int parent, int depth, const vector<Evaluation> &evaluations,
+                                               const vectorPool<Outcome> &outcomes, Probability::Pool &probabilities);
+    Result buildRoot(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
+                     Probability::Pool &probabilities, const Selection::Result &selected, const Grid<long double> &longTermRisk,
+                     int remainingSafe, const Config &config, Pool &pool, bool scaleCompensation);
+    // 为首招之后的局面选招。进入第二范围和兜底看等价、支配剪枝前的候选数，评分只取前 limit 格。
+    // evaluations 与 outcomes 由调用方清空。实际执行的 Observe 和条件概率分析从 budget 扣除。
+    void select(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
+                Probability::Pool &probabilities, const Config &config, int depth, int remaining, long long &budget,
+                vector<Evaluation> &evaluations, vectorPool<Outcome> &outcomes);
+    void preparePosition(Position::Result &position, Position::Pool &positions, const Config &config,
+                         Pool &pool, int index, long long &budget);
+    vectorPool<int>::vector orderMoves(const Pool &pool, vectorPool<Pool::Move>::vector children, int depth, int resumeMove, vectorPool<int> &order);
+    int extendPosition(Position::Result &position, Position::Pool &positions, const Config &config, Pool &pool,
+                       int index, int depth, long long &budget, span<const int> resume);
+    int extendMove(Position::Result &position, Position::Pool &positions, const Config &config, Pool &pool,
+                   int index, int depth, long long &budget, span<const int> resume);
+    void releaseSearchData(Position::Pool &positions, Pool &pool);
+    void releaseProbabilities(vector<Pool::ProbabilityLayer *> &probabilities);
+    long double rootScore(const vector<Pool::Move> &moves, const vector<long double> &compensations, int index);
+    void record(const Pool &pool, int index, SuggestResult::Details &details);
+
+    template <typename Record>
+    void updateImpl(Result &result, Position::Result &position, Position::Pool &positions, const Config &config, Pool &pool, Record record);
 };
 
 } // 命名空间 mss

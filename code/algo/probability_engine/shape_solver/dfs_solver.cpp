@@ -52,18 +52,15 @@ __declspec(noinline) ShapeSolverDfs::Workspace &ShapeSolverDfs::getWorkspace() {
 }
 
 // 三个只读视图：Box 数、每 Box 的格子数、约束数组。都借用 shapes。
-int ShapeSolverDfs::shapeBoxCount(const Structure::Shape &shape) { return (int)shape.boxSizes.count; }
-const int *ShapeSolverDfs::shapeBoxSizes(const Structure::Shape &shape, const Structure::Pool &shapes) { return shapes.shapes.boxSizes.data.data + shape.boxSizes.offset; }
-const Structure::Shape::Constraint *ShapeSolverDfs::shapeConstraints(const Structure::Shape &shape, const Structure::Pool &shapes) { return shapes.shapes.constraints.data.data + shape.constraints.offset; }
-const Structure::BoxId *ShapeSolverDfs::constraintMembers(const Structure::Shape::Constraint &constraint, const Structure::Pool &shapes) { return shapes.shapes.boxIds.data.data + constraint.boxIds.offset; }
+const Structure::Shape::Constraint *ShapeSolverDfs::shapeConstraints(const Structure::Shape &shape, const Structure::Pool::Shapes &shapes) { return shapes.constraints.data.data + shape.constraints.offset; }
+const Structure::BoxId *ShapeSolverDfs::constraintMembers(const Structure::Shape::Constraint &constraint, const Structure::Pool::Shapes &shapes) { return shapes.boxIds.data.data + constraint.boxIds.offset; }
 
-template <typename Callback> void ShapeSolverDfs::enumerateAssignments(const Structure::Shape &shape, const Structure::Pool &shapes, Callback &&callback) {
+template <typename Callback> void ShapeSolverDfs::enumerateAssignments(const Structure::Shape &shape, const Structure::Pool::Shapes &shapes, ShapeSolverType::Boxes boxes, Callback &&callback) {
     Workspace &workspace = getWorkspace();
     vector<char> &assignment = workspace.enumerate.assignment;
     vector<Workspace::Enumerate::Frame> &frames = workspace.enumerate.frames;
-    const int boxCount = shapeBoxCount(shape);
+    const int boxCount = boxes.size;
     const int constraintCount = (int)shape.constraints.count;
-    const int *boxes = shapeBoxSizes(shape, shapes);
     const Structure::Shape::Constraint *records = shapeConstraints(shape, shapes);
 
     Workspace::Enumerate::Constraints &constraints = workspace.enumerate.constraints;
@@ -87,7 +84,7 @@ template <typename Callback> void ShapeSolverDfs::enumerateAssignments(const Str
         const int memberCount = (int)records[constraint].boxIds.count;
         for (int i = 0; i < memberCount; ++i) {
             const int box = members[i];
-            constraints.constraintMaxAdd.data[constraint] += boxes[box];
+            constraints.constraintMaxAdd.data[constraint] += (int)boxes[box].count;
             constraints.constraintNext.push_back(constraints.boxHead.data[box]);
             constraints.constraintIds.push_back(constraint);
             constraints.boxHead.data[box] = (int)constraints.constraintIds.size - 1;
@@ -104,7 +101,7 @@ template <typename Callback> void ShapeSolverDfs::enumerateAssignments(const Str
             const int appliedMine = frame.appliedMine;
             frames.size -= 1;
             if (appliedIndex >= 0) {
-                const int maxMine = boxes[appliedIndex];
+                const int maxMine = (int)boxes[appliedIndex].count;
                 for (int link = constraints.boxHead.data[appliedIndex]; link >= 0; link = constraints.constraintNext.data[link]) {
                     const int constraint = constraints.constraintIds.data[link];
                     constraints.currentSum.data[constraint] -= appliedMine;
@@ -115,13 +112,13 @@ template <typename Callback> void ShapeSolverDfs::enumerateAssignments(const Str
         }
 
         const int index = frame.index;
-        const int maxMine = boxes[index];
+        const int maxMine = (int)boxes[index].count;
         if (frame.nextMine > maxMine) {
             const int appliedIndex = frame.appliedIndex;
             const int appliedMine = frame.appliedMine;
             frames.size -= 1;
             if (appliedIndex >= 0) {
-                const int appliedMaxMine = boxes[appliedIndex];
+                const int appliedMaxMine = (int)boxes[appliedIndex].count;
                 for (int link = constraints.boxHead.data[appliedIndex]; link >= 0; link = constraints.constraintNext.data[link]) {
                     const int constraint = constraints.constraintIds.data[link];
                     constraints.currentSum.data[constraint] -= appliedMine;
@@ -156,20 +153,19 @@ template <typename Callback> void ShapeSolverDfs::enumerateAssignments(const Str
     }
 }
 
-ShapeSolverType::Distribution ShapeSolverDfs::analyze(const Structure::Shape &shape, const Structure::Pool &shapes, vectorPool<long double> &values) {
+ShapeSolverType::Distribution ShapeSolverDfs::analyze(const Structure::Shape &shape, const Structure::Pool::Shapes &shapes, ShapeSolverType::Boxes boxes, vectorPool<long double> &values) {
     Workspace &workspace = getWorkspace();
-    const int boxCount = shapeBoxCount(shape);
-    const int *boxes = shapeBoxSizes(shape, shapes);
+    const int boxCount = boxes.size;
     int maxMineCount = 0;
     for (int box = 0; box < boxCount; ++box)
-        maxMineCount += boxes[box];
+        maxMineCount += (int)boxes[box].count;
 
     vector<long double> &ways = workspace.analyze.ways;
     Grid<long double> &moments = workspace.analyze.moments;
     ways.resize(maxMineCount + 1);
     std::fill(ways.data, ways.data + ways.size, 0.0L);
     moments.resize(maxMineCount + 1, boxCount, 0.0L);
-    enumerateAssignments(shape, shapes, [&](const vector<char> &assignment, long double weight) {
+    enumerateAssignments(shape, shapes, boxes, [&](const vector<char> &assignment, long double weight) {
         int mineCount = 0;
         for (int box = 0; box < boxCount; ++box)
             mineCount += assignment.data[box];
@@ -183,6 +179,7 @@ ShapeSolverType::Distribution ShapeSolverDfs::analyze(const Structure::Shape &sh
         ++start;
     ShapeSolverType::Distribution result;
     result.boxCount = boxCount;
+    result.tCount = 0;
     if (start > maxMineCount) {
         result.ways = {0, 0};
         result.expectations = {0, 0};
@@ -206,13 +203,12 @@ ShapeSolverType::Distribution ShapeSolverDfs::analyze(const Structure::Shape &sh
     return result;
 }
 
-void ShapeSolverDfs::observe(const Structure::Shape &shape, const Structure::Pool &shapes, span<const int> adjacentBoxCells, Structure::BoxId xBox, ShapeSolverType::Observed &result) {
+void ShapeSolverDfs::observe(const Structure::Shape &shape, const Structure::Pool::Shapes &shapes, ShapeSolverType::Boxes boxes, const vector<int> &adjacentBoxCells, Structure::BoxId xBox, ShapeSolverType::Observed &result) {
     Workspace &workspace = getWorkspace();
-    const int boxCount = shapeBoxCount(shape);
-    const int *boxes = shapeBoxSizes(shape, shapes);
+    const int boxCount = boxes.size;
     int maxMineCount = 0, maxNeighborCount = 0;
     for (int box = 0; box < boxCount; ++box) {
-        maxMineCount += boxes[box];
+        maxMineCount += (int)boxes[box].count;
         maxNeighborCount += adjacentBoxCells[box];
     }
     const int stride = maxNeighborCount + 1;
@@ -223,11 +219,12 @@ void ShapeSolverDfs::observe(const Structure::Shape &shape, const Structure::Poo
     vectorPool<long double>::vector accumulated = values.push_back();
     accumulated.count = (std::size_t)(maxMineCount + 1) * stride;
     vectorPool<long double>::vector convolution{accumulated.count, 0}, next{accumulated.count + stride, 0}, local{accumulated.count + 2 * stride, 0};
-    // 危险：三个卷积缓冲只预留容量；每次赋值先初始化切片有效范围，范围外不读写。
+    // 危险：三个卷积缓冲都切自 Workspace::observedValues，只预留容量。
+    // 每次赋值先初始化各切片的有效范围，范围外不读写。
     values.data.resize(accumulated.count + 3 * stride);
     std::fill(values.data.data, values.data.data + accumulated.count, 0.0L);
 
-    enumerateAssignments(shape, shapes, [&](const vector<char> &assignment, long double weight) {
+    enumerateAssignments(shape, shapes, boxes, [&](const vector<char> &assignment, long double weight) {
         int componentMines = 0;
         int first = 0;
         convolution.count = 1;
@@ -239,7 +236,7 @@ void ShapeSolverDfs::observe(const Structure::Shape &shape, const Structure::Poo
             const bool isXBox = box == xBox;
             if (adjacent == 0 && !isXBox)
                 continue;
-            const int size = boxes[box];
+            const int size = (int)boxes[box].count;
             const int pool = isXBox ? size - 1 : size;
             const int minAdjacent = (std::max)(0, mines - pool + adjacent);
             const int maxAdjacent = (std::min)(adjacent, mines);
@@ -287,17 +284,16 @@ void ShapeSolverDfs::observe(const Structure::Shape &shape, const Structure::Poo
     }
 }
 
-void ShapeSolverDfs::forEachAssignment(const Structure::Shape &shape, const Structure::Pool &shapes, const std::function<void(const vector<char> &assignment, long double ways)> &callback) {
-    enumerateAssignments(shape, shapes, [&](const vector<char> &assignment, long double ways) { callback(assignment, ways); });
+void ShapeSolverDfs::forEachAssignment(const Structure::Shape &shape, const Structure::Pool::Shapes &shapes, ShapeSolverType::Boxes boxes, const std::function<void(const vector<char> &assignment, long double ways)> &callback) {
+    enumerateAssignments(shape, shapes, boxes, [&](const vector<char> &assignment, long double ways) { callback(assignment, ways); });
 }
 
-ShapeSolverDfs::Assignments ShapeSolverDfs::buildAssignments(const Structure::Shape &shape, const Structure::Pool &shapes, AssignmentStorage &storage) {
+ShapeSolverDfs::Assignments ShapeSolverDfs::buildAssignments(const Structure::Shape &shape, const Structure::Pool::Shapes &shapes, ShapeSolverType::Boxes boxes, AssignmentStorage &storage) {
     Workspace &workspace = getWorkspace();
-    const int boxCount = shapeBoxCount(shape);
-    const int *boxes = shapeBoxSizes(shape, shapes);
+    const int boxCount = boxes.size;
     int maxMines = 0;
     for (int box = 0; box < boxCount; ++box)
-        maxMines += boxes[box];
+        maxMines += (int)boxes[box].count;
     const int groupCount = maxMines + 1;
 
     vectorPool<char>::vector boxMines = storage.boxMines.push_back();
@@ -313,7 +309,7 @@ ShapeSolverDfs::Assignments ShapeSolverDfs::buildAssignments(const Structure::Sh
     groupWays.resize(groupCount);
     std::fill(groupWays.data, groupWays.data + groupWays.size, 0.0L);
 
-    enumerateAssignments(shape, shapes, [&](const vector<char> &assignment, long double weight) {
+    enumerateAssignments(shape, shapes, boxes, [&](const vector<char> &assignment, long double weight) {
         int mineCount = 0;
         for (int box = 0; box < boxCount; ++box)
             mineCount += assignment.data[box];

@@ -27,6 +27,9 @@ template <typename T> struct vector {
     }
     ~vector() { ::operator delete(data); }
 
+    T &operator[](std::size_t index) { return data[index]; }
+    const T &operator[](std::size_t index) const { return data[index]; }
+
     // 交换存储所有权，不分配或复制元素。
     void swap(vector &other) {
         std::swap(data, other.data);

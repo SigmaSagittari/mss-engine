@@ -1,541 +1,230 @@
-// 由 code/tools/fifty_fifty_catalog/generate.cpp 从 patterns.csv 生成。
-// / 分行，A/B 为可互换的两组本体格，. 为本体外位置；封口雷和边界条件由 Table 推导。
 #pragma once
 
-namespace mss::FiftyFiftyData {
-inline constexpr const char *patterns[] = {
-    "AB/BA",
-    "AB",
-    "AB.AB",
-    "..A/BAB",
-    ".AB/B.A",
-    "A.BAB/BA.BA",
-    "AB.AB/BA.BA",
-    "..A/..B/BA.",
-    "A.BA/BA.B",
-    "A.BA/B.AB",
-    "AB.AB.AB",
-    "ABA/BAB",
-    "....A/....B/BA.BA",
-    ".....A/.....B/BA.BA.",
-    ".AB/B../ABA",
-    ".....A/BA.BAB",
-    ".ABA/B.AB",
-    "....AB/BA.B.A",
-    "A.B/B.A",
-    ".AB/B.A/AB.",
-    "...AB/AB...",
-    "AB.AB.AB.AB",
-    ".....A/.....B/....../.....A/BA.BAB",
-    ".A.BA/B..../AB.AB",
-    "....A/BA.B./AB.AB",
-    "........A/........B/BA.BA.BA.",
-    ".......A/.......B/BA.BA.BA",
-    "......AB/AB.AB...",
-    "....ABA/BA.B.AB",
-    "..A../..BAB/BA.BA",
-    "........A/BA.BA.BAB",
-    ".AB.AB/B....A/A....B",
-    "..AB.A/BAB.AB",
-    "..A.BA/BAB.AB",
-    ".AB.AB/B.AB.A",
-    ".A.B./B...A/AB.AB",
-    "..AB/BAB./AB.A",
-    "....AB/BA.B../AB.A..",
-    "....AB/BA.B../A.BA..",
-    "..AB/BAB./ABA.",
-    "..AB/BABA/A..B",
-    ".......AB/BA.BA.B.A",
-    ".AB./B..A/A..B",
-    "A...B/B...A/AB.AB",
-    "A.BA.BA/BA.B.AB",
-    "...AB/...BA/BA...",
-    ".A/B.",
-    "...AB/...../AB.../BA...",
-    "...AB/...BA/...../BA.../AB...",
-    "....A/BA.B.",
-    ".....A/.....B/....../.....A/.....B/BA.BA.",
-    "A.BAB",
-    "A..B/BABA",
-    "A.BA.BAB/BA.BA.BA",
-    "AB.AB.AB/BA.BA.BA",
-    "A...B/BA.BA",
-    "...AB/BA.BA",
-    ".A./B.B/ABA",
-    "....AB/BA.B.A/AB.AB.",
-    "A.B.AB/B.AB.A",
-    ".AB.A/B.A.B",
-    "...ABA/AB...B",
-    "A.BA.BA/B.AB.AB",
-    "AB.ABA/BA.BAB",
-    "A.BA.BA/BA.BA.B",
-    "...A/...B/BA..",
-    "AB.ABA/BAB.AB",
-    "A.B.ABA/B.AB.AB",
-    "..A.B/BAB.A",
-    ".A.B/B.../AB.A",
-    "A.BABA/BA.BAB",
-    "...AB/A.B../B.A..",
-    "...AB/AB.../BA.BA",
-    "...A/B.AB",
-    "...A.B/AB..BA",
-    "...A/BA.B",
-    "A.BA.B",
-    "AB.AB.AB.AB.AB",
-    "...A/...B/..../BA..",
-    "A.B.AB/B.A.BA",
-    "AB.A.BA/BA.B.AB",
-    ".......A/.......B/......../.......A/.......B/BA.BA.BA",
-    "....A/....B/...../AB.A./B.AB.",
-    ".........AB/AB.AB.AB...",
-    "..........A/..........B/BA.BA.BA.BA",
-    "...AB/...B./....A/AB.AB",
-    "........A/........B/........./........A/BA.BA.BAB",
-    "....A/....B/...../AB.A./BA.B.",
-    "...........A/...........B/BA.BA.BA.BA.",
-    "..A..B/BAB..A/AB.AB.",
-    "....AB/....BA/....../....AB/BA.B.A",
-    ".AB.AB/B...../ABA.BA",
-    "..ABA/BAB../AB.AB",
-    ".....A/.....B/BA.BA./....BA/....AB",
-    ".AB.A/B.AB./AB.AB",
-    ".....AB.A/.....B.AB/BA.BA....",
-    "...AB/...BA/...../AB.AB",
-    "....AB/BA.B../AB.ABA",
-    "........A/........B/........./........A/........B/BA.BA.BA.",
-    "AB.AB/...../BA.BA",
-    ".....A../.....BAB/BA.BA.BA",
-    ".....AB.A/BA.BAB.AB",
-    ".A.BA/.BA.B/BA.BA",
-    "....ABA/....BAB/BA.BA..",
-    "..ABA/..BAB/BA.BA",
-    ".AB.ABA/B.AB.AB",
-    "...........A/BA.BA.BA.BAB",
-    "..A.BA/..BA.B/BA.BA.",
-    "..AB.A/..BA.B/BA.BA.",
-    ".......ABA/BA.BA.B.AB",
-    "....AB.AB/BA.B.AB.A",
-    "...A./AB..B/BA.BA",
-    "..........AB/BA.BA.BA.B.A",
-    "...AB/...BA/AB.AB",
-    "......AB/......BA/......../BA.BA...",
-    "A......B/B......A/AB.AB.AB",
-    ".AB.AB./B.....A/A.....B",
-    "..AB./..B.A/AB.AB",
-    "...AB/...../...BA/BA...",
-    "...A/A.B./B.AB",
-    "....A/....B/...BA/BA...",
-    ".......A/BA.BA.B.",
-    "A.B.A/B.A.B",
-    "A.BA/..../B.AB",
-    "..AB/AB.A/B.AB",
-    "..AB/AB.A/BA.B",
-    "..AB/B..A/AB..",
-    "....A/...../....B/BA.BA",
-    "......AB/......BA/BA.BA...",
-    "....A/....B/...../BA.BA",
-    "...AB/...../AB...",
-    "A.....B/BAB.ABA",
-    "A.BA.BAB",
-    "...AB/A.B.A/B.AB.",
-    "A.BAB.AB",
-    "..AB/..B./AB.A",
-    "..AB/.B.A/A.../BA.B",
-    "..A/AB./BAB",
-    "......A/......B/......./BA.BA..",
-    ".A.BAB/B....A",
-    ".....A/.....B/...BA./BA....",
-    "A......B/BA.BA.BA",
-    "....A/BA..B/...BA",
-    "...A./AB..B",
-    "..AB/B.../A.BA",
-    "......AB.AB/AB.AB......",
-    "...AB/..B../ABA..",
-    "...A./....B/...BA/BA...",
-    ".A.BA/B...B/AB.A.",
-    ".ABA/B..B/ABA.",
-    "A.B.A.B/BA...BA",
-    "....AB/BA.B.A/....AB",
-    "..AB/B.../AB.A",
-    "...A./....B/BA.BA",
-    "......AB/BA.BA.BA",
-    ".....A/BA...B/...BA.",
-    "..A./..BA/BA.B",
-    "AB.AB/.A.B./B...A/AB.AB",
-    "...AB/A.B.A/B.A.B",
-    "......A/BA.B.AB",
-    "...A/AB.B/B.A.",
-    "AB.A.BAB",
-    "......A/......B/BA.BA..",
-    "A.BA.B.AB",
-    "......AB/......BA/......../BA.BA.../AB.AB...",
-    "AB.AB/B.ABA/AB.AB",
-    "..AB.AB/B.....A",
-    "...AB/...B./AB.A.",
-    "....AB.A/BA.B.A.B",
-    "..AB/..B./ABA.",
-    "...AB/...B./A.BA.",
-    ".....A.B/BA.BAB.A",
-    ".....A/.....B/....../BA.BA.",
-    "....A/....B/...../....A/BA.B.",
-    ".....A/...BAB/BA....",
-    "A....BA/BAB.A.B",
-    "...AB.../AB....AB",
-    "...AB.ABA/AB......B",
-    "...A.BA/AB..BAB",
-    "...AB/AB..A/BA..B",
-    "....A.BA/BA.B....",
-    "......ABA/AB.AB...B",
-    "...AB/B.ABA",
-    ".AB.AB/B....A",
-    "...A/AB../BAB.",
-    ".AB.A/B..../ABA.B",
-    ".....A.B/.....B.A/BA.BA...",
-    ".....A/BAB.AB",
-    "...AB.A.B/AB.....BA",
-    "...A.B/...B.A/AB.AB.",
-    "......A/B.AB.AB",
-    "......A/BA.BA.B",
-    "...AB/...../BA.BA",
-    "....A.B./BA.B...A/AB.AB.AB",
-    "...AB/A.B../B.ABA",
-    "...AB/..B../ABA../BA.BA",
-    ".A.B.A/B...AB",
-    "...AB/...B./BA..A",
-    "....A/BA.B./A.BAB",
-    "...AB/...../AB.../...AB",
-    "...AB/A.B../.BA..",
-    "...A./...B./...../BA..A/AB..B",
-    "...AB./A.B..A/B.A..B",
-    "ABA.BAB",
-    "..AB./B...A/A...B",
-    "...A/.BAB/BA..",
-    "A...B/.B.A./BA.BA",
-    "...AB./AB...A/BA...B",
-    "A.BA.BA.B",
-    "...AB/....A/BA.B.",
-    ".............A/.............B/BA.BA.BA.BA.BA",
-    "......AB/......../AB.AB...",
-    "A....BAB/BAB.A.BA",
-    "A...B/B.ABA",
-    "..A/B..",
-    "...A/...B/ABA./B...",
-    "...........A/...........B/............/...........A/...........B/BA.BA.BA.BA.",
-    "............AB/AB.AB.AB.AB...",
-    ".........AB.AB/AB.AB.AB......",
-    "...A/..../...B/BA..",
-    ".A.BA./B....B/AB.ABA",
-    ".AB.AB.AB.AB/B..........A/A..........B",
-    "..ABA/BAB.B/AB.A.",
-    "A...BA/BAB.AB",
-    "...AB/AB.../...AB",
-    "......AB/......BA/......../......AB/AB.AB...",
-    ".......A/BA.BA..B/......BA",
-    "A...BA/BA.BAB",
-    "........A/........B/BA.BA.BA./.......BA/.......AB",
-    ".AB.AB.AB/B.AB.AB.A",
-    ".....ABA/BA.BAB..",
-    ".....A.BA/.....BA.B/BA.BA.BA.",
-    ".......A/.......B/......../.......A/BA.BA.B.",
-    "...AB/....A/...B./BA...",
-    "......AB/......B./.......A/......AB/AB.AB...",
-    "A...BA.B/BA.BA.BA",
-    "..............A/BA.BA.BA.BA.BAB",
-    "..........A/..........B/.........../..........A/..........B/BA.BA.BA.BA",
-    ".......A/.......B/...BA.BA/BA......",
-    "..........ABA/BA.BA.BA.B.AB",
-    "...AB/....A/AB..B",
-    "......AB/......../......BA/BA.BA...",
-    ".....A/.....B/....../BA...A/...BAB",
-    ".AB.AB.AB./B........A/A........B",
-    "....AB/....../....BA/AB.A.B",
-    "......AB/......B./.......A/AB.AB.AB",
-    ".....ABA/.....BAB/BA.BA.BA",
-    "....AB.ABA/BA.B.AB.AB",
-    ".......A.BA/BA.BA.B....",
-    "....A./....B./....../.....A/BA.BAB",
-    "......A/......B/......./.....A./.....B./BA.BA..",
-    "....A/....B/...../BA.BA/AB.AB",
-    ".......ABA/.......BAB/BA.BA.BA..",
-    ".....A/.....B/....../BAB.A./AB.AB.",
-    "....A/...../BA.B.",
-    "...A/..../BA.B",
-    ".....A/B.AB..",
-    "...A./...B./...AB/BA.BA",
-    "......AB/......../AB.AB.../BA.BA...",
-    "......AB.../AB.AB....AB",
-    "AB.AB.AB.AB.AB.AB",
-    "....A/BAB..",
-    ".......A/.......B/......BA/BA.BA...",
-    "......AB/...AB.../AB......",
-    ".....A/.....B/....../.....A/BAB.AB",
-    "...AB/...BA/ABA.B",
-    "....AB/.AB.../B...../ABA...",
-    ".........AB/.........BA/.........../BA.BA.BA...",
-    "....AB/....BA/A.BA.B",
-    "........A/........B/......BA./BA.BA....",
-    "........A/BA.BA...B/......BA.",
-    ".....A/.....B/....../.....A/BA...B/...BA.",
-    "...AB.A./AB.....B",
-    "A.BA/.BA./BA.B",
-    "....AB.A/BA.B.AB.",
-    "......A/......B/......./......A/BA.BA.B",
-    "....A/....B/...../AB.A./....B",
-    "...AB/...BA/AB.AB/BA...",
-    "..........A/BA.BA.BA.B.",
-    "........A/......BAB/BA.BA....",
-    "...ABA/AB...B/BA.BA.",
-    ".....AB/B.A.B../A.B.A..",
-    ".....A/.....B/....../.....A/...BAB/BA....",
-    "...AB.A.BA/AB.....BAB",
-    "...AB/AB.../B..../.A.BA",
-    "....A.../BA.B..BA",
-    "...AB/A.B.A/.BA.B",
-    "...A/ABAB/B...",
-    ".............ABA/BA.BA.BA.BA.B.AB",
-    "......A/......B/......./......A/B.AB.AB",
-    ".........A/.........B/........../BA.BA.BA..",
-    "...AB.AB.ABA/AB.........B",
-    ".A.BA.BAB/B.......A",
-    ".........AB/.........BA/BA.BA.BA...",
-    "......A/......B/......./BA.B.A./....AB.",
-    ".A.BA/...../B..../AB.AB",
-    "....A/B.AB.",
-    "A.........B/BA.BA.BA.BA",
-    "........A/BA......B/...BA.BA.",
-    ".....A/BA.B..",
-    "..A.B.A/BAB.A.B",
-    "....A.BA/....B.../BA.BA...",
-    ".......A/BA.....B/...BA.BA",
-    "...AB/...../AB.../BA.../...BA",
-    "...A./...B./BA.BA/...AB",
-    ".......A/......../.......B/BA.BA.BA",
-    "....ABA/.....AB/BA.B...",
-    "...AB.AB.../AB.......AB",
-    ".A...B/B....A/AB.AB.",
-    ".....AB/BA.B.../ABA....",
-    "....A/...B./BA...",
-    "........A.B/........B.A/BA.BA.BA...",
-    "...AB/AB.../...BA",
-    "........A/...BA.BAB/BA.......",
-    "...AB.AB/BA.BA.BA",
-    ".A.B.A/B...../AB.A.B",
-    "...ABA.B/AB...B.A",
-    "A.BA.BA.B.AB",
-    "...AB/.B.../A..../BA.BA",
-    "........A/........B/........./BA.BA.BA.",
-    "........A/BA.BAB.AB",
-    "...AB./.....A/AB...B",
-    "...A./BA.B./...BA/...AB",
-    "A.BA.B.AB.AB",
-    "...A/..B./BA..",
-    ".A.BA.B/B....../AB.AB.A",
-    ".A.B.AB/B...ABA",
-    "....A.B/BA.B.../AB.AB.A",
-    "...A.BA/AB....B",
-    ".........ABA/AB.AB.AB...B",
-    "...AB/.B.../A..../BA.../...BA",
-    ".........AB/.........../AB.AB.AB...",
-    "......A/......B/......./......A/......B/BA.BA..",
-    ".........A.B/AB.AB.AB..BA",
-    "...A/..AB/B...",
-    "A.BA.BAB.AB",
-    "A..BA/B.A.B",
-    "A.AB/.B.A/BA.B",
-    "..AB.AB.AB/B........A",
-    "A.BA.BA.BAB",
-    "......AB/......B./AB.AB.A.",
-    "...A.BA/BA.BA.B",
-    "AB.A.BA.BAB",
-    ".........A/.........B/BA.BA.BA..",
-    "...AB/...../AB.../BA.BA",
-    "......AB.ABA/AB.AB......B",
-    "......A.BA/AB.AB..BAB",
-    "...AB.A/AB....B",
-    ".....A.B/AB.AB...",
-    "..AB.A/BAB.../AB.A.B",
-    "A..B/...A/B.AB",
-    "...AB/BAB.A/AB.AB",
-    "........A.B/BA.BA.BAB.A",
-    ".......AB.A/BA.BA.B.A.B",
-    "......AB.A./AB.AB.....B",
-    ".......AB/BA.B.AB.A",
-    "AB.ABA.BA.BA.BAB",
-    "AB.AB.ABA.BA.BAB",
-    "......AB/......../AB.AB.../......AB",
-    "..A.BA/..BA../BA.B..",
-    "....AB/BAB.../ABA...",
-    ".........A/BA.BA.BA.B",
-    ".......A/.......B/......../BA.BA.BA",
-    "...ABA/BA.BAB",
-    ".........A/BA.B.AB.AB",
-    "...AB.AB./A.B.....A/B.A.....B",
-    "...A.B/BA.BA.",
-    "......AB/A.BA.B..",
-    "A.BA.BA.BA.B",
-    "....AB/BA.B../A.BA../.BA.BA",
-    ".A.BA.B.A/B......AB",
-    ".....AB/B.AB.../AB.A...",
-    "......AB/AB.AB.../BA.BA.BA",
-    ".........A/BA.BA.B.AB",
-    ".AB.AB.AB/B.......A",
-    ".A.B./B...A",
-    ".......AB/A.BA.B...",
-    "...AB./AB...A/B.A.B.",
-    ".........AB/......AB.../AB.AB......",
-    "......AB/......BA/......../...BA.../BA......",
-    "...AB/...B./....A/BAAB.",
-    "......AB/......../BA.BA.BA",
-    "..........A.BA/BA.BA.BA.B....",
-    "......A/......B/B.AB.A.",
-    "....AB/BAB..B/A...A.",
-    "......AB/AB.AB.../......AB",
-    "....ABA/....BA./BA.BA.B",
-    "A...AB.A.B/BAB.....BA",
-    "..A.BA/AB..../BAB.AB",
-    "A.B.A.B/B.A.B.A",
-    "AB.ABA.BA.BAB.AB",
-    "...A/AB../...B",
-    "A......B/B.AB.ABA",
-    ".............A/BA.BA.BA.BA.B.",
-    "...A/..../...B/B.A.",
-    "......A/......B/......./......A/......B/......./BA.BA..",
-    "......A/...BA.B/BA.....",
-    "......AB/.......A/BA.BA.B.",
-    "...AB./...B.A/....../...A.B/AB..BA",
-    "......A/......./BA.BA.B",
-    "....A../BA.B.AB",
-    "A..BAB/B.A.BA",
-    "......A/.....AB/BA.B...",
-    "......A.BA.B/AB.AB..BA.BA",
-    "AB.A.BA.B.AB",
-    "....A.BA.../BA.B.....BA",
-    "AB.ABA/B....B/ABA.BA",
-    "...AB./.....A/.....B/BA.BA.",
-    "....AB/BA..../..B.../..A...",
-    ".......AB/.......BA/A.BA.BA.B",
-    "...........A/...........B/............/...........A/...........B/............/...........A/...........B/BA.BA.BA.BA.",
-    "..AB../..BA../....../A....B/B....A",
-    ".........AB/...AB.AB.../AB.........",
-    ".......A/......../BA.BA.B.",
-    ".....A/.....B/....../....A./BA.B..",
-    "......AB./...AB...A/AB......B",
-    "....A../....B../......./....ABA/BA.B.AB",
-    ".....A/.....B/...BA./BA..../AB....",
-    "......AB/......BA/......../BA.BA.../.....B../.....A..",
-    "......AB....../AB.AB....AB.AB",
-    "......AB.AB.../AB.AB.......AB",
-    "......AB.AB/.....B...../AB.ABA.....",
-    "A.BA.BAB.AB.AB",
-    ".....ABA/B.AB....",
-    "...AB.AB.A./AB........B",
-    "...AB./B.AB.A",
-    ".A.....B/B......A/AB.AB.AB",
-    "AB.A.BA.BAB.AB",
-    "......A.BA/......B.AB/........../BA.BA.....",
-    ".......A/......B./BA.BA...",
-    "......A./......B./......../.......A/.......B/BA.BA.BA",
-    "..........A/BA.BA.....B/......BA.BA",
-    "..AB.AB./B......A",
-    "...........A/...........B/...BA.BA.BA./BA..........",
-    ".......A/...BA.B./BA......",
-    "........A/BA.B.AB..",
-    ".....A.BA/B.AB.....",
-    ".....AB../B.AB....A",
-    ".......A/BAB.AB..",
-    ".....A/.....B/...BA./BA..../....../AB....",
-    "......AB.AB/BA.BA.BA.BA",
-    "....A.BA/......../BA.B....",
-    ".......ABA/........AB/BA.BA.B...",
-    "...AB.AB.A/AB.......B",
-    ".........AB.../AB.AB.AB....AB",
-    "...AB./AB...A/...BAB",
-    "..........A/BA.BA.BA..B/.........BA",
-    "......AB.AB/......B..../A.BA.BA....",
-    ".........AB/.........../.........BA/BA.BA.BA...",
-    "...AB....AB/AB....AB...",
-    "........A/B.AB.AB..",
-    "....A./...B.B/BA..A.",
-    ".........AB/.........B./A.BA.BA.BA.",
-    ".A.B.ABA/B......B/AB.A.BA.",
-    ".........AB.AB.AB/AB.AB.AB.........",
-    "......ABA/......BAB/BA.BA....",
-    "......AB.AB/AB.A.B...../....BA.....",
-    "......AB./........A/AB.AB...B",
-    ".......AB.A/.......B.../BA.BA.BA...",
-    ".AB.AB.A/B......./A......B",
-    "...........A/.........BAB/BA.BA.BA....",
-    ".....A.BA/BAB.AB.AB",
-    "......AB.A/......BA.B/BA.BA.....",
-    ".........AB/A.BA.BAB...",
-    ".........A/BA.BAB.AB.",
-    "A.B.A/...../B.A.B",
-    "..........AB/A.BA.B.AB...",
-    "....AB/...B../AB.A..",
-    "...........A/......BA.BAB/BA.BA.......",
-    "...AB.AB.AB.../AB..........AB",
-    "...............A/BA.BA.BA.BA.B.AB",
-    "............A/BA.BA.B.AB.AB",
-    "......A.BA/AB.A.B...B",
-    ".........A/.........B/........../.........A/.........B/BA.BA.BA..",
-    ".A.BA...A/B.....BAB",
-    "......AB.A/AB.AB....B",
-    ".......A/.......B/......../......BA/BA.BA...",
-    "........AB/....BA.B../AB.A.B.A..",
-    "...............A/...............B/................/BA.BA.BA.BA.BA..",
-    "......A.B/A.BA.B...",
-    ".........AB/ABA.BA.B...",
-    "....AB...A/BA.B.AB.AB",
-    "...AB.AB.AB.ABA/AB............B",
-    "....A.BA/BA.B..../AB.AB...",
-    ".....AB/B.A.B.A/AB.....",
-    "......AB./........A/BA.BA.BAB",
-    "......AB.AB.ABA/AB.AB.........B",
-    "...............A/BA.BA.BA.BA.BA.B",
-    "....A/A.BAB/B....",
-    ".......A.BA.../BA.BA.B.....BA",
-    ".....AB.AB./B.AB......A",
-    "....A.BA/.AB...../B.AB....",
-    ".......AB/A.B.AB..A/BA......B",
-    "....AB.AB./BAB......A",
-    "........A......./BA.BA.BA.B.AB.AB",
-    "....ABA/A.BAB../BA.B.AB",
-    "............AB/......AB.AB.../AB.AB.........",
-    "............AB/............B./AB.AB.AB.AB.A.",
-    "........ABA/.........../BA.B.AB....",
-    "...AB.......AB/AB....AB.AB...",
-    "....A.BA/.......B/BA.B...A",
-    "......AB./B.AB.AB.A",
-    "....A.BA.B./BA.B......A",
-    "..........A/BA.B.AB.AB.",
-    "......AB.AB./...........A/AB.AB......B",
-    ".........AB/BA.BA.BA.BA/.......B.../.......A...",
-    ".............A/BA.BA.BA.BA..B/............BA",
-    "........AB/.......B../AB.AB.A...",
-    ".......ABA/BAB.AB....",
-    ".........A/..AB.AB.AB/B.........",
-    "....A../.....BA/BA.BA.B",
-    "...ABA.BA.BA/AB.........B",
-    "..AB.AB.A/BAB....../AB.A.BA.B",
-    "..............A/BA.BA.BAB.AB.AB",
-    ".AB.AB.AB./B........A",
-    ".A.BA......A/B.....BA.BAB",
-    "............A.BA/BA.BAB.AB.AB....",
-    "...A......BA/AB..B.AB.A.B",
-    "............AB/BAB.AB.AB.AB.A",
-    "..........AB.AB/AB.A.BA.B......",
-    ".......AB/A.BA...B./BA.BA.BA.",
-    "...........A/...........B/BA.BA.B.AB.A",
-    ".........A/ABA.BA.BAB/B.....BA..",
-    ".........A/AB.ABA.BAB/B....B.A..",
-    "....AB.AB/.A.B....A/B...A.BAB",
-    "......AB.AB/.........BA/BA.BA.BA...",
-    ".........AB/AB........./...AB.AB...",
-    ".......A/ABA....B/B...BA..",
-    ".............A/BA.BA.B.AB.AB.",
-    "............AB/BA.B........BA/....A.BA.BA...",
-    ".........AB../.........B.A./AB.ABA.BA...B",
-    ".......AB.A/.......BA.B/B.AB.A.....",
-    ".............A/AB.AB.A......B/B......B.A.BA.",
+#include <algorithm>
+
+#include "algo/probability_engine/observed_board/observed_board.h"
+#include "algo/winrate_engine/fifty_fifty/templates/template_catalog.h"
+#include "core/datastructure/grid.h"
+#include "core/datastructure/vector_pool.h"
+
+namespace mss {
+
+struct FiftyFiftyData {
+    struct Point {
+        int row, col;
+
+        bool operator==(const Point &other) const = default;
+        bool operator<(const Point &other) const { return row == other.row ? col < other.col : row < other.row; }
+        Point operator+(Point other) const { return {row + other.row, col + other.col}; }
+        Point operator-(Point other) const { return {row - other.row, col - other.col}; }
+        // 盘外返回 -1，封口匹配把盘外视为已封住。
+        ObservedBoard::CellId cell(Point anchor, int rows, int cols) const {
+            const Point point = anchor + *this;
+            return point.row >= 0 && point.row < rows && point.col >= 0 && point.col < cols ? point.row * cols + point.col : -1;
+        }
+    };
+
+    struct Blocker { int pattern; Point offset; };
+    struct Pattern {
+        vectorPool<Point>::vector points; // 依次为 A 组、B 组、封口格。
+        int half;
+        vectorPool<Blocker>::vector blockers;
+    };
+    struct Rooted { Point safe; int pattern, slot; };
+    struct Check { Point point; int skip, pattern; };
+
+    struct Pool {
+        vectorPool<Point> points;
+        vectorPool<Blocker> blockers;
+        vector<Pattern> patterns;
+        vectorPool<Rooted> roots;
+        Grid<vectorPool<Rooted>::vector> starts; // 按相对必安格的偏移查 roots。
+        vector<Check> checks; // 本体检查失败跳到 skip；成功且 pattern 非负时输出匹配。
+    };
+
+    int count() const { return sizeof(FiftyFiftyCatalog::patterns) / sizeof(FiftyFiftyCatalog::patterns[0]); }
+    // prefix 为 [1, count()]。同一前缀编译一次，供多个盘面复用。
+    void compile(Pool &pool, int prefix) {
+        pool.patterns.resize(0);
+        pool.points.data.resize(0);
+        pool.blockers.data.resize(0);
+        pool.roots.data.resize(0);
+        pool.checks.resize(0);
+        for (int i = 0; i < prefix; ++i) compilePattern(pool, FiftyFiftyCatalog::patterns[i]);
+        compileBlockers(pool);
+        compileChecks(pool);
+        compileRoots(pool);
+    }
+
+  private:
+    static constexpr int maxHalf = [] {
+        int maximum = 0;
+        for (const char *pattern : FiftyFiftyCatalog::patterns) {
+            int count = 0;
+            for (const char *cell = pattern; *cell; ++cell) count += *cell == 'A';
+            maximum = (std::max)(maximum, count);
+        }
+        return maximum;
+    }();
+
+    struct Node { Point point; int child, sibling, output; };
+
+    struct Workspace {
+        vector<Node> nodes;
+    };
+
+    __declspec(noinline) Workspace &getWorkspace() {
+        static thread_local Workspace workspace;
+        return workspace;
+    }
+
+    void sortGroup(Point *group, int count) {
+        for (int i = 1; i < count; ++i) {
+            const Point point = group[i];
+            int j = i;
+            while (j > 0 && point < group[j - 1]) { group[j] = group[j - 1]; --j; }
+            group[j] = point;
+        }
+    }
+
+    void compilePattern(Pool &pool, const char *text) {
+        Point groups[2][maxHalf];
+        int sizes[2] = {};
+        Point point{0, 0};
+        for (; *text; ++text) {
+            if (*text == '/') point = {point.row + 1, 0};
+            else {
+                if (*text == 'A' || *text == 'B') {
+                    const int group = *text == 'B';
+                    groups[group][sizes[group]++] = point;
+                }
+                ++point.col;
+            }
+        }
+        const int half = sizes[0], coreCount = 2 * half;
+        for (int turn = 0; turn < 4; ++turn) for (int mirror = 0; mirror < 2; ++mirror) {
+            Point core[2 * maxHalf];
+            for (int i = 0; i < coreCount; ++i) {
+                Point rotated = groups[i / half][i % half];
+                for (int k = 0; k < turn; ++k) rotated = {rotated.col, -rotated.row};
+                if (mirror) rotated.col = -rotated.col;
+                core[i] = rotated;
+            }
+            sortGroup(core, half);
+            sortGroup(core + half, half);
+            if (core[half] < core[0]) std::swap_ranges(core, core + half, core + half);
+            const Point anchor = core[0];
+            for (int i = 0; i < coreCount; ++i) core[i] = core[i] - anchor;
+            bool duplicate = false;
+            for (int i = 0; i < (int)pool.patterns.size && !duplicate; ++i) {
+                const Pattern &pattern = pool.patterns[i];
+                if (pattern.half == half)
+                    duplicate = std::equal(core, core + coreCount, pool.points.span(pattern.points).begin());
+            }
+            if (duplicate) continue;
+
+            vectorPool<Point>::vector points = pool.points.push_back();
+            for (int i = 0; i < coreCount; ++i) pool.points.push_back(points, core[i]);
+            // 外圈格若相邻 A、B 数量不同，必须封住才能保持数字不变。
+            for (int i = 0; i < coreCount; ++i) for (int dr = -1; dr <= 1; ++dr) for (int dc = -1; dc <= 1; ++dc) {
+                const Point wall = core[i] + Point{dr, dc};
+                if (std::find(core, core + coreCount, wall) != core + coreCount) continue;
+                int difference = 0;
+                for (int j = 0; j < coreCount; ++j) {
+                    const Point delta = wall - core[j];
+                    if (delta.row >= -1 && delta.row <= 1 && delta.col >= -1 && delta.col <= 1)
+                        difference += j < half ? 1 : -1;
+                }
+                if (difference && std::find(pool.points.span(points).begin() + coreCount, pool.points.span(points).end(), wall) == pool.points.span(points).end())
+                    pool.points.push_back(points, wall);
+            }
+            std::sort(pool.points.span(points).begin() + coreCount, pool.points.span(points).end());
+            pool.patterns.push_back({points, half, {}});
+        }
+    }
+
+    void compileBlockers(Pool &pool) {
+        for (int index = 0; index < (int)pool.patterns.size; ++index) {
+            Pattern &parent = pool.patterns[index];
+            const Point *body = pool.points.span(parent.points).begin();
+            parent.blockers = pool.blockers.push_back();
+            for (int childId = 0; childId < (int)pool.patterns.size; ++childId) {
+                const Pattern &child = pool.patterns[childId];
+                if (child.half >= parent.half) continue;
+                const Point *points = pool.points.span(child.points).begin();
+                for (int slot = 0; slot < parent.half * 2; ++slot) {
+                    const Point offset = body[slot];
+                    const bool flipped = slot >= parent.half;
+                    bool contained = true;
+                    for (int i = 1; i < child.half * 2 && contained; ++i) {
+                        const Point *group = body + ((i >= child.half) != flipped) * parent.half;
+                        contained = std::binary_search(group, group + parent.half, points[i] + offset);
+                    }
+                    if (!contained) continue;
+                    bool first = false, second = false;
+                    for (int i = child.half * 2; i < (int)child.points.count; ++i) {
+                        first |= std::binary_search(body, body + parent.half, points[i] + offset);
+                        second |= std::binary_search(body + parent.half, body + parent.half * 2, points[i] + offset);
+                    }
+                    if (!(first && second)) pool.blockers.push_back(parent.blockers, {childId, offset});
+                }
+            }
+        }
+    }
+
+    void emit(Pool &pool, const vector<Node> &nodes, int node) {
+        const int check = pool.checks.size;
+        pool.checks.push_back({nodes[node].point, 0, nodes[node].output});
+        for (int child = nodes[node].child; child >= 0; child = nodes[child].sibling)
+            emit(pool, nodes, child);
+        pool.checks[check].skip = pool.checks.size;
+    }
+
+    void compileChecks(Pool &pool) {
+        Workspace &workspace = getWorkspace();
+        vector<Node> &nodes = workspace.nodes;
+        nodes.resize(0);
+        nodes.push_back({{}, -1, -1, -1});
+        for (int id = 0; id < (int)pool.patterns.size; ++id) {
+            const Pattern &pattern = pool.patterns[id];
+            int node = 0;
+            for (int i = 1; i < pattern.half * 2; ++i) {
+                const Point point = pool.points.span(pattern.points)[i];
+                int child = nodes[node].child;
+                while (child >= 0 && !(nodes[child].point == point)) child = nodes[child].sibling;
+                if (child < 0) {
+                    child = nodes.size;
+                    nodes.push_back({point, -1, nodes[node].child, -1});
+                    nodes[node].child = child;
+                }
+                node = child;
+            }
+            // 本体坐标序列及其长度已唯一确定 A、B 分组。
+            nodes[node].output = id;
+        }
+        for (int child = nodes[0].child; child >= 0; child = nodes[child].sibling) emit(pool, nodes, child);
+    }
+
+    void compileRoots(Pool &pool) {
+        vector<Rooted> &roots = pool.roots.data;
+        int radius = 0;
+        for (int id = 0; id < (int)pool.patterns.size; ++id) {
+            const Pattern &pattern = pool.patterns[id];
+            for (int slot = 0; slot < pattern.half * 2; ++slot) {
+                const Point safe = pool.points.span(pattern.points)[slot < pattern.half ? pattern.half : 0] - pool.points.span(pattern.points)[slot];
+                radius = (std::max)({radius, safe.row, -safe.row, safe.col, -safe.col});
+                roots.push_back({safe, id, slot});
+            }
+        }
+        pool.starts.resize(2 * radius + 1, 2 * radius + 1, {});
+        std::sort(roots.data, roots.data + roots.size, [](const Rooted &a, const Rooted &b) { return a.safe < b.safe; });
+        for (int i = 0; i < (int)roots.size;) {
+            const Point safe = roots[i].safe;
+            const int begin = i++;
+            while (i < (int)roots.size && roots[i].safe == safe) ++i;
+            pool.starts[safe.row + radius][safe.col + radius] = {std::size_t(begin), std::size_t(i - begin)};
+        }
+    }
 };
-} // 命名空间 mss::FiftyFiftyData
+
+} // 命名空间 mss
