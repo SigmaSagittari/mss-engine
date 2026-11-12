@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="mss-token" content="">
+    <title>mss0.17</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">mss<span>0.17</span></div>
+        <label class="difficulty-label" for="difficulty">盘面</label>
+        <select id="difficulty">
+            <option value="beginner">初级 9×9 / 10</option>
+            <option value="intermediate">中级 16×16 / 40</option>
+            <option value="advanced" selected>高级 30×16 / 99</option>
+            <option value="custom">自定义</option>
+        </select>
+        <div id="custom-settings" class="custom-settings" hidden>
+            <label>行 <input id="rows" type="number" min="1" max="100" value="16"></label>
+            <label>列 <input id="cols" type="number" min="1" max="100" value="30"></label>
+            <label>雷 <input id="mines" type="number" min="0" value="99"></label>
+        </div>
+        <button id="new-game" class="primary">新游戏</button>
+        <div class="mode-tabs" role="tablist">
+            <button id="play-mode" class="mode active" role="tab">游玩</button>
+            <button id="analysis-mode" class="mode" role="tab">分析</button>
+        </div>
+        <button id="endgame-analysis" class="secondary">招法分析</button>
+        <button id="mcts-analysis" class="secondary" aria-pressed="false" hidden>蒙特卡洛</button>
+        <button id="anytime-search" class="secondary" hidden>开始搜索</button>
+        <div id="play-actions" class="play-actions">
+            <button id="play-until-no-safe">开到无安全格</button>
+        </div>
+        <button id="open-settings" class="settings-button">设置</button>
+    </header>
+    <main>
+        <section class="game-area">
+            <div class="board-heading">
+                <div id="board-status">正在载入盘面…</div>
+                <div id="mine-counter"></div>
+            </div>
+            <div class="board-scroll"><div id="board" class="board" role="grid"></div></div>
+        </section>
+        <aside class="analysis-sidebar">
+            <section id="analysis-result" class="details">
+                <h2>分析结果</h2>
+                <div id="message" class="message" aria-live="polite" hidden></div>
+                <div id="analysis-summary" class="muted" hidden></div>
+                <div id="analysis-count-row" class="candidate-row" hidden><span>可行摆法数</span><strong id="analysis-count"></strong></div>
+                <div id="analysis-recommendation" class="recommendation" hidden></div>
+            </section>
+            <section id="cell-detail" class="details" aria-label="格子详情" hidden>
+                <div class="detail-heading"><h2 id="detail-position"></h2><span id="detail-engine"></span></div>
+                <div id="detail-status" class="muted" hidden></div>
+                <div class="detail-metrics">
+                    <div id="detail-content" hidden><span>雷率</span><strong id="detail-risk"></strong></div>
+                    <div id="detail-score-row" hidden><span id="detail-score-label"></span><strong id="detail-score"></strong></div>
+                </div>
+                <div id="detail-columns" class="detail-columns">
+                    <table id="observe-result" class="detail-table" hidden>
+                        <caption>Observe</caption>
+                        <thead><tr><th>结局</th><th>概率</th><th id="observe-score-heading" hidden>子评分</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                    <div id="detail-side" class="detail-side" hidden>
+                        <section id="mcts-detail" hidden>
+                            <h3>采样统计</h3>
+                            <div><span>采样</span><strong id="mcts-visits"></strong></div>
+                            <div><span>获胜</span><strong id="mcts-wins"></strong></div>
+                        </section>
+                        <table id="anytime-search-history" class="detail-table" hidden>
+                            <caption>各层评分</caption>
+                            <thead><tr><th>层</th><th>评分</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+                <section id="detail-long-term-risk" aria-label="长期风险" hidden>
+                    <h3>LTR 长期风险（已知此格是雷）</h3>
+                    <div><span id="detail-risk-body-union"></span> 命中本体死猜</div>
+                    <div>其余情况（未命中本体）：</div>
+                    <div id="detail-risk-restriction-distribution"></div>
+                </section>
+            </section>
+        </aside>
+    </main>
+    <dialog id="settings-dialog" aria-labelledby="settings-title">
+        <div class="settings-title"><h2 id="settings-title">设置</h2><button id="close-settings" aria-label="关闭设置">关闭</button></div>
+        <fieldset class="settings-body">
+            <legend class="settings-legend">设置选项</legend>
+            <input class="settings-category-radio" id="settings-category-solver" type="radio" name="settings-category" value="solver" checked>
+            <label class="settings-tab" id="settings-tab-solver" for="settings-category-solver">求解</label>
+            <input class="settings-category-radio" id="settings-category-display" type="radio" name="settings-category" value="display">
+            <label class="settings-tab" id="settings-tab-display" for="settings-category-display">显示</label>
+            <input class="settings-category-radio" id="settings-category-board" type="radio" name="settings-category" value="board">
+            <label class="settings-tab" id="settings-tab-board" for="settings-category-board">盘面</label>
+            <div class="settings-panels">
+                <section id="settings-solver" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-solver">
+                    <section class="settings-group">
+                        <div class="settings-row"><h3>基础算法</h3><select id="suggest-strategy" aria-label="基础算法"><option value="lowrisk" >LowRisk</option><option value="java" selected>JavaE</option><option value="anytime" >Anytime</option></select></div>
+                        <div id="anytime-settings" class="settings-stack" hidden>
+                            <div class="settings-caption">Anytime 参数</div>
+                            <label class="settings-row"><span>每步节点预算</span><input id="policy-node-budget" type="number" min="1" max="2147483647" value="1280"></label>
+                            <div class="search-widths">
+                                <label>根层宽度<input id="search-root-width" type="number" min="1" max="2147483647" value="6"></label>
+                                <label>中层宽度<input id="search-middle-width" type="number" min="1" max="2147483647" value="3"></label>
+                                <label>深层宽度<input id="search-deep-width" type="number" min="1" max="2147483647" value="1"></label>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="settings-group">
+                        <div class="settings-row"><h3>50-50</h3><select id="fifty-fifty" aria-label="50-50 算法"><option value="oldjava" >OldJava</option><option value="templates" selected>Templates</option></select></div>
+                        <div class="settings-stack" id="template-settings">
+                            <label class="settings-row"><span>Semi / LTR 使用前 N 个模板</span><input id="template-prefix" type="number" min="1" max="533" value="100"></label>
+                            <label class="settings-row" title="每个互相必安组按方向事件概率取前 N 项"><span>LTR 模板匹配上限</span><input id="ltr-event-limit" type="number" min="1" max="2147483647" step="1" value="15"></label>
+                        </div>
+                    </section>
+                    <section class="settings-group">
+                        <div class="settings-row"><h3>暴力接管</h3><label class="settings-check"><input id="endgame-enabled" type="checkbox"><span>启用</span></label></div>
+                        <div id="brute-settings" class="settings-stack">
+                            <label class="settings-row"><span>可行摆法数小于</span><input id="endgame-candidate-limit" type="number" min="1" step="1" value="1000"></label>
+                            <label class="settings-row"><span>评分范围</span><select id="endgame-check-all-moves" data-all=""><option value="best">仅最佳招</option><option value="all">全部候选</option></select></label>
+                            <label class="settings-row"><span>多线程</span><input id="endgame-multithread" type="checkbox" ></label>
+                            <label class="settings-row" id="endgame-max-threads-row"><span>线程上限</span><input id="endgame-max-threads" type="number" min="1" max="2147483647" step="1" value="1"></label>
+                        </div>
+                    </section>
+                    <label class="settings-row"><span>手动搜索节点数</span><input id="anytime-search-nodes" type="number" min="-1" max="2147483647" value="-1"></label>
+                    <label class="settings-row"><span>概率求解器</span><select id="shape-algo"><option value="auto" selected>auto</option><option value="autoSA">autoSA</option></select></label>
+                </section>
+                <section id="settings-display" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-display">
+                    <label class="settings-row"><span>棋盘概率</span><input id="probability-display" type="checkbox" checked></label>
+                    <label class="settings-row"><span>格子大小</span><select id="cell-size"><option value="auto" selected>自适应</option><option value="25">25 px</option><option value="28">28 px</option><option value="32">32 px</option><option value="34">34 px</option><option value="38">38 px</option><option value="42">42 px</option><option value="48">48 px</option></select></label>
+                </section>
+                <section id="settings-board" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-board">
+                    <section class="settings-group">
+                        <label for="rng-seed">开局种子</label>
+                        <div class="seed-row"><input id="rng-seed" type="text" maxlength="32" spellcheck="false"><button id="regenerate-seed">以此种子重新开局</button></div>
+                    </section>
+                    <div class="board-export">
+                        <label for="board-string">盘面数据</label>
+                        <textarea id="board-string" rows="5" spellcheck="false"></textarea>
+                        <div class="board-export-actions"><button id="export-davidnhill">导出 davidNhill</button><button id="import-board-string" disabled title="在分析模式下导入盘面">导入盘面</button></div>
+                        <div id="board-export-status" class="muted" aria-live="polite"></div>
+                    </div>
+                </section>
+            </div>
+        </fieldset>
+    </dialog>
+    <div id="analysis-blocker" class="analysis-blocker" hidden role="dialog" aria-modal="true" aria-labelledby="analysis-blocker-title">
+        <div class="analysis-blocker-content">
+            <div class="analysis-spinner" aria-hidden="true"></div>
+            <h2 id="analysis-blocker-title">正在分析</h2>
+        </div>
+    </div>
+    <script src="wasm.js" defer></script>
+    <script src="state.js" defer></script>
+    <script src="game.js" defer></script>
+    <script src="view.js" defer></script>
+    <script src="analysis.js" defer></script>
+    <script src="monte_carlo.js" defer></script>
+    <script src="anytime_search.js" defer></script>
+    <script src="main.js" defer></script>
+</body>
+</html>
