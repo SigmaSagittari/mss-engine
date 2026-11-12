@@ -3,11 +3,11 @@
 namespace mss {
 
 SuggestResult LowRisk::analyze(const ObservedBoard::Result &board, const Basic::Result &basic, const Structure::Result &structure,
-                               const Probability::BoxResult &boxes, const Probability::Pool &pool, const vector<ObservedBoard::CellId> *cells) {
+                               const Probability::BoxResult &boxes, const Probability::Pool &pool, const vector<ObservedBoard::CellId> &cells) {
     SuggestResult result(SuggestResult::Engine::LowRisk, SuggestResult::Reason::ScoreWins);
-    if (cells) {
-        for (int i = 0; i < (int)cells->size; ++i) {
-            const ObservedBoard::CellId cell = cells->data[i];
+    if (cells.size != 0) {
+        for (int i = 0; i < (int)cells.size; ++i) {
+            const ObservedBoard::CellId cell = cells[i];
             const long double risk = Probability().mineProbability(boxes, pool, cell, board, basic, structure);
             if (risk != 1.0L)
                 result.candidates.push_back(SuggestResult::Candidate(cell, 1.0L - risk));

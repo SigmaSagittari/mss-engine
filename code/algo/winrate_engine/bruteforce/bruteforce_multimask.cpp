@@ -5,7 +5,9 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#ifndef __EMSCRIPTEN__
 #include <thread>
+#endif
 
 #include "core/datastructure/grid.h"
 
@@ -103,7 +105,9 @@ struct BruteForceMultimask::ParallelCache {
 // 同 death 的候选达到此数量才值得做 Java-lite 重排；沿用 1.5。
 constexpr int javaLiteConfigThreshold = 10000;
 // 方案数低于此值不启动根并行，避免线程开销；沿用 1.5。
+#ifndef __EMSCRIPTEN__
 constexpr int parallelConfigThreshold = 4096;
+#endif
 // 子问题方案数达到此值才用共享缓存，避免小子问题付锁开销；沿用 1.5。
 constexpr int sharedConfigThreshold = 32;
 
@@ -631,10 +635,12 @@ template <typename Mask> template <bool CheckAllMoves, bool IsRoot> int MaskSolv
 
 template <typename Mask> void BruteForceMultimask::solveWidth(const BruteForceType::Session &common, const BruteForceType::Config &config, BruteForceType::Result &result, bool allowParallel) {
     Workspace &workspace = getWorkspace();
+#ifndef __EMSCRIPTEN__
     if (allowParallel && config.parallel && config.threadCount > 1 && common.possibilityCount >= parallelConfigThreshold) {
         solveWidthParallel<Mask>(common, config, result);
         return;
     }
+#endif
     vector<Mask> &mineMaskByConfig = maskStorage<Mask>();
     Grid<std::uint64_t> &mineByteWordsByConfig = workspace.mineByteWords;
     Grid<std::uint8_t> &revealByConfig = workspace.reveals;
@@ -664,6 +670,7 @@ template <typename Mask> void BruteForceMultimask::solveWidth(const BruteForceTy
     result.nodes = session.nodes;
 }
 
+#ifndef __EMSCRIPTEN__
 template <typename Mask> void BruteForceMultimask::solveWidthParallel(const BruteForceType::Session &common, const BruteForceType::Config &config, BruteForceType::Result &result) {
     Workspace &workspace = getWorkspace();
     vector<Mask> &mineMaskByConfig = maskStorage<Mask>();
@@ -808,6 +815,8 @@ template <typename Mask> void BruteForceMultimask::solveWidthParallel(const Brut
             result.moves.data[0] = BruteForceType::Result::Move(-1, 0);
     }
 }
+
+#endif
 
 void BruteForceMultimask::ParallelCache::reset() {
     for (int i = 0; i < 256; ++i)

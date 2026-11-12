@@ -142,7 +142,7 @@ SuggestResult Game::suggest(const MovePolicy::Config &config, Suggest::Pool &poo
             return result;
         }
     }
-    SuggestResult result = MovePolicy().suggest(position_, positions_, config, pool, &remainingSafe_);
+    SuggestResult result = MovePolicy().suggest(position_, positions_, config, pool, remainingSafe_);
     if (cacheable && result.reason != SuggestResult::Reason::Safe && result.reason != SuggestResult::Reason::Finished)
         pool.cache.emplace(key, {result.suggest[0], result.engine, result.reason});
     return result;

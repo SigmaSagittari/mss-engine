@@ -52,17 +52,23 @@ struct MovePolicy {
     };
 
     // 局面须有解。有必安时直接返回，否则按需向 Position 取概率。
-    // knownRemainingSafe 可借用该盘面已知的未揭安全格数。为空时按盘面计算。
-    // 指定格互异且尚未揭开。需要猜测时，由 Anytime 的 width[0] 决定保留全部指定格还是按分数取前几格。
-    // search 为空时，返回前清除本次 Anytime 的搜索树和写入 positions 的 Delta 数据。
-    // search 非空时保留续搜所需的数据。放弃时，在改动原盘前调用 suggestions.anytime.clear(positions)。
+    // 对局已维护未揭安全格数。返回前释放本次搜索的临时结果。
     SuggestResult suggest(Position::Result &position, Position::Pool &positions, const Config &config,
-                          Suggest::Pool &suggestions, const int *knownRemainingSafe = nullptr,
-                          span<const ObservedBoard::CellId> requested = {}, AnytimeSearch::Result *search = nullptr);
+                          Suggest::Pool &suggestions, int remainingSafe);
+
+    // 指定格互异且尚未揭开。需要猜测时，由 Anytime 的 width[0] 决定保留全部指定格还是按分数取前几格。
+    // 同时输出评分明细并保留 Anytime 的续搜结果。放弃时，在改动原盘前调用 suggestions.anytime.clear(positions)。
+    SuggestResult suggest(Position::Result &position, Position::Pool &positions, const Config &config,
+                          Suggest::Pool &suggestions, const vector<ObservedBoard::CellId> &requested,
+                          AnytimeSearch::Result &search, SuggestResult::Details &details);
 
   private:
     struct Workspace;
     Workspace &getWorkspace();
+    template <bool Details>
+    SuggestResult suggest(Position::Result &position, Position::Pool &positions, const Config &config,
+                          Suggest::Pool &suggestions, int remainingSafe, const vector<ObservedBoard::CellId> &requested,
+                          AnytimeSearch::Result &search, SuggestResult::Details &details);
 };
 
 } // 命名空间 mss

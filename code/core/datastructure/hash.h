@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <type_traits>
 
 #include "core/algorithm/rng.h"
 
@@ -36,7 +37,8 @@ class U128Hasher {
     U128Hasher(std::uint64_t seed) : lo_(seed + kLoSeed), hi_(seed + kHiSeed) {}
 
     void mix(std::uint64_t value) { lo_ = splitmix64(lo_ + value); hi_ = splitmix64(hi_ + value + kMixOffset); }
-    void mix(int value) { mix((std::uint64_t)value); }
+    template <typename Integer> requires std::is_integral_v<Integer>
+    void mix(Integer value) { mix((std::uint64_t)value); }
     void mix(long double value) { mix((std::uint64_t) std::hash<long double>{}(value)); }
     void mix(double value) { mix((long double) value); }
     template <typename First, typename Second, typename... Rest> void mix(First first, Second second, Rest... rest) {

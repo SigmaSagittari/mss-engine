@@ -119,7 +119,7 @@ int Selection::removeExchange(Candidate &candidate, span<Cell> following, Range 
 }
 
 void Selection::collect(vector<Cell> &cells, Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
-                        const Probability::Pool &probabilities, const Config &config, span<const ObservedBoard::CellId> requested,
+                        const Probability::Pool &probabilities, const Config &config, const vector<ObservedBoard::CellId> &requested,
                         const Grid<long double> *influences, bool oldJava) {
     cells.resize(0);
 
@@ -146,7 +146,8 @@ void Selection::collect(vector<Cell> &cells, Position::Result &position, Positio
         return compensation > 0.0L && scale - mine * scale + compensation > cutoff;
     };
     if (specified) {
-        for (ObservedBoard::CellId cell : requested) {
+        for (int i = 0; i < (int)requested.size; ++i) {
+            const ObservedBoard::CellId cell = requested[i];
             const long double mine = Probability().mineProbability(probability.boxes, probabilities, cell, board, basic, structure);
             cells.push_back({cell, mine, true, Range::First, false});
         }
@@ -232,7 +233,7 @@ void Selection::collect(vector<Cell> &cells, Position::Result &position, Positio
 
 void Selection::select(Result &result, Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
                        Probability::Pool &probabilities, const Config &config,
-                       span<const ObservedBoard::CellId> requested, const Grid<long double> *influences, bool oldJava) {
+                       const vector<ObservedBoard::CellId> &requested, const Grid<long double> *influences, bool oldJava) {
     Workspace &workspace = getWorkspace();
     vector<Cell> &cells = workspace.cells;
     collect(cells, position, positions, probability, probabilities, config, requested, influences, oldJava);

@@ -84,14 +84,14 @@ struct Selection {
     // result.nodes 记录计算数字概率和重算条件概率的次数。
     void select(Result &result, Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
                 Probability::Pool &probabilities, const Config &config,
-                span<const ObservedBoard::CellId> requested = {}, const Grid<long double> *influences = nullptr, bool oldJava = false);
+                const vector<ObservedBoard::CellId> &requested, const Grid<long double> *influences, bool oldJava);
 
   private:
     struct Workspace;
     Workspace &getWorkspace();
     // 用当前盘面的雷率筛选并排序，覆盖 cells。每格保留常规范围、第二范围或兜底的归属，供调用方逐格筛选。
     void collect(vector<Cell> &cells, Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
-                 const Probability::Pool &probabilities, const Config &config, span<const ObservedBoard::CellId> requested,
+                 const Probability::Pool &probabilities, const Config &config, const vector<ObservedBoard::CellId> &requested,
                  const Grid<long double> *influences, bool oldJava);
     bool offEdgeCandidate(const ObservedBoard::Result &board, ObservedBoard::CellId cell);
     bool isDead(const Observe::Result &observation);

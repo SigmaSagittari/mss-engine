@@ -319,7 +319,6 @@ void AnytimeSearch::select(Position::Result &position, Position::Pool &positions
     if (position.basic.unknownSum != 0 && probability.boxes.tCellProbability == 0.0L)
         considerSafe(position.basic.firstT());
     const int limit = safe >= 0 ? 1 : config.width[depth == 1 ? 1 : 2];
-    const span<const CellId> requested = safe >= 0 ? span<const CellId>(&safe, 1) : span<const CellId>();
 
     Workspace &workspace = getWorkspace();
     vector<Selection::Cell> &cells = workspace.cells;
@@ -328,7 +327,11 @@ void AnytimeSearch::select(Position::Result &position, Position::Pool &positions
     accepted.resize(0);
     frontier.knownSafe = -1;
     Selection selection;
-    selection.collect(cells, position, positions, probability, probabilities, config.selection, requested, nullptr, false);
+    if (safe < 0) selection.collect(cells, position, positions, probability, probabilities, config.selection, {}, nullptr, false);
+    else {
+        cells.resize(1);
+        cells[0] = {safe, 0.0L, true, Range::First, false};
+    }
     const bool exchange = safe < 0 && (config.selection.equivalence || config.selection.dominance);
     auto score = [&](Selection::Candidate &candidate, int index, Range range) {
         const long double floor = (int)evaluations.size == limit ? evaluations[limit - 1].score() : -1.0L;

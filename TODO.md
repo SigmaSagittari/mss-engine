@@ -47,3 +47,8 @@
 - [ ] JavaEval 的根候选配置省去当前固定关闭的互换、等价和支配剪枝开关。LTR 开关由计算根局面 LTR 的 `MovePolicy::Config` 提供，`Selection` 按传入的 LTR 网格筛选。建议缓存按实际生效的设置计算键。
 - [ ] 模板 50-50 的事件上限只在启用 LTR 时提供。暴力用 `threadCount = 1` 表达串行。
 - [ ] 缩小逐格 LTR 和 Monte Carlo 的配置参数。`FiftyFifty::influence` 接收后端枚举，走模板算法时使用已经选好的模板表。Monte Carlo 的 `estimate` 和 `select` 只接先验权重。
+
+## 网页版 Bug
+
+- [ ] 指定的分析格（G 格）仍会被丢弃，没有进入分析。
+- [ ] 排查选择 `autoSA` 后概率求解器是否正确启用了 `autoSA`。
