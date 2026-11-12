@@ -3,8 +3,7 @@
 namespace mss {
 
 void Position::Config::hash(U128Hasher &hasher) const {
-    hasher.mix(shapeSolver.graphThreshold, (int) shapeSolver.order, shapeSolver.window3Threshold,
-               shapeSolver.sa.rounds, shapeSolver.sa.iterations, shapeSolver.sa.startTemperature, shapeSolver.sa.endTemperature);
+    shapeSolver.hash(hasher);
 }
 
 struct Position::Workspace {

@@ -8,6 +8,13 @@
 
 namespace mss {
 
+void ShapeSolverConfig::hash(U128Hasher &hasher) const {
+    hasher.mix(graphThreshold, (int) order);
+    if (order == Order::Auto || order == Order::AutoSA) hasher.mix(window3Threshold);
+    if (order == Order::SA || order == Order::AutoSA)
+        hasher.mix(sa->rounds, sa->iterations, sa->startTemperature, sa->endTemperature);
+}
+
 struct ShapeSolver::Workspace {
     vector<DistributionId> factors;
 };

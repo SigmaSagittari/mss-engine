@@ -32,9 +32,7 @@ struct Selection {
     };
 
   public:
-    struct Config {
-        // 允许粗 LTR 让原本筛掉的格进入候选。给首招打分时也计入 LTR 补偿。
-        bool longTermRisk;
+    struct Exchange {
         // 比较相邻的两个候选。看这两个候选之外、只挨着其中一个的格子。
         // 如果这些格子都确定是雷，就只留先处理的候选。
         bool interchangeable;
@@ -42,15 +40,25 @@ struct Selection {
         bool equivalence;
         // A 的雷率比 B 低。如果 A 有雷的每种摆法里 B 也有雷，就剪掉 B。
         bool dominance;
+
+        void hash(U128Hasher &hasher) const { hasher.mix(interchangeable, equivalence, dominance); }
+    };
+
+    struct Filter {
         // 用 LogicComponent 分块。如果有候选来自至少有 spaceThreshold 个可点格的块，
         // 就跳过较小块里的猜测格。候选都来自较小块时照常选。设为 1 或更小可关闭。
         int spaceThreshold;
         long double selectionThreshold; // 与最低雷率的允许差值，非负。
         long double selectionThreshold2; // 第二档允许比全盘最低雷率高多少，非负。
 
-        void hash(U128Hasher &hasher) const {
-            hasher.mix(longTermRisk, interchangeable, equivalence, dominance, spaceThreshold, selectionThreshold, selectionThreshold2);
-        }
+        void hash(U128Hasher &hasher) const { hasher.mix(spaceThreshold, selectionThreshold, selectionThreshold2); }
+    };
+
+    struct Config {
+        Filter filter;
+        Exchange exchange;
+
+        void hash(U128Hasher &hasher) const { filter.hash(hasher); exchange.hash(hasher); }
     };
 
     struct Candidate {
@@ -79,7 +87,7 @@ struct Selection {
     // requested 为空时先筛常规候选，不足两格才筛第二档。
     // 第二档筛完仍不足两格时，再从更外面按雷率补一个可用的前沿格。
     // T 格安全率须高于全盘最高安全率的 95%，有必安时跳过这批 T 格。
-    // longTermRisk 开启时，借用与盘面同尺寸的 influences。旧 Java 传布局数，模板传补偿概率。
+    // influences 可借用与盘面同尺寸的粗 LTR。旧 Java 传布局数，模板传补偿概率。
     // requested 非空时只在这组互异的 Hidden 或 ForcedSafe 格内按三个开关筛选，启用支配剪枝时先按雷率排序。
     // result.nodes 记录计算数字概率和重算条件概率的次数。
     void select(Result &result, Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
@@ -101,7 +109,7 @@ struct Selection {
     // 返回重算概率的次数，并保存 candidate 为安时带出的必安格数。调用结束时恢复盘面。
     int removeExchange(Candidate &candidate, span<Cell> following, Range lastRange, Frontier &frontier,
                        Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
-                       Probability::Pool &probabilities, const Config &config);
+                       Probability::Pool &probabilities, const Exchange &config);
 };
 
 } // 命名空间 mss

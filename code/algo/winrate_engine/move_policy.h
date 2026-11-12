@@ -23,6 +23,9 @@ struct Pool {
     FiftyFifty::Pool fiftyFifty;
     AnytimeSearch::Pool anytime;
     FlatHashTable<U128, Entry, U128Hash> cache;
+
+    // 清除搜索、模板和建议缓存。若有未完成的搜索，positions 须是该搜索使用的局面池。保留组合数表。
+    void clear(Position::Pool &positions);
 };
 
 } // 命名空间 Suggest
@@ -32,21 +35,23 @@ struct MovePolicy {
 
     struct Config {
         Algorithm algorithm;
-        const Selection::Config *selection; // JavaEval 和 Anytime 借用的根层候选配置，LowRisk 传 nullptr。
-        const FiftyFifty::Config *fiftyFifty; // JavaEval 和 Anytime 使用，LowRisk 可为空。
-        // 借用所选算法的配置，未选算法的指针可为空。
-        const JavaEval::Config *javaEval;
-        const AnytimeSearch::Config *anytime;
+
+        struct Guess {
+            const Selection::Filter &selection;
+            const Selection::Exchange *exchange; // Anytime 自动选首招时借用。JavaEval 传 nullptr。
+            bool longTermRisk; // 是否计算粗 LTR 和首招的正式 LTR 补偿。
+            FiftyFifty::Config fiftyFifty;
+            // 借用所选算法的配置，未选算法的指针可为空。
+            const JavaEval::Config *javaEval;
+            const AnytimeSearch::Config *anytime;
+        };
+        const Guess *guess; // 借用本次选招的配置。LowRisk 传 nullptr。
 
         struct Brute {
-            int limit; // 布局数小于此值时用暴力求解，0 表示关闭。
-            const BruteForce::Config *config; // 借用配置，limit 为 0 时可为空。
-
-            void hash(U128Hasher &hasher) const {
-                hasher.mix(limit);
-                if (limit != 0) config->hash(hasher);
-            }
-        } brute;
+            int limit; // 布局数小于此值时用暴力求解。
+            BruteForce::Config config;
+        };
+        const Brute *brute; // 借用暴力接管配置。关闭时传 nullptr。
 
         void hash(U128Hasher &hasher) const;
     };

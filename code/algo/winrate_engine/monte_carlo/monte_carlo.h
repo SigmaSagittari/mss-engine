@@ -13,10 +13,11 @@ struct MonteCarlo {
         long long chanceSamples; // -1 表示尚未计算超过当前最佳均值的概率。
         long double chanceTarget, chanceLog;
 
-        Candidate(ObservedBoard::CellId cell);
+        Candidate(ObservedBoard::CellId cell, long double priorWeight);
     };
 
     struct Result {
+        long double priorWeight; // 对胜、负各加的先验样本数，须为正。一次采样任务内固定。
         bool winrate; // 有必安或已结束时，统计整局胜率。
         SuggestResult exact; // 暴力接管时直接返回的结果。
         long long samples, wins;
@@ -24,9 +25,9 @@ struct MonteCarlo {
         vector<ObservedBoard::CellId> safeCells; // 整局采样先揭开这些必安格。
         Random random;
 
-        Result();
+        explicit Result(long double priorWeight);
         // 接收必安、终局或暴力接管的结果。
-        explicit Result(SuggestResult &root);
+        Result(SuggestResult &root, long double priorWeight);
         // 有候选时返回下标，优先比较已采样候选的胜率均值。
         int best() const;
         ObservedBoard::CellId recommended() const;
@@ -42,7 +43,7 @@ struct MonteCarlo {
     };
 
     // 需要猜测时，按 Selection 的顺序接收全部候选，每个候选先模拟一局。
-    Result analyze(const Selection::Result &selected);
+    Result analyze(const Selection::Result &selected, long double priorWeight);
     // position 是生成首招结果时的根盘面，Structure 已同步；pool 绑定该盘面的 Structure 实例池。
     // policy 只用于模拟对局中的后续走法。每次模拟一局，暴力接管时已有精确结果。
     void update(Result &result, const Position::Result &position, const MovePolicy::Config &policy, Pool &pool);
@@ -50,9 +51,9 @@ struct MonteCarlo {
   private:
     struct Workspace;
     Workspace &getWorkspace();
-    void estimate(Candidate &candidate);
+    void estimate(Candidate &candidate, long double priorWeight);
     long double logChance(long double won, long double lost, long double target);
-    int select(Result &result);
+    int select(Result &result, long double priorWeight);
 };
 
 } // 命名空间 mss

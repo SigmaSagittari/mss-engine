@@ -9,12 +9,7 @@ inline void lowRiskPerformance() {
         .graphThreshold = 24,
         .order = mss::ShapeSolverConfig::Order::Auto,
         .window3Threshold = 24,
-        .sa = {
-            .rounds = 4,
-            .iterations = 1000,
-            .startTemperature = 4.0,
-            .endTemperature = 0.01
-        }
+        .sa = nullptr
     };
     const Config benchmarkConfig{
         .cols = 30,
@@ -25,14 +20,10 @@ inline void lowRiskPerformance() {
         .seed = {0x123456789abcdef0ULL, 0xfedcba9876543210ULL},
         .position = {shapeConfig}
     };
-    const mss::MovePolicy::Config::Brute bruteConfig{.limit = 0, .config = nullptr};
     const mss::MovePolicy::Config lowRiskConfig{
         .algorithm = mss::MovePolicy::Algorithm::LowRisk,
-        .selection = nullptr,
-        .fiftyFifty = nullptr,
-        .javaEval = nullptr,
-        .anytime = nullptr,
-        .brute = bruteConfig
+        .guess = nullptr,
+        .brute = nullptr
     };
     benchmark::Performance().run(benchmarkConfig, lowRiskConfig, [](const mss::Game &) {});
 }

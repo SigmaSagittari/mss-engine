@@ -40,13 +40,13 @@
 
 ## Pool 和 Config
 
-- [ ] `FiftyFifty::Pool` 只存一份 Prefix 100 模板表。正式 LTR 选 Prefix 100 时，与粗 LTR 共用这张表。粗 LTR 的事件上限为 1，正式 LTR 的事件上限由配置给出。另一张表缓存最近一次编译的非 100 前缀。
-- [ ] 给 `MovePolicy::Pool` 和 `Position::Pool` 各自提供 `clear()`。`Game::reset` 先清概率和分布，再清局面，保证形状编号失效前先清掉引用这些编号的缓存。组合数表跨局复用。
-- [ ] 把 JavaEval 和 Anytime 用到的候选筛选和 50-50 配置放进 `MovePolicy::Config` 的可选成员，LowRisk 只用一个空指针。暴力接管也整组可选，启用时提供布局数阈值和求解配置。
-- [ ] `ShapeSolver::Config` 仅在 `SA` 和 `AutoSA` 时接收退火参数。配置自身按选中的排序方式计算哈希，建议缓存只用该方式会读取的参数。
-- [ ] JavaEval 的根候选配置省去当前固定关闭的互换、等价和支配剪枝开关。LTR 开关由计算根局面 LTR 的 `MovePolicy::Config` 提供，`Selection` 按传入的 LTR 网格筛选。建议缓存按实际生效的设置计算键。
-- [ ] 模板 50-50 的事件上限只在启用 LTR 时提供。暴力用 `threadCount = 1` 表达串行。
-- [ ] 缩小逐格 LTR 和 Monte Carlo 的配置参数。`FiftyFifty::influence` 接收后端枚举，走模板算法时使用已经选好的模板表。Monte Carlo 的 `estimate` 和 `select` 只接先验权重。
+- [x] `FiftyFifty::Pool` 只存一份 Prefix 100 模板表。正式 LTR 选 Prefix 100 时，与粗 LTR 共用这张表。粗 LTR 的事件上限为 1，正式 LTR 的事件上限由配置给出。另一张表缓存最近一次编译的非 100 前缀。
+- [x] 给 `Suggest::Pool` 和 `Position::Pool` 各自提供 `clear`。`Game::reset` 先清概率和分布，再清局面，保证形状编号失效前先清掉引用这些编号的缓存。组合数表跨局复用。
+- [x] 把 JavaEval 和 Anytime 用到的候选筛选和 50-50 配置放进 `MovePolicy::Config` 的可选成员，LowRisk 只用一个空指针。暴力接管也整组可选，启用时提供布局数阈值和求解配置。
+- [x] `ShapeSolver::Config` 仅在 `SA` 和 `AutoSA` 时接收退火参数。配置自身按选中的排序方式计算哈希，建议缓存只用该方式会读取的参数。
+- [x] JavaEval 的根候选配置省去当前固定关闭的互换、等价和支配剪枝开关。LTR 开关由计算根局面 LTR 的 `MovePolicy::Config` 提供，`Selection` 按传入的 LTR 网格筛选。建议缓存按实际生效的设置计算键。
+- [x] 模板 50-50 的事件上限只在启用 LTR 时提供。暴力用 `threadCount = 1` 表达串行。
+- [x] 缩小逐格 LTR 和 Monte Carlo 的配置参数。`FiftyFifty::influence` 接收后端枚举，走模板算法时使用已经选好的模板表。Monte Carlo 的 `estimate` 和 `select` 只接先验权重。
 
 ## 网页版 Bug
 

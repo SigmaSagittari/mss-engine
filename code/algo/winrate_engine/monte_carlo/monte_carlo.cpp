@@ -18,15 +18,15 @@ __declspec(noinline) MonteCarlo::Workspace &MonteCarlo::getWorkspace() {
     return workspace;
 }
 
-MonteCarlo::Candidate::Candidate(ObservedBoard::CellId cell)
+MonteCarlo::Candidate::Candidate(ObservedBoard::CellId cell, long double priorWeight)
     : cell(cell), samples(0), wins(0), chanceSamples(-1), chanceTarget(0.0L), chanceLog(0.0L) {
-    MonteCarlo().estimate(*this);
+    MonteCarlo().estimate(*this, priorWeight);
 }
 
-MonteCarlo::Result::Result()
-    : winrate(false), samples(0), wins(0), random(0xC0FFEE12345ULL, 0xD1B54A32D192ED03ULL) {}
+MonteCarlo::Result::Result(long double priorWeight)
+    : priorWeight(priorWeight), winrate(false), samples(0), wins(0), random(0xC0FFEE12345ULL, 0xD1B54A32D192ED03ULL) {}
 
-MonteCarlo::Result::Result(SuggestResult &root) : Result() {
+MonteCarlo::Result::Result(SuggestResult &root, long double priorWeight) : Result(priorWeight) {
     winrate = root.engine == SuggestResult::Engine::Safe || root.reason == SuggestResult::Reason::Finished;
     if (root.engine == SuggestResult::Engine::BruteForce) exact.swap(root);
     else if (winrate) safeCells.swap(root.suggest);
@@ -44,9 +44,9 @@ ObservedBoard::CellId MonteCarlo::Result::recommended() const {
     return winrate || candidates.size == 0 ? -1 : candidates[best()].cell;
 }
 
-void MonteCarlo::estimate(Candidate &candidate) {
-    const long double count = candidate.samples + 2.0L;
-    candidate.mean = (candidate.wins + 1.0L) / count;
+void MonteCarlo::estimate(Candidate &candidate, long double priorWeight) {
+    const long double count = candidate.samples + 2.0L * priorWeight;
+    candidate.mean = (candidate.wins + priorWeight) / count;
     candidate.variance = candidate.mean * (1.0L - candidate.mean) / (count + 1.0L);
 }
 
@@ -73,7 +73,7 @@ long double MonteCarlo::logChance(long double won, long double lost, long double
     }
 }
 
-int MonteCarlo::select(Result &result) {
+int MonteCarlo::select(Result &result, long double priorWeight) {
     // 每个候选先采一次，再按采样结果分配后续对局。
     if (result.samples < (long long)result.candidates.size) return (int)result.samples;
     const int reference = result.best();
@@ -82,18 +82,19 @@ int MonteCarlo::select(Result &result) {
     int selected = reference;
     const long double zero = -std::numeric_limits<long double>::infinity();
     long double maximum = zero, pressure = zero;
-    const long double leaderReduction = std::log(leader.variance / (leader.samples + 3.0L));
+    const long double nextPriorCount = 2.0L * priorWeight + 1.0L;
+    const long double leaderReduction = std::log(leader.variance / (leader.samples + nextPriorCount));
     for (int i = 0; i < (int)result.candidates.size; ++i) {
         if (i == reference) continue;
         Candidate &candidate = result.candidates[i];
         if (candidate.chanceSamples != candidate.samples || candidate.chanceTarget != leader.mean) {
-            const long double won = candidate.wins + 1.0L;
-            const long double lost = candidate.samples - candidate.wins + 1.0L;
+            const long double won = candidate.wins + priorWeight;
+            const long double lost = candidate.samples - candidate.wins + priorWeight;
             candidate.chanceLog = logChance(won, lost, leader.mean);
             candidate.chanceSamples = candidate.samples;
             candidate.chanceTarget = leader.mean;
         }
-        const long double reduction = std::log(candidate.variance / (candidate.samples + 3.0L));
+        const long double reduction = std::log(candidate.variance / (candidate.samples + nextPriorCount));
         const long double sumMaximum = (std::max)(leaderReduction, reduction);
         const long double totalReduction = sumMaximum + std::log1p(std::exp((std::min)(leaderReduction, reduction) - sumMaximum));
         const long double leaderPressure = candidate.chanceLog + leaderReduction - totalReduction;
@@ -107,18 +108,18 @@ int MonteCarlo::select(Result &result) {
     return selected;
 }
 
-MonteCarlo::Result MonteCarlo::analyze(const Selection::Result &selected) {
+MonteCarlo::Result MonteCarlo::analyze(const Selection::Result &selected, long double priorWeight) {
     assert_(selected.candidates.size != 0, "MonteCarlo: 非终局没有首招候选");
-    Result result;
+    Result result(priorWeight);
     result.candidates.resize(selected.candidates.size);
     for (int i = 0; i < (int)selected.candidates.size; ++i)
-        result.candidates[i] = Candidate(selected.candidates[i].cell);
+        result.candidates[i] = Candidate(selected.candidates[i].cell, priorWeight);
     return result;
 }
 
 void MonteCarlo::update(Result &result, const Position::Result &position, const MovePolicy::Config &policy, Pool &pool) {
     if (result.exact.engine == SuggestResult::Engine::BruteForce) return;
-    Candidate *candidate = result.winrate ? nullptr : &result.candidates[select(result)];
+    Candidate *candidate = result.winrate ? nullptr : &result.candidates[select(result, result.priorWeight)];
     const long long sequence = candidate ? candidate->samples : result.samples;
     // 不同首招的同序号样本使用同一张抽样雷盘。
     const U128 seed{splitmix64(0x123456789ABCDEFULL + sequence), splitmix64(0xF123456789ABCDE0ULL + sequence)};
@@ -138,7 +139,7 @@ void MonteCarlo::update(Result &result, const Position::Result &position, const 
     if (candidate) {
         ++candidate->samples;
         candidate->wins += won;
-        estimate(*candidate);
+        estimate(*candidate, result.priorWeight);
     }
 }
 

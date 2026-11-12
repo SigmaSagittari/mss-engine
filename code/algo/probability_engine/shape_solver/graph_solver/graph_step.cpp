@@ -208,8 +208,9 @@ void ShapeSolverGraphStep::makeSAOrder(const vector<int> &offsets, const vector<
     current = seed;
     candidate = seed;
     std::pair<int, int> bestScore = orderScore(offsets, adjacentBoxes, best);
-    const double cooling = std::pow(config.sa.endTemperature / config.sa.startTemperature, 1.0 / (config.sa.iterations - 1));
-    for (int round = 0; round < config.sa.rounds; ++round) {
+    const ShapeSolverConfig::SA &sa = *config.sa;
+    const double cooling = std::pow(sa.endTemperature / sa.startTemperature, 1.0 / (sa.iterations - 1));
+    for (int round = 0; round < sa.rounds; ++round) {
         std::uint64_t state = 0x9e3779b97f4a7c15ULL + (std::uint64_t)round * 0x6a09e667f3bcc909ULL;
         current = seed;
         for (int perturb = 0; perturb < round; ++perturb) {
@@ -219,8 +220,8 @@ void ShapeSolverGraphStep::makeSAOrder(const vector<int> &offsets, const vector<
         }
         std::pair<int, int> currentScore = orderScore(offsets, adjacentBoxes, current);
         int currentEnergy = energy(currentScore);
-        double temperature = config.sa.startTemperature;
-        for (int iteration = 0; iteration < config.sa.iterations; ++iteration) {
+        double temperature = sa.startTemperature;
+        for (int iteration = 0; iteration < sa.iterations; ++iteration) {
             candidate = current;
             const int left = (int)(nextRandom(state) % (std::uint64_t)boxCount);
             const int right = (int)(nextRandom(state) % (std::uint64_t)boxCount);

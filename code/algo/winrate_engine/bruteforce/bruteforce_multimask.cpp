@@ -636,7 +636,7 @@ template <typename Mask> template <bool CheckAllMoves, bool IsRoot> int MaskSolv
 template <typename Mask> void BruteForceMultimask::solveWidth(const BruteForceType::Session &common, const BruteForceType::Config &config, BruteForceType::Result &result, bool allowParallel) {
     Workspace &workspace = getWorkspace();
 #ifndef __EMSCRIPTEN__
-    if (allowParallel && config.parallel && config.threadCount > 1 && common.possibilityCount >= parallelConfigThreshold) {
+    if (allowParallel && config.threadCount > 1 && common.possibilityCount >= parallelConfigThreshold) {
         solveWidthParallel<Mask>(common, config, result);
         return;
     }

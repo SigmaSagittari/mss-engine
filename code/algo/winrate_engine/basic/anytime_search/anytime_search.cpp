@@ -332,7 +332,7 @@ void AnytimeSearch::select(Position::Result &position, Position::Pool &positions
         cells.resize(1);
         cells[0] = {safe, 0.0L, true, Range::First, false};
     }
-    const bool exchange = safe < 0 && (config.selection.equivalence || config.selection.dominance);
+    const bool exchange = safe < 0 && (config.selection.exchange.equivalence || config.selection.exchange.dominance);
     auto score = [&](Selection::Candidate &candidate, int index, Range range) {
         const long double floor = (int)evaluations.size == limit ? evaluations[limit - 1].score() : -1.0L;
         if (floor >= 0.0L) {
@@ -343,7 +343,7 @@ void AnytimeSearch::select(Position::Result &position, Position::Pool &positions
         if (exchange && range != Range::Fallback) {
             const Range lastRange = accepted.size >= 2 ? range : Range::Fallback;
             budget -= selection.removeExchange(candidate, {cells.data + index + 1, (int)cells.size - index - 1}, lastRange,
-                                               frontier, position, positions, probability, probabilities, config.selection);
+                                               frontier, position, positions, probability, probabilities, config.selection.exchange);
         }
         const Evaluation evaluated = evaluate(position, positions, probability, probabilities, config, candidate, remaining, floor, outcomes);
         budget -= evaluated.nodes;
@@ -365,7 +365,7 @@ void AnytimeSearch::select(Position::Result &position, Position::Pool &positions
         range = cell.range;
         if (cell.removed && accepted.size >= 2) {
             // 已经数够两格。后面若有活格与本格位置互换，本格也是活格，可以直接比较。
-            if (config.selection.interchangeable) accepted.push_back(cell.cell);
+            if (config.selection.exchange.interchangeable) accepted.push_back(cell.cell);
             continue;
         }
         Selection::Candidate candidate{cell.cell, {}};
@@ -375,7 +375,7 @@ void AnytimeSearch::select(Position::Result &position, Position::Pool &positions
             if (accepted.size == 0 && dead.cell < 0) dead = candidate;
             continue;
         }
-        if (config.selection.interchangeable && std::any_of(accepted.data, accepted.data + accepted.size, [&](CellId other) {
+        if (config.selection.exchange.interchangeable && std::any_of(accepted.data, accepted.data + accepted.size, [&](CellId other) {
             return selection.interchangeable(position, probability, probabilities, cell.cell, other);
         })) continue;
         accepted.push_back(cell.cell);

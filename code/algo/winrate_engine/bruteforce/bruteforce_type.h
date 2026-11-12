@@ -18,13 +18,11 @@ struct BruteForceType {
         // true：返回每个 H/T 候选的第一步结果；false：只返回最佳一步。
         bool checkAllMoves;
         // 仅根节点并行；false 时串行。
-        bool parallel;
         // 并行线程总数（含调用线程），必须为正；串行时忽略。
         int threadCount;
 
         void hash(U128Hasher &hasher) const {
-            hasher.mix(checkAllMoves, parallel);
-            if (parallel) hasher.mix(threadCount);
+            hasher.mix(checkAllMoves, threadCount);
         }
     };
 

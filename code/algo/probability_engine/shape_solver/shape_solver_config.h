@@ -2,6 +2,8 @@
 
 namespace mss {
 
+class U128Hasher;
+
 // ShapeSolver 的调用方参数；GraphSolver 直接用这份配置，不反向依赖 ShapeSolver。
 struct ShapeSolverConfig {
     enum class Order {
@@ -24,7 +26,10 @@ struct ShapeSolverConfig {
         int iterations;
         double startTemperature;
         double endTemperature;
-    } sa;
+    };
+    const SA *sa; // SA 和 AutoSA 借用，其他排序传 nullptr。借用期覆盖使用本配置的盘面。
+
+    void hash(U128Hasher &hasher) const;
 };
 
 } // 命名空间 mss

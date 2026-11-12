@@ -32,7 +32,7 @@ struct Session::Analysis {
 
     Analysis(int id, const Position::Config &config, const ObservedBoard::Result &board)
         : id(id), positions(suggestions.combinations), checked(Position().analyzeChecked(board, positions, config, positions.probabilities)) {}
-    ~Analysis() { suggestions.anytime.clear(positions); }
+    ~Analysis() { suggestions.clear(positions); }
 
     long double mineProbability(ObservedBoard::CellId cell) {
         Position::Result &position = checked.result;
@@ -44,7 +44,7 @@ struct Session::Analysis {
 struct Session::MctsTask {
     std::unique_ptr<Analysis> analysis;
     Config config;
-    FiftyFifty::Config fifty;
+    MovePolicy::Config::Guess guess;
     MovePolicy::Config policy;
     long double layouts;
     bool complete;
@@ -52,19 +52,23 @@ struct Session::MctsTask {
     MonteCarlo::Pool pool;
 
     MctsTask(std::unique_ptr<Analysis> &source, const Config &settings, const vector<ObservedBoard::CellId> &targets, bool complete)
-        : analysis(source.release()), config(settings), fifty{config.fiftyFifty.algorithm, &config.fiftyFifty.oldJava, &config.fiftyFifty.templates},
-          policy(config.policy(fifty)), layouts(Position().analyzeProbability(analysis->checked.result, analysis->positions).totalWays),
+        : analysis(source.release()), config(settings), guess(config.guess()),
+          policy(config.policy(guess)), layouts(Position().analyzeProbability(analysis->checked.result, analysis->positions).totalWays),
           complete(complete), result(initialize(targets)), pool(analysis->positions.structure, analysis->suggestions) {}
 
     MonteCarlo::Result initialize(const vector<ObservedBoard::CellId> &targets) {
+        AnytimeSearch::Config anytime = config.anytime;
+        if (targets.size != 0) anytime.width[0] = 0;
+        MovePolicy::Config::Guess initial = guess;
+        initial.anytime = &anytime;
         AnytimeSearch::Result searched;
         SuggestResult::Details details;
-        SuggestResult initialized = MovePolicy().suggest(analysis->checked.result, analysis->positions, policy, analysis->suggestions, targets, searched, details);
+        SuggestResult initialized = MovePolicy().suggest(analysis->checked.result, analysis->positions, config.policy(initial), analysis->suggestions, targets, searched, details);
         analysis->suggestions.anytime.clear(analysis->positions);
-        MonteCarlo::Result result(initialized);
+        MonteCarlo::Result result(initialized, 1.0L);
         if (!result.winrate && result.exact.engine != SuggestResult::Engine::BruteForce)
             for (int i = 0; i < (int)initialized.candidates.size; ++i)
-                result.candidates.push_back(MonteCarlo::Candidate(initialized.candidates[i].cell));
+                result.candidates.push_back(MonteCarlo::Candidate(initialized.candidates[i].cell, result.priorWeight));
         return result;
     }
 
@@ -90,8 +94,8 @@ struct Session::SearchTask {
     }
 
     SuggestResult initialize(const Config &settings, const vector<ObservedBoard::CellId> &targets) {
-        const FiftyFifty::Config fifty{settings.fiftyFifty.algorithm, &settings.fiftyFifty.oldJava, &settings.fiftyFifty.templates};
-        return MovePolicy().suggest(analysis->checked.result, analysis->positions, settings.policy(fifty), analysis->suggestions, targets, result, details);
+        const MovePolicy::Config::Guess guess = settings.guess();
+        return MovePolicy().suggest(analysis->checked.result, analysis->positions, settings.policy(guess), analysis->suggestions, targets, result, details);
     }
 
     long long step(long long budget) {
@@ -125,11 +129,11 @@ std::string Session::index(std::string content) const {
     for (int i = 0; i < 3; ++i) replace(widths[i], std::to_string(config.anytime.width[i]));
     replace("__MSS_TEMPLATE_PREFIX__", std::to_string(config.fiftyFifty.templates.prefix));
     replace("__MSS_TEMPLATE_COUNT__", std::to_string(FiftyFiftyData().count()));
-    replace("__MSS_LTR_EVENT_LIMIT__", std::to_string(config.fiftyFifty.templates.eventLimit));
+    replace("__MSS_LTR_EVENT_LIMIT__", std::to_string(config.fiftyFifty.eventLimit));
     replace("__MSS_BRUTE_FORCE_THRESHOLD__", std::to_string(config.brute.limit));
     replace("__MSS_THREAD_LIMIT__", std::to_string(config.brute.config.threadCount));
     replace("__MSS_BRUTE_FORCE_CHECK_ALL__", config.brute.config.checkAllMoves ? "checked" : "");
-    replace("__MSS_BRUTE_FORCE_MULTITHREAD__", config.brute.config.parallel ? "checked" : "");
+    replace("__MSS_BRUTE_FORCE_MULTITHREAD__", config.brute.config.threadCount > 1 ? "checked" : "");
     replace("__MSS_POLICY_NODES__", std::to_string(config.anytime.nodeLimit));
     const std::string versionMarker = "__MSS_VERSION__";
     while (content.find(versionMarker) != std::string::npos) replace(versionMarker, mss::version);
@@ -275,11 +279,14 @@ bool Session::parseFiftyFifty(const std::vector<FormField> &fields, Config &conf
         return true;
     }
     if (fifty != "templates") { response = error("50-50 算法无效"); return false; }
-    int prefix, eventLimit;
+    int prefix;
     if (!parseInteger(value(fields, "templatePrefix"), prefix) || prefix < 1 || prefix > FiftyFiftyData().count()) { response = error("模板前缀超出目录"); return false; }
-    if (!parseInteger(value(fields, "ltrEventLimit"), eventLimit) || eventLimit < 1) { response = error("LTR 模板匹配上限必须是正整数"); return false; }
+    if (config.longTermRisk && (!parseInteger(value(fields, "ltrEventLimit"), config.fiftyFifty.eventLimit) || config.fiftyFifty.eventLimit < 1)) {
+        response = error("LTR 模板匹配上限必须是正整数");
+        return false;
+    }
     config.fiftyFifty.algorithm = FiftyFifty::Algorithm::Templates;
-    config.fiftyFifty.templates = {prefix, eventLimit};
+    config.fiftyFifty.templates.prefix = prefix;
     return true;
 }
 
@@ -292,8 +299,11 @@ bool Session::parseConfig(const std::vector<FormField> &fields, Config &config, 
     if (!parseInteger(value(fields, "limit"), config.brute.limit) || config.brute.limit < 0) { response = error("暴力接管阈值必须是非负整数"); return false; }
     if (config.brute.limit != 0) {
 #ifndef __EMSCRIPTEN__
-        if (!parseInteger(value(fields, "maxThreads"), config.brute.config.threadCount) || config.brute.config.threadCount < 1) { response = error("BruteForce 核心数必须是正整数"); return false; }
-        config.brute.config.parallel = value(fields, "multiThread") == "true";
+        if (value(fields, "multiThread") != "true") config.brute.config.threadCount = 1;
+        else if (!parseInteger(value(fields, "maxThreads"), config.brute.config.threadCount) || config.brute.config.threadCount < 1) {
+            response = error("BruteForce 核心数必须是正整数");
+            return false;
+        }
 #endif
         config.brute.config.checkAllMoves = value(fields, "checkAllMoves") == "true";
     }
@@ -350,6 +360,7 @@ bool Session::createAnalysis(const std::vector<FormField> &fields, std::unique_p
         return false;
     Position::Config config = config_.game;
     config.shapeSolver.order = algo;
+    config.shapeSolver.sa = algo == ShapeSolverConfig::Order::AutoSA ? &config_.annealing : nullptr;
     analysis.reset(new Analysis(nextAnalysis_++, config, makeBoard(rows, cols, mines, cells)));
     // 人工快照的局部检查和全盘存在性检查由 Position 构造完成，只在输入边界读取一次。
     if (analysis->checked.error) {
@@ -401,8 +412,8 @@ void Session::writeMoveDetails(std::ostream &result, const SuggestResult::Detail
 }
 
 void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config, const vector<ObservedBoard::CellId> &targets) {
-    const FiftyFifty::Config fifty{config.fiftyFifty.algorithm, &config.fiftyFifty.oldJava, &config.fiftyFifty.templates};
-    const MovePolicy::Config policy = config.policy(fifty);
+    const MovePolicy::Config::Guess guess = config.guess();
+    const MovePolicy::Config policy = config.policy(guess);
     AnytimeSearch::Result searched;
     SuggestResult::Details details;
     const SuggestResult evaluated = MovePolicy().suggest(analysis.checked.result, analysis.positions, policy, analysis.suggestions,
@@ -477,6 +488,7 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
             if (end == std::string::npos) break;
             start = end + 1;
         }
+        if (targets.size != 0) config.anytime.width[0] = 0;
         writeSuggestion(result, *analysis_, config, targets);
     }
     const std::string cellText = value(fields, "cell");
@@ -510,12 +522,12 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
                     const LongTermRisk::Details risk = LongTermRisk().describe(cell, position, positions, probability, positions.probabilities, config.fiftyFifty.oldJava);
                     result << ",\"longTermRisk\":{\"algorithm\":\"oldjava\",\"body\":" << risk.body << ",\"restriction\":" << risk.restriction << '}';
                 } else {
-                    const FiftyFifty::Config fifty{FiftyFifty::Algorithm::Templates, nullptr, &config.fiftyFifty.templates};
+                    const FiftyFifty::Config fifty{FiftyFifty::Algorithm::Templates, nullptr, &config.fiftyFifty.templates, &config.fiftyFifty.eventLimit};
                     FiftyFifty::Result risk;
                     FiftyFifty::Pool &pool = analysis_->suggestions.fiftyFifty;
-                    FiftyFifty().prepareRisk(risk, position, positions, probability, positions.probabilities, fifty, pool);
+                    const FiftyFiftyData::Pool &table = *FiftyFifty().prepareRisk(risk, position, positions, probability, positions.probabilities, fifty, pool);
                     const TemplateLongTermRisk::Details details = TemplateLongTermRisk().influence<TemplateLongTermRisk::DetailRequest::Details>(
-                        cell, risk.templates, position, positions, probability, positions.probabilities, pool.templates);
+                        cell, risk.templates, position, positions, probability, positions.probabilities, table);
                     result << ",\"longTermRisk\":{\"algorithm\":\"templates\",\"bodyUnion\":" << details.body << ",\"restrictionCounts\":[";
                     for (int k = 0; k < (int)details.restrictions.size; ++k) {
                         if (k != 0) result << ',';
@@ -553,6 +565,7 @@ std::string Session::playUntilNoSafe(const std::vector<FormField> &fields) {
         return error("真实雷盘与总雷数不符");
     Position::Config config = config_.game;
     config.shapeSolver.order = algo;
+    config.shapeSolver.sa = algo == ShapeSolverConfig::Order::AutoSA ? &config_.annealing : nullptr;
     Combination::Pool combinations;
     Game game(grid, ObservedBoard::Result(rows, cols, totalMines), config, combinations);
     vector<ObservedBoard::CellId> revealed;
@@ -727,6 +740,7 @@ bool Session::startSearch(const std::string &body, std::string &response) {
     Config config = config_;
     if (!parseConfig(fields, config, response)) return false;
     if (config.algorithm != MovePolicy::Algorithm::Anytime) { response = error("搜索仅支持 Anytime"); return false; }
+    if (targets.size != 0) config.anytime.width[0] = 0;
     config.anytime.nodeLimit = 0;
 #ifdef __EMSCRIPTEN__
     searchBudget_ = 0;

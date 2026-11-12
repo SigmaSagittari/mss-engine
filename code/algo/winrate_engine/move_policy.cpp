@@ -6,14 +6,25 @@
 
 namespace mss {
 
+void Suggest::Pool::clear(Position::Pool &positions) {
+    anytime.clear(positions);
+    fiftyFifty = {};
+    cache.clear();
+}
+
 void MovePolicy::Config::hash(U128Hasher &hasher) const {
     hasher.mix((int) algorithm);
-    brute.hash(hasher);
+    hasher.mix(brute ? brute->limit : 0);
+    if (brute) brute->config.hash(hasher);
     if (algorithm == Algorithm::LowRisk) return;
-    selection->hash(hasher);
-    fiftyFifty->hash(hasher, selection->longTermRisk);
-    if (algorithm == Algorithm::JavaEval) javaEval->hash(hasher);
-    else anytime->hash(hasher);
+    guess->selection.hash(hasher);
+    hasher.mix(guess->longTermRisk);
+    guess->fiftyFifty.hash(hasher, guess->longTermRisk);
+    if (algorithm == Algorithm::JavaEval) guess->javaEval->hash(hasher);
+    else {
+        guess->exchange->hash(hasher);
+        guess->anytime->hash(hasher);
+    }
 }
 
 struct MovePolicy::Workspace {
@@ -89,10 +100,10 @@ SuggestResult MovePolicy::suggest(Position::Result &position, Position::Pool &po
         return {};
     }
 
-    if (config.brute.limit != 0 && probability.totalWays < config.brute.limit) {
+    if (config.brute && probability.totalWays < config.brute->limit) {
         resetSearch();
         const Position::LogicComponentResult &components = Position().analyzeLogicComponents(position, positions);
-        BruteForce::Config brute = *config.brute.config;
+        BruteForce::Config brute = config.brute->config;
         if (specified) brute.checkAllMoves = true;
         SuggestResult result;
         BruteForce().solve(board, basic, components.result.components, components.pool, positions.structure,
@@ -114,7 +125,8 @@ SuggestResult MovePolicy::suggest(Position::Result &position, Position::Pool &po
     }
 
     Workspace &workspace = getWorkspace();
-    const FiftyFifty::Config &fiftyFifty = *config.fiftyFifty;
+    const Config::Guess &guess = *config.guess;
+    const FiftyFifty::Config &fiftyFifty = guess.fiftyFifty;
     FiftyFifty::Pool &fiftyPool = suggestions.fiftyFifty;
     FiftyFifty::Result &risk = workspace.risk;
     LongTermRisk::SemiResult &oldJavaSemi = workspace.oldJavaSemi;
@@ -122,18 +134,13 @@ SuggestResult MovePolicy::suggest(Position::Result &position, Position::Pool &po
     Grid<long double> &longTermRisk = workspace.longTermRisk;
     const bool java = config.algorithm == Algorithm::JavaEval;
     const bool oldJava = fiftyFifty.algorithm == FiftyFifty::Algorithm::OldJava;
-    Selection::Config selection = *config.selection;
+    const Selection::Config selection{guess.selection, specified || java ? Selection::Exchange{} : *guess.exchange};
     Semi::Kind detectedKind = Semi::Kind::None, semi = Semi::Kind::None;
     bool riskPrepared = false;
-    if (specified || java) {
-        selection.interchangeable = false;
-        selection.equivalence = false;
-        selection.dominance = false;
-    }
     if (!specified) {
         oldJavaSemi.cells.resize(0);
         detectedKind = semi = FiftyFifty().detect(detected, position, probability, probabilities, fiftyFifty, fiftyPool, oldJavaSemi.cells);
-        if (semi == Semi::Kind::None && selection.longTermRisk && oldJava) {
+        if (semi == Semi::Kind::None && guess.longTermRisk && oldJava) {
             LongTermRisk().update(risk.oldJava, position, positions, probability, probabilities, *fiftyFifty.oldJava, &oldJavaSemi);
             if (oldJavaSemi.kind != LongTermRisk::SemiResult::Kind::None) {
                 semi = oldJavaSemi.kind == LongTermRisk::SemiResult::Kind::Forced ? Semi::Kind::Forced : Semi::Kind::Semi;
@@ -152,10 +159,11 @@ SuggestResult MovePolicy::suggest(Position::Result &position, Position::Pool &po
         return result;
     }
 
-    const bool compensate = selection.longTermRisk && semi == Semi::Kind::None;
+    const bool compensate = guess.longTermRisk && semi == Semi::Kind::None;
+    const FiftyFiftyData::Pool *templates = nullptr;
     if (compensate && !riskPrepared)
-        FiftyFifty().prepareRisk(risk, position, positions, probability, probabilities, fiftyFifty, fiftyPool,
-                                 !specified && !oldJava ? &longTermRisk : nullptr);
+        templates = FiftyFifty().prepareRisk(risk, position, positions, probability, probabilities, fiftyFifty, fiftyPool,
+                                             !specified && !oldJava ? &longTermRisk : nullptr);
     const Grid<long double> *influences = nullptr;
     if (compensate && !specified) influences = oldJava ? &risk.oldJava.influences : &longTermRisk;
     Selection::Result &selected = workspace.selected;
@@ -167,12 +175,12 @@ SuggestResult MovePolicy::suggest(Position::Result &position, Position::Pool &po
             const long double mine = candidate.observation.probability[9];
             if (mine == 0.0L || mine == 1.0L) continue;
             const auto [row, col] = board.pos(candidate.cell);
-            longTermRisk[row][col] = FiftyFifty().influence(candidate.cell, risk, position, positions, probability, probabilities, fiftyFifty, fiftyPool);
+            longTermRisk[row][col] = FiftyFifty().influence(candidate.cell, risk, position, positions, probability, probabilities, fiftyFifty.algorithm, templates);
         }
 
     if (java) {
         resetSearch();
-        const JavaEval::Config &javaEval = *config.javaEval;
+        const JavaEval::Config &javaEval = *guess.javaEval;
         const JavaEval::Compensation mode = oldJava ? JavaEval::Compensation::ScaleWithProgress : JavaEval::Compensation::Additive;
         SuggestResult result = Details
             ? JavaEval().analyze(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, javaEval, details, mode)
@@ -181,7 +189,7 @@ SuggestResult MovePolicy::suggest(Position::Result &position, Position::Pool &po
         return result;
     }
 
-    const AnytimeSearch::Config &anytime = *config.anytime;
+    const AnytimeSearch::Config &anytime = *guess.anytime;
     AnytimeSearch::Result searched = Details
         ? AnytimeSearch().analyze(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, anytime, searchPool, details, oldJava)
         : AnytimeSearch().analyze(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, anytime, searchPool, oldJava);

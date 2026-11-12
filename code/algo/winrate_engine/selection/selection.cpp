@@ -62,7 +62,7 @@ bool Selection::interchangeable(const Position::Result &position, const Position
 
 int Selection::removeExchange(Candidate &candidate, span<Cell> following, Range lastRange, Frontier &frontier,
                               Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
-                              Probability::Pool &probabilities, const Config &config) {
+                              Probability::Pool &probabilities, const Exchange &config) {
     const long double mine = candidate.observation.probability[9];
     if (mine == 1.0L) return 0;
     auto compare = [&](const Selection::Cell &other) {
@@ -132,7 +132,7 @@ void Selection::collect(vector<Cell> &cells, Position::Result &position, Positio
         const auto [row, col] = board.pos(cell);
         return basic.marks[row][col] == Basic::Mark::T;
     };
-    const bool useLongTermRisk = config.longTermRisk && influences;
+    const bool useLongTermRisk = influences != nullptr;
     const long double scale = oldJava ? probability.totalWays : 1.0L;
     long double lowestBoardMine = basic.unknownSum == 0 ? 1.0L : offEdgeMine;
     auto influence = [&](ObservedBoard::CellId cell) {
@@ -142,7 +142,7 @@ void Selection::collect(vector<Cell> &cells, Position::Result &position, Positio
     auto longTermRiskCandidate = [&](ObservedBoard::CellId cell, long double mine) {
         if (!useLongTermRisk) return false;
         const long double compensation = influence(cell);
-        const long double cutoff = (1.0L - lowestBoardMine - config.selectionThreshold) * scale;
+        const long double cutoff = (1.0L - lowestBoardMine - config.filter.selectionThreshold) * scale;
         return compensation > 0.0L && scale - mine * scale + compensation > cutoff;
     };
     if (specified) {
@@ -175,7 +175,7 @@ void Selection::collect(vector<Cell> &cells, Position::Result &position, Positio
         }
     }
     if (cells.size == 0) return;
-    if (!specified && config.spaceThreshold > 1) {
+    if (!specified && config.filter.spaceThreshold > 1) {
         Workspace &workspace = getWorkspace();
         const Position::LogicComponentResult &components = Position().analyzeLogicComponents(position, positions);
         const Structure::Pool::Instances &instances = positions.structure.instances;
@@ -200,11 +200,11 @@ void Selection::collect(vector<Cell> &cells, Position::Result &position, Positio
         }
         if (std::any_of(cells.data, cells.data + cells.size, [&](const Selection::Cell &cell) {
             const int component = cellComponents[cell.cell];
-            return component >= 0 && componentSizes[component] >= config.spaceThreshold;
+            return component >= 0 && componentSizes[component] >= config.filter.spaceThreshold;
         })) {
             const Selection::Cell *end = std::remove_if(cells.data, cells.data + cells.size, [&](const Selection::Cell &cell) {
                 const int component = cellComponents[cell.cell];
-                return cell.mine != 0.0L && componentSizes[component] < config.spaceThreshold;
+                return cell.mine != 0.0L && componentSizes[component] < config.filter.spaceThreshold;
             });
             cells.resize(end - cells.data);
         }
@@ -213,15 +213,15 @@ void Selection::collect(vector<Cell> &cells, Position::Result &position, Positio
         const long double lowestMine = std::min_element(cells.data, cells.data + cells.size, [](const Selection::Cell &a, const Selection::Cell &b) {
             return a.mine < b.mine;
         })->mine;
-        const long double secondMineLimit = lowestBoardMine == 0.0L ? 0.0L : lowestBoardMine + config.selectionThreshold2;
+        const long double secondMineLimit = lowestBoardMine == 0.0L ? 0.0L : lowestBoardMine + config.filter.selectionThreshold2;
         for (int i = 0; i < (int)cells.size; ++i) {
             Selection::Cell &cell = cells[i];
-            if (cell.mine - lowestMine <= config.selectionThreshold || isOffEdge(cell.cell) || longTermRiskCandidate(cell.cell, cell.mine)) continue;
+            if (cell.mine - lowestMine <= config.filter.selectionThreshold || isOffEdge(cell.cell) || longTermRiskCandidate(cell.cell, cell.mine)) continue;
             cell.range = cell.mine <= secondMineLimit ? Range::Second : Range::Fallback;
         }
     }
     // 支配剪枝只看排在后面的格，所以启用它时，传入的候选也要按雷率从低到高排。
-    if (!specified || config.dominance) {
+    if (!specified || config.exchange.dominance) {
         std::sort(cells.data, cells.data + cells.size, [](const Selection::Cell &a, const Selection::Cell &b) {
             if (a.range != b.range) return a.range < b.range;
             if (a.mine != b.mine) return a.mine < b.mine;
@@ -266,13 +266,13 @@ void Selection::select(Result &result, Position::Result &position, Position::Poo
             result.candidates.resize(0);
             onlyDead = false;
         }
-        if (config.interchangeable && std::any_of(result.candidates.data, result.candidates.data + result.candidates.size, [&](const Candidate &other) {
+        if (config.exchange.interchangeable && std::any_of(result.candidates.data, result.candidates.data + result.candidates.size, [&](const Candidate &other) {
             return interchangeable(position, probability, probabilities, candidate.cell, other.cell);
         })) continue;
-        if (range != Range::Fallback && (config.equivalence || config.dominance)) {
+        if (range != Range::Fallback && (config.exchange.equivalence || config.exchange.dominance)) {
             const Range lastRange = result.candidates.size == 0 ? Range::Fallback : range;
             result.nodes += removeExchange(candidate, {cells.data + i + 1, (int)cells.size - i - 1}, lastRange,
-                                           frontier, position, positions, probability, probabilities, config);
+                                           frontier, position, positions, probability, probabilities, config.exchange);
         }
         result.candidates.push_back(candidate);
         if (range == Range::Fallback) break;
