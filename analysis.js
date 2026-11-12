@@ -1,10 +1,7 @@
 // 普通分析串行引用同一个计算 ID；候选标记 G 不改变观测约束。
 function calculate(state, options = {}) {
     const config = options.suggest ? analysisConfig() : { algo: shapeAlgo.value };
-    if (options.risk) {
-        config.fiftyFifty = fiftyFifty.value;
-        if (fiftyFifty.value === "templates") Object.assign(config, templateRiskSettings());
-    }
+    if (options.risk) Object.assign(config, templateRiskSettings());
     const snapshot = { ...boardSnapshot(state, /[G*]/g), algo: config.algo };
     const key = JSON.stringify(snapshot);
     const includeProbabilities = options.includeProbabilities ?? true;
@@ -34,8 +31,8 @@ function analysisConfig(strategy = suggestStrategy.value) {
         if (!Number.isInteger(nodes) || nodes < 1 || nodes > 2147483647) throw new Error("Anytime 每步节点数必须是正整数。");
         if (width.some((value) => !Number.isInteger(value) || value < 1 || value > 2147483647)) throw new Error("候选宽度必须是正整数。");
     }
-    const templateRisk = strategy !== "lowrisk" && fiftyFifty.value === "templates" ? templateRiskSettings() : {};
-    return { strategy, fiftyFifty: fiftyFifty.value, ...templateRisk, limit, maxThreads, nodeBudget: nodes, rootWidth: width[0], middleWidth: width[1], deepWidth: width[2], algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, checkAllMoves: endgameCheckAllMoves.value === "all", multiThread: endgameMultithread.checked };
+    const templateRisk = strategy === "anytime" ? templateRiskSettings() : {};
+    return { strategy, ...templateRisk, limit, maxThreads, nodeBudget: nodes, rootWidth: width[0], middleWidth: width[1], deepWidth: width[2], algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, checkAllMoves: endgameCheckAllMoves.value === "all", multiThread: endgameMultithread.checked };
 }
 
 function templateRiskSettings() {
@@ -219,17 +216,14 @@ function editAnalysisCell(cell, state) {
 async function requestSuggestion() {
     if (operationBusy || (mode === "play" && (playState.lost || playState.won)))
         return;
-    stopAnalysis();
     operationBusy = true;
+    mcts.stop();
+    search.stop();
     setMessage("正在分析…");
-    mcts.render();
-    search.render();
     document.getElementById("play-until-no-safe").disabled = true;
     document.getElementById("endgame-analysis").disabled = true;
     ++probabilityRevision;
     probabilityPending = false;
-    clearSuggestion();
-    const blockerTimer = setTimeout(() => { analysisBlocker.hidden = false; }, 250);
     try {
         const state = activeState();
         const startedAt = performance.now();
@@ -238,13 +232,12 @@ async function requestSuggestion() {
             probabilities = result.probabilities;
             candidateCount = result.candidateCount;
         }
+        stopAnalysis();
         showSuggestion(result, performance.now() - startedAt);
         setMessage("分析完成。", "success");
     } catch (error) {
         setMessage(error.message, "error");
     } finally {
-        clearTimeout(blockerTimer);
-        analysisBlocker.hidden = true;
         probabilityPending = false;
         operationBusy = false;
         render();

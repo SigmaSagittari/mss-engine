@@ -80,7 +80,7 @@ function renderAnalysisResult() {
         else if (result && result.recommended >= 0) recommended = [result.recommended];
     } else if (suggestionResult) {
         const result = suggestionResult;
-        const names = { Finished: "棋盘已完成", Safe: "确定安全", LowRisk: "LowRisk", JavaEval: "JavaE", Anytime: "Anytime", BruteForce: "精确枚举" };
+        const names = { Finished: "棋盘已完成", Safe: "确定安全", LowRisk: "LowRisk", Anytime: "Anytime", BruteForce: "精确枚举" };
         summary = `${names[result.engine]} · 分析耗时 ${result.elapsedMs.toFixed(1)} ms`;
         if (result.engine === "Anytime" || result.engine === "BruteForce") summary += ` · ${formatCount(result.nodes)} 节点`;
         recommended = result.recommended;
@@ -133,21 +133,20 @@ function renderDetail() {
     const risk = detailData?.longTermRisk;
     document.getElementById("detail-long-term-risk").hidden = !risk;
     if (risk) {
-        const oldJava = risk.algorithm === "oldjava";
         const bodyProbability = document.getElementById("detail-risk-body-union");
-        bodyProbability.textContent = formatPercent(oldJava ? risk.body : risk.bodyUnion);
+        bodyProbability.textContent = formatPercent(risk.bodyUnion);
         bodyProbability.parentElement.hidden = Number.parseFloat(bodyProbability.textContent) === 0;
         const distribution = document.getElementById("detail-risk-restriction-distribution");
         distribution.textContent = "";
-        const counts = oldJava ? [risk.restriction] : risk.restrictionCounts;
+        const counts = risk.restrictionCounts;
         for (let k = 0; k < counts.length; ++k) {
             const probability = formatPercent(counts[k]);
             if (Number.parseFloat(probability) === 0) continue;
             const row = document.createElement("div");
-            row.textContent = oldJava ? `命中限制：${probability}` : `命中 ${k} 个限制：${probability}`;
+            row.textContent = `命中 ${k} 个限制：${probability}`;
             distribution.appendChild(row);
         }
-        distribution.previousElementSibling.hidden = oldJava || distribution.childElementCount === 0;
+        distribution.previousElementSibling.hidden = distribution.childElementCount === 0;
     }
     let engine = null;
     let move = null;
@@ -162,10 +161,10 @@ function renderDetail() {
         move = suggestionMoves.get(selectedCell);
     }
     detailScoreRow.hidden = !move;
-    const names = { Safe: "确定安全", LowRisk: "LowRisk", JavaEval: "JavaE", Anytime: "Anytime", BruteForce: "精确枚举", MonteCarlo: "蒙特卡洛" };
+    const names = { Safe: "确定安全", LowRisk: "LowRisk", Anytime: "Anytime", BruteForce: "精确枚举", MonteCarlo: "蒙特卡洛" };
     detailEngine.textContent = move ? names[engine] : "";
     if (move) {
-        const labels = { Safe: "安全率", LowRisk: "安全率", JavaEval: "评分", Anytime: "当前评分", BruteForce: "精确胜率", MonteCarlo: "胜率" };
+        const labels = { Safe: "安全率", LowRisk: "安全率", Anytime: "当前评分", BruteForce: "精确胜率", MonteCarlo: "胜率" };
         detailScoreLabel.textContent = labels[engine];
         const score = engine === "MonteCarlo" || (mcts.result && engine === "BruteForce") ? move.winrate : move.value;
         detailScore.textContent = score === null ? "—" : formatPercent(score);
@@ -175,7 +174,7 @@ function renderDetail() {
         mctsVisits.textContent = move.visits;
         mctsWins.textContent = move.wins;
     }
-    renderObserve((engine === "JavaEval" || engine === "Anytime") && move ? move.branches : []);
+    renderObserve(engine === "Anytime" && move ? move.branches : []);
     const history = engine === "Anytime" && move ? move.history : [];
     searchHistory.hidden = history.length === 0;
     detailSide.hidden = mctsDetail.hidden && searchHistory.hidden;

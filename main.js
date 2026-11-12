@@ -114,17 +114,16 @@ shapeAlgo.addEventListener("change", () => {
 });
 function updatePolicySettings() {
     document.getElementById("anytime-settings").hidden = suggestStrategy.value !== "anytime";
-    document.getElementById("template-settings").hidden = fiftyFifty.value !== "templates";
     document.getElementById("brute-settings").hidden = !bruteEnabled.checked;
     document.getElementById("endgame-max-threads-row").hidden = !endgameMultithread.checked;
     for (const input of [endgameCandidateLimit, endgameCheckAllMoves, endgameMultithread]) input.disabled = !bruteEnabled.checked;
     endgameMaxThreads.disabled = !bruteEnabled.checked || !endgameMultithread.checked;
 }
-for (const input of [suggestStrategy, fiftyFifty, templatePrefix, ltrEventLimit, policyNodeBudget, bruteEnabled, endgameCandidateLimit, endgameCheckAllMoves, endgameMultithread, endgameMaxThreads, cellSizeSetting, ...searchWidths]) input.addEventListener("change", () => {
+for (const input of [suggestStrategy, templatePrefix, ltrEventLimit, policyNodeBudget, bruteEnabled, endgameCandidateLimit, endgameCheckAllMoves, endgameMultithread, endgameMaxThreads, cellSizeSetting, ...searchWidths]) input.addEventListener("change", () => {
     stopAnalysis();
     clearSuggestion();
     updatePolicySettings();
-    if ((input === fiftyFifty || input === templatePrefix || input === ltrEventLimit) && mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
+    if ((input === templatePrefix || input === ltrEventLimit) && mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
     render();
 });
 bruteEnabled.checked = Number(endgameCandidateLimit.value) > 0;

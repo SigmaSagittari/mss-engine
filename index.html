@@ -96,26 +96,13 @@
             <label class="settings-tab" id="settings-tab-display" for="settings-category-display">显示</label>
             <input class="settings-category-radio" id="settings-category-board" type="radio" name="settings-category" value="board">
             <label class="settings-tab" id="settings-tab-board" for="settings-category-board">盘面</label>
+            <input class="settings-category-radio" id="settings-category-advanced" type="radio" name="settings-category" value="advanced">
+            <label class="settings-tab" id="settings-tab-advanced" for="settings-category-advanced">高级设置</label>
             <div class="settings-panels">
                 <section id="settings-solver" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-solver">
                     <section class="settings-group">
-                        <div class="settings-row"><h3>基础算法</h3><select id="suggest-strategy" aria-label="基础算法"><option value="lowrisk" >LowRisk</option><option value="java" selected>JavaE</option><option value="anytime" >Anytime</option></select></div>
-                        <div id="anytime-settings" class="settings-stack" hidden>
-                            <div class="settings-caption">Anytime 参数</div>
-                            <label class="settings-row"><span>每步节点预算</span><input id="policy-node-budget" type="number" min="1" max="2147483647" value="1280"></label>
-                            <div class="search-widths">
-                                <label>根层宽度<input id="search-root-width" type="number" min="1" max="2147483647" value="6"></label>
-                                <label>中层宽度<input id="search-middle-width" type="number" min="1" max="2147483647" value="3"></label>
-                                <label>深层宽度<input id="search-deep-width" type="number" min="1" max="2147483647" value="1"></label>
-                            </div>
-                        </div>
-                    </section>
-                    <section class="settings-group">
-                        <div class="settings-row"><h3>50-50</h3><select id="fifty-fifty" aria-label="50-50 算法"><option value="oldjava" >OldJava</option><option value="templates" selected>Templates</option></select></div>
-                        <div class="settings-stack" id="template-settings">
-                            <label class="settings-row"><span>Semi / LTR 使用前 N 个模板</span><input id="template-prefix" type="number" min="1" max="533" value="100"></label>
-                            <label class="settings-row" title="每个互相必安组按方向事件概率取前 N 项"><span>LTR 模板匹配上限</span><input id="ltr-event-limit" type="number" min="1" max="2147483647" step="1" value="15"></label>
-                        </div>
+                        <div class="settings-row"><h3>基础算法</h3><select id="suggest-strategy" aria-label="基础算法"><option value="lowrisk" >LowRisk</option><option value="anytime" selected>Anytime</option></select></div>
+                        <label id="anytime-settings" class="settings-row" hidden><span>招法分析节点预算</span><input id="policy-node-budget" type="number" min="1" max="2147483647" value="51200"></label>
                     </section>
                     <section class="settings-group">
                         <div class="settings-row"><h3>暴力接管</h3><label class="settings-check"><input id="endgame-enabled" type="checkbox"><span>启用</span></label></div>
@@ -126,8 +113,8 @@
                             <label class="settings-row" id="endgame-max-threads-row"><span>线程上限</span><input id="endgame-max-threads" type="number" min="1" max="2147483647" step="1" value="1"></label>
                         </div>
                     </section>
-                    <label class="settings-row"><span>手动搜索节点数</span><input id="anytime-search-nodes" type="number" min="-1" max="2147483647" value="-1"></label>
-                    <label class="settings-row"><span>概率求解器</span><select id="shape-algo"><option value="auto" selected>auto</option><option value="autoSA">autoSA</option></select></label>
+                    <label class="settings-row"><span>手动搜索节点数</span><input id="anytime-search-nodes" type="number" min="-1" max="2147483647" value="-1" aria-describedby="manual-search-hint"></label>
+                    <p class="settings-caption" id="manual-search-hint">填 −1 时持续搜索，直到手动停止或搜完。</p>
                 </section>
                 <section id="settings-display" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-display">
                     <label class="settings-row"><span>棋盘概率</span><input id="probability-display" type="checkbox" checked></label>
@@ -145,15 +132,30 @@
                         <div id="board-export-status" class="muted" aria-live="polite"></div>
                     </div>
                 </section>
+                <section id="settings-advanced" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-advanced">
+                    <section class="settings-group">
+                        <h3>Anytime 候选格上限</h3>
+                        <div class="search-widths">
+                            <label>第一步<input id="search-root-width" type="number" min="1" max="2147483647" value="6"></label>
+                            <label>第二步<input id="search-middle-width" type="number" min="1" max="2147483647" value="3"></label>
+                            <label>后续每步<input id="search-deep-width" type="number" min="1" max="2147483647" value="1"></label>
+                        </div>
+                    </section>
+                    <section class="settings-group">
+                        <h3>50-50 与长期风险</h3>
+                        <label class="settings-row"><span>模板数量</span><input id="template-prefix" type="number" min="1" max="533" value="100" aria-describedby="template-prefix-hint"></label>
+                        <p class="settings-caption" id="template-prefix-hint">从目录开头取这些模板，用于识别 50-50 和计算长期风险。</p>
+                        <label class="settings-row"><span>长期风险事件数上限</span><input id="ltr-event-limit" type="number" min="1" max="2147483647" step="1" value="15" aria-describedby="ltr-event-limit-hint"></label>
+                        <p class="settings-caption" id="ltr-event-limit-hint">计算长期风险时，优先计入最可能发生的情况。</p>
+                    </section>
+                    <section class="settings-group">
+                        <label class="settings-row"><span>概率求解器</span><select id="shape-algo" aria-describedby="shape-algo-hint"><option value="auto" selected>auto</option><option value="autoSA">autoSA</option></select></label>
+                        <p class="settings-caption" id="shape-algo-hint">autoSA 会为复杂局面多试几种计算顺序，算出的雷率相同。</p>
+                    </section>
+                </section>
             </div>
         </fieldset>
     </dialog>
-    <div id="analysis-blocker" class="analysis-blocker" hidden role="dialog" aria-modal="true" aria-labelledby="analysis-blocker-title">
-        <div class="analysis-blocker-content">
-            <div class="analysis-spinner" aria-hidden="true"></div>
-            <h2 id="analysis-blocker-title">正在分析</h2>
-        </div>
-    </div>
     <script src="wasm.js" defer></script>
     <script src="state.js" defer></script>
     <script src="game.js" defer></script>
