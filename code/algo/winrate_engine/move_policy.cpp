@@ -20,16 +20,12 @@ void MovePolicy::Config::hash(U128Hasher &hasher) const {
     guess->selection.hash(hasher);
     hasher.mix(guess->longTermRisk);
     guess->fiftyFifty.hash(hasher, guess->longTermRisk);
-    if (algorithm == Algorithm::JavaEval) guess->javaEval->hash(hasher);
-    else {
-        guess->exchange->hash(hasher);
-        guess->anytime->hash(hasher);
-    }
+    guess->exchange.hash(hasher);
+    guess->anytime->hash(hasher);
 }
 
 struct MovePolicy::Workspace {
-    FiftyFifty::Result risk;
-    LongTermRisk::SemiResult oldJavaSemi;
+    TemplateLongTermRisk::Result risk;
     vector<ObservedBoard::CellId> detected;
     Selection::Result selected;
     Grid<long double> longTermRisk;
@@ -128,46 +124,25 @@ SuggestResult MovePolicy::suggest(Position::Result &position, Position::Pool &po
     const Config::Guess &guess = *config.guess;
     const FiftyFifty::Config &fiftyFifty = guess.fiftyFifty;
     FiftyFifty::Pool &fiftyPool = suggestions.fiftyFifty;
-    FiftyFifty::Result &risk = workspace.risk;
-    LongTermRisk::SemiResult &oldJavaSemi = workspace.oldJavaSemi;
+    TemplateLongTermRisk::Result &risk = workspace.risk;
     vector<CellId> &detected = workspace.detected;
     Grid<long double> &longTermRisk = workspace.longTermRisk;
-    const bool java = config.algorithm == Algorithm::JavaEval;
-    const bool oldJava = fiftyFifty.algorithm == FiftyFifty::Algorithm::OldJava;
-    const Selection::Config selection{guess.selection, specified || java ? Selection::Exchange{} : *guess.exchange};
-    Semi::Kind detectedKind = Semi::Kind::None, semi = Semi::Kind::None;
-    bool riskPrepared = false;
-    if (!specified) {
-        oldJavaSemi.cells.resize(0);
-        detectedKind = semi = FiftyFifty().detect(detected, position, probability, probabilities, fiftyFifty, fiftyPool, oldJavaSemi.cells);
-        if (semi == Semi::Kind::None && guess.longTermRisk && oldJava) {
-            LongTermRisk().update(risk.oldJava, position, positions, probability, probabilities, *fiftyFifty.oldJava, &oldJavaSemi);
-            if (oldJavaSemi.kind != LongTermRisk::SemiResult::Kind::None) {
-                semi = oldJavaSemi.kind == LongTermRisk::SemiResult::Kind::Forced ? Semi::Kind::Forced : Semi::Kind::Semi;
-            } else riskPrepared = true;
-        }
-    }
+    const Selection::Config selection{guess.selection, specified ? Selection::Exchange{} : guess.exchange};
+    const FiftyFiftyKind semi = specified ? FiftyFiftyKind::None :
+        FiftyFifty().detect(detected, position, probability, probabilities, fiftyFifty, fiftyPool);
 
-    const SuggestResult::Reason reason = semi == Semi::Kind::Forced ? SuggestResult::Reason::Forced :
-                                         semi == Semi::Kind::Semi ? SuggestResult::Reason::Semi : SuggestResult::Reason::ScoreWins;
-    const vector<CellId> &candidates = detectedKind != Semi::Kind::None ? detected : semi != Semi::Kind::None ? oldJavaSemi.cells : requested;
-    if (java && semi == Semi::Kind::Forced && candidates.size < 4) {
-        resetSearch();
-        SuggestResult result(SuggestResult::Engine::JavaEval, reason);
-        for (int i = 0; i < (int)candidates.size; ++i) result.candidates.push_back({candidates[i], 1.0L});
-        result.recommend();
-        return result;
-    }
+    const SuggestResult::Reason reason = semi == FiftyFiftyKind::Forced ? SuggestResult::Reason::Forced :
+                                         semi == FiftyFiftyKind::Semi ? SuggestResult::Reason::Semi : SuggestResult::Reason::ScoreWins;
+    const vector<CellId> &candidates = semi != FiftyFiftyKind::None ? detected : requested;
 
-    const bool compensate = guess.longTermRisk && semi == Semi::Kind::None;
-    const FiftyFiftyData::Pool *templates = nullptr;
-    if (compensate && !riskPrepared)
-        templates = FiftyFifty().prepareRisk(risk, position, positions, probability, probabilities, fiftyFifty, fiftyPool,
-                                             !specified && !oldJava ? &longTermRisk : nullptr);
-    const Grid<long double> *influences = nullptr;
-    if (compensate && !specified) influences = oldJava ? &risk.oldJava.influences : &longTermRisk;
+    const bool compensate = guess.longTermRisk && semi == FiftyFiftyKind::None;
+    const Grid<long double> *influences = compensate && !specified ? &longTermRisk : nullptr;
+    const FiftyFiftyData::Pool *templates = compensate
+        ? &FiftyFifty().prepareRisk(risk, position, positions, probability, probabilities, fiftyFifty, fiftyPool,
+                                   specified ? nullptr : &longTermRisk)
+        : nullptr;
     Selection::Result &selected = workspace.selected;
-    Selection().select(selected, position, positions, probability, probabilities, selection, candidates, influences, oldJava);
+    Selection().select(selected, position, positions, probability, probabilities, selection, candidates, influences);
     longTermRisk.resize(board.cells.rows(), board.cells.cols(), 0.0L);
     if (compensate)
         for (int i = 0; i < (int)selected.candidates.size; ++i) {
@@ -175,25 +150,14 @@ SuggestResult MovePolicy::suggest(Position::Result &position, Position::Pool &po
             const long double mine = candidate.observation.probability[9];
             if (mine == 0.0L || mine == 1.0L) continue;
             const auto [row, col] = board.pos(candidate.cell);
-            longTermRisk[row][col] = FiftyFifty().influence(candidate.cell, risk, position, positions, probability, probabilities, fiftyFifty.algorithm, templates);
+            longTermRisk[row][col] = TemplateLongTermRisk().influence(candidate.cell, risk, position, positions, probability, probabilities, *templates).compensation;
         }
-
-    if (java) {
-        resetSearch();
-        const JavaEval::Config &javaEval = *guess.javaEval;
-        const JavaEval::Compensation mode = oldJava ? JavaEval::Compensation::ScaleWithProgress : JavaEval::Compensation::Additive;
-        SuggestResult result = Details
-            ? JavaEval().analyze(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, javaEval, details, mode)
-            : JavaEval().analyze(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, javaEval, mode);
-        result.reason = reason;
-        return result;
-    }
 
     const AnytimeSearch::Config &anytime = *guess.anytime;
     AnytimeSearch::Result searched = Details
-        ? AnytimeSearch().analyze(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, anytime, searchPool, details, oldJava)
-        : AnytimeSearch().analyze(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, anytime, searchPool, oldJava);
-    if (semi != Semi::Kind::None) searched.reason = reason;
+        ? AnytimeSearch().analyze(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, anytime, searchPool, details)
+        : AnytimeSearch().analyze(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, anytime, searchPool);
+    if (semi != FiftyFiftyKind::None) searched.reason = reason;
     SuggestResult result = searched.snapshot(searchPool);
     if constexpr (Details) search = searched;
     else searchPool.clear(positions);

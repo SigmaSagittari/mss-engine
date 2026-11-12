@@ -28,8 +28,7 @@ struct Performance {
         const long long suggestions = callbacks - 2LL * games;
         mss::assert_(games > 0, "整局测试没有完成对局");
         std::cout << std::fixed << std::setprecision(6)
-                  << (policyConfig.algorithm == mss::MovePolicy::Algorithm::LowRisk ? "LowRisk" :
-                      policyConfig.algorithm == mss::MovePolicy::Algorithm::JavaEval ? "JavaEval" : "Anytime")
+                  << (policyConfig.algorithm == mss::MovePolicy::Algorithm::LowRisk ? "LowRisk" : "Anytime")
                   << " version=" << mss::version << " threads=1 " << config.cols << 'x' << config.rows << " mines=" << config.mines
                   << " seed=" << config.seed.lo << ',' << config.seed.hi << " time_limit=" << config.seconds << " games_limit=" << config.maxGames
                   << " stop=" << (games == config.maxGames ? "games_limit" : "time_limit")

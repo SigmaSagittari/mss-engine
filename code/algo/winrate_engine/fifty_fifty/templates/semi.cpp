@@ -3,6 +3,7 @@
 #include <bit>
 #include <cmath>
 
+#include "algo/winrate_engine/fifty_fifty/fifty_fifty.h"
 #include "core/algorithm/neighbors.h"
 
 namespace mss {
@@ -104,7 +105,7 @@ bool TemplateSemi::matches(const FiftyFiftyData::Pool &templates, const FiftyFif
     return true;
 }
 
-Semi::Kind TemplateSemi::detect(vector<ObservedBoard::CellId> &cells, const Position::Result &position,
+FiftyFiftyKind TemplateSemi::detect(vector<ObservedBoard::CellId> &cells, const Position::Result &position,
                                 const Position::ProbabilityResult &probability, const Probability::Pool &probabilities,
                                 const FiftyFiftyData::Pool &templates) {
     Workspace &workspace = getWorkspace();
@@ -165,16 +166,16 @@ Semi::Kind TemplateSemi::detect(vector<ObservedBoard::CellId> &cells, const Posi
                 }
             }
     cells.resize(0);
-    Semi::Kind kind = Semi::Kind::None;
+    FiftyFiftyKind kind = FiftyFiftyKind::None;
     for (int root = 0; root < size; ++root) if (found[root / 64] & (1ULL << (root % 64))) {
         const long double p = Probability().mineProbability(probability.boxes, probabilities, root, board, position.basic, position.structure);
         const bool forced = std::abs(p - 0.5L) <= 1e-9L;
-        if (forced && kind != Semi::Kind::Forced) {
+        if (forced && kind != FiftyFiftyKind::Forced) {
             cells.resize(0);
-            kind = Semi::Kind::Forced;
+            kind = FiftyFiftyKind::Forced;
         }
-        if (kind != Semi::Kind::Forced) kind = Semi::Kind::Semi;
-        if (forced || kind == Semi::Kind::Semi) cells.push_back(root);
+        if (kind != FiftyFiftyKind::Forced) kind = FiftyFiftyKind::Semi;
+        if (forced || kind == FiftyFiftyKind::Semi) cells.push_back(root);
     }
     return kind;
 }

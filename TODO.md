@@ -7,15 +7,11 @@
   - 保持 PositionState 原有职责，不增加 View 或转发包装；probability_engine 的改动仍须单独申报。50-50 的 Table 相关 vectorPool 也应集中到 Pool 下的嵌套类型。
   - 同完成深度核对评分、候选、推荐和暂停续算，允许 tie-break 差异；节点按实际计算次数统计，生产仍按节点预算运行。耗时和峰值内存必须与本次大重构前的基线比较，确认没有性能回退。
 
-- [ ] 恢复 JavaEval 和 AnytimeSearch 时，各自持有自己的 JavaLite 实现。
-  - JavaEval 完整展开单格的数字结局，按概率加权评分，算完即撤回并释放临时结果。
-  - AnytimeSearch 自己控制数字展开和上界剪枝，管理子局面增量与概率结果的留存、退池和重放。
-
 - [ ] 审核内部类型定义放在头文件还是源文件的统一约定，并检查现有代码。
 
 - [ ] 统一未揭格的概率查询与数值判定口径：
   - 查询统一处理前沿格、非前沿 T 格和已知安全格，明确格子位置与概率的输出方式；调用方按业务需要查询最低的前 N 个概率或必安格。
-  - 梳理 LowRisk、Position::safeMoves、Selection、JavaLite 中分散的 T 格查找、概率合并及重复扫描，明确 T 格位置的取得方式，减少调用方各自扫描全盘；优先复用已有存储。
+  - 梳理 LowRisk、Position::safeMoves、Selection、AnytimeSearch 中分散的 T 格查找、概率合并及重复扫描，明确 T 格位置的取得方式，减少调用方各自扫描全盘；优先复用已有存储。
   - 集中定义概率 0/1 截断和条件安全判断的数值契约，核验整理前后的候选、评分、推荐、节点数与耗时。
 
 - [ ] Search 在算力充足时扩大候选覆盖，再重新搜索此前遗漏候选的浅层路线。当前 `(6,3,1)` 固定宽度属于性能取舍；候选窗口随盘面最安全格变化，可能漏掉极端局面的好招，单纯加深不能补回。未来需协调广度与深度，充分利用追加算力。
@@ -25,15 +21,15 @@
   - 同一格子的本体事件、限制事件进入同一次联合补偿计算，不按两类事件各自算完后相加，也不因此拆成两个查询入口。假设该格为雷后，只要命中一个本体，剩余损失就是 0；没有命中本体而命中 N 个限制时，剩余损失乘以 2 的负 N 次方。对这些情况求期望，再乘该格当前雷率，得到根层可加回的补偿。
   - 本体补偿直接使用原始本体事件的并。限制事件使用模板 DAG 编译后的条件，排除被自己严格包含的小模板，例如长链额外要求中间一组格子“至少一安”。DAG 负责定义哪些情况属于这个模板，后面的容斥树负责多个事件的联合计算，两者不能混为一套去重。
   - “至少一安”等排除条件交给同一次容斥计算，需要时才拆分，底层继续调用强制雷／安的联合计数。每次查询按 `limit` 选取参与计算的事件，一次算完联合补偿。共享模板展开、DAG 等数据由 Pool 持有，容斥计算的临时内存由 Workspace 复用。
-  - 旧版与自动版统一返回补偿值，直接加到根层评分，替换旧 LTR 的乘法修正与 0.9 系数。需要展示本体／限制明细时，由同一次计算提供。
+  - 自动 LTR 返回可直接加到根层评分的补偿值。需要展示本体／限制明细时，由同一次计算提供。
   - 沿用研究版的原生枚举验证：小残局直接枚举合法雷盘、逐盘套模板，核对选中事件的联合补偿值。实战验证仍使用真实选招轨迹，保留无必安、可行摆法数至少 1000 的专家样本，用单次查询耗时校准 `limit`。
 
 - [ ] 实装 `LogicComponent`，按以下步骤逐步完成：
   - 放在 `code/algo/winrate_engine/general/logic_component.h/.cpp`；只提供 `analyze`，每次全量重算，省略 `update/Delta`；Workspace 和已有 Shape/Distribution 池继续复用。
   - 分块沿用 H/T 八邻接闭包和 Structure 实例整块闭包，记录各块的 Structure 实例 ID 与非前沿 T 格。
-  - Result 按“全盘结果 → 逻辑块 → 雷数档”组织；每档保存 `mines`、`long double chance`、局部布局数 `ways` 及 `BruteForce::Result` 或 `JavaEval::Result`。复用 `Probability::analyzeLogicComponents` 取得全盘约束下的档概率和局部布局数。
+  - Result 按“全盘结果 → 逻辑块 → 雷数档”组织；每档保存 `mines`、`long double chance`、局部布局数 `ways` 及暴力求解结果或猜测评分。复用 `Probability::analyzeLogicComponents` 取得全盘约束下的档概率和局部布局数。
   - 提取每块的独立分析盘面，保留候选格、相关数字、周围已知雷及相对坐标，建立局部 CellId 到原盘 CellId 的映射；保留已知雷数为 f 时，总雷数设为 k+f。背景使用 ForcedSafe 的方案须验证约束等价性，必安检测和评分仅面向本块真实候选格。
-  - 固定 k 后重建 Basic、Structure、Probability 和 LongTermRisk；先识别该档的条件必安格与完成态，再对需要猜测的档按局部 `ways` 选择暴力或 JavaEval。明确各档结果如何保存必安格及完成态。
+  - 固定 k 后重建 Basic、Structure、Probability 和模板 LTR；先识别该档的条件必安格与完成态，再对需要猜测的档按局部 `ways` 决定是否用暴力求解，其他猜测评分待定。明确各档结果如何保存必安格及完成态。
   - 核验单档、多档、纯 T 块、固定 k 后出现必安、剩余格全雷及 CellId 映射；保留各档原始结果，跨档汇总与总推荐另行研究，不直接照搬 1.4 按已知 k 求解后加权的 Recommendation。
 
 部分条目沿用 1.5 时期的草案思路；旧的全局 Config 传参方式、测试拆成 cpp、首步处理及 Game API 草图已被后续约定替代，以当前源码、用户明确约定及 [共享编码与审查 Prompt](docs/prompts/CODE_REVIEW_PROMPT.md) 为准，不照搬过时草图。
@@ -42,11 +38,11 @@
 
 - [x] `FiftyFifty::Pool` 只存一份 Prefix 100 模板表。正式 LTR 选 Prefix 100 时，与粗 LTR 共用这张表。粗 LTR 的事件上限为 1，正式 LTR 的事件上限由配置给出。另一张表缓存最近一次编译的非 100 前缀。
 - [x] 给 `Suggest::Pool` 和 `Position::Pool` 各自提供 `clear`。`Game::reset` 先清概率和分布，再清局面，保证形状编号失效前先清掉引用这些编号的缓存。组合数表跨局复用。
-- [x] 把 JavaEval 和 Anytime 用到的候选筛选和 50-50 配置放进 `MovePolicy::Config` 的可选成员，LowRisk 只用一个空指针。暴力接管也整组可选，启用时提供布局数阈值和求解配置。
+- [x] 把 Anytime 用到的候选筛选和 50-50 配置放进 `MovePolicy::Config` 的可选成员，LowRisk 只用一个空指针。暴力接管也整组可选，启用时提供布局数阈值和求解配置。
 - [x] `ShapeSolver::Config` 仅在 `SA` 和 `AutoSA` 时接收退火参数。配置自身按选中的排序方式计算哈希，建议缓存只用该方式会读取的参数。
-- [x] JavaEval 的根候选配置省去当前固定关闭的互换、等价和支配剪枝开关。LTR 开关由计算根局面 LTR 的 `MovePolicy::Config` 提供，`Selection` 按传入的 LTR 网格筛选。建议缓存按实际生效的设置计算键。
+- [x] LTR 开关由计算根局面 LTR 的 `MovePolicy::Config` 提供，`Selection` 按传入的 LTR 网格筛选。建议缓存按实际生效的设置计算键。
 - [x] 模板 50-50 的事件上限只在启用 LTR 时提供。暴力用 `threadCount = 1` 表达串行。
-- [x] 缩小逐格 LTR 和 Monte Carlo 的配置参数。`FiftyFifty::influence` 接收后端枚举，走模板算法时使用已经选好的模板表。Monte Carlo 的 `estimate` 和 `select` 只接先验权重。
+- [x] 缩小逐格 LTR 和 Monte Carlo 的配置参数。逐格 LTR 使用已经选好的模板表。Monte Carlo 的 `estimate` 和 `select` 只接先验权重。
 
 ## 网页版 Bug
 

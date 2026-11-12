@@ -120,7 +120,7 @@ int Selection::removeExchange(Candidate &candidate, span<Cell> following, Range 
 
 void Selection::collect(vector<Cell> &cells, Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
                         const Probability::Pool &probabilities, const Config &config, const vector<ObservedBoard::CellId> &requested,
-                        const Grid<long double> *influences, bool oldJava) {
+                        const Grid<long double> *influences) {
     cells.resize(0);
 
     const ObservedBoard::Result &board = position.board;
@@ -133,7 +133,6 @@ void Selection::collect(vector<Cell> &cells, Position::Result &position, Positio
         return basic.marks[row][col] == Basic::Mark::T;
     };
     const bool useLongTermRisk = influences != nullptr;
-    const long double scale = oldJava ? probability.totalWays : 1.0L;
     long double lowestBoardMine = basic.unknownSum == 0 ? 1.0L : offEdgeMine;
     auto influence = [&](ObservedBoard::CellId cell) {
         const auto [row, col] = board.pos(cell);
@@ -142,8 +141,8 @@ void Selection::collect(vector<Cell> &cells, Position::Result &position, Positio
     auto longTermRiskCandidate = [&](ObservedBoard::CellId cell, long double mine) {
         if (!useLongTermRisk) return false;
         const long double compensation = influence(cell);
-        const long double cutoff = (1.0L - lowestBoardMine - config.filter.selectionThreshold) * scale;
-        return compensation > 0.0L && scale - mine * scale + compensation > cutoff;
+        const long double cutoff = 1.0L - lowestBoardMine - config.filter.selectionThreshold;
+        return compensation > 0.0L && 1.0L - mine + compensation > cutoff;
     };
     if (specified) {
         for (int i = 0; i < (int)requested.size; ++i) {
@@ -162,11 +161,11 @@ void Selection::collect(vector<Cell> &cells, Position::Result &position, Positio
         if (basic.unknownSum != 0 && offEdgeMine != 1.0L) {
             const long double safetyGap = (1.0L - lowestBoardMine) * 0.95L - (1.0L - offEdgeMine);
             const bool offEdgeAllowed = lowestBoardMine != 0.0L && safetyGap < 0.0L;
-            const bool compensateT = useLongTermRisk && (oldJava || (lowestBoardMine != 0.0L && safetyGap >= 0.0L));
+            const bool compensateT = useLongTermRisk && lowestBoardMine != 0.0L && safetyGap >= 0.0L;
             if (offEdgeAllowed || compensateT)
                 basic.tCells([&](ObservedBoard::CellId cell) {
                     const bool preferred = basic.unknownSum < 30 || offEdgeCandidate(board, cell);
-                    const bool compensated = compensateT && (oldJava ? longTermRiskCandidate(cell, offEdgeMine) : influence(cell) > safetyGap);
+                    const bool compensated = compensateT && influence(cell) > safetyGap;
                     if ((offEdgeAllowed && preferred) || compensated)
                         cells.push_back({cell, offEdgeMine, preferred, Range::First, false});
                 });
@@ -233,10 +232,10 @@ void Selection::collect(vector<Cell> &cells, Position::Result &position, Positio
 
 void Selection::select(Result &result, Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
                        Probability::Pool &probabilities, const Config &config,
-                       const vector<ObservedBoard::CellId> &requested, const Grid<long double> *influences, bool oldJava) {
+                       const vector<ObservedBoard::CellId> &requested, const Grid<long double> *influences) {
     Workspace &workspace = getWorkspace();
     vector<Cell> &cells = workspace.cells;
-    collect(cells, position, positions, probability, probabilities, config, requested, influences, oldJava);
+    collect(cells, position, positions, probability, probabilities, config, requested, influences);
     result.candidates.resize(0);
     result.nodes = 0;
     Frontier &frontier = workspace.frontier;

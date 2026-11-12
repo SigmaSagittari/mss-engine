@@ -121,13 +121,11 @@ std::string Session::index(std::string content) const {
         content.replace(content.find(marker), marker.size(), value);
     };
     replace("__MSS_TOKEN__", token_);
-    constexpr const char *algorithms[] = {"__MSS_POLICY_LOWRISK__", "__MSS_POLICY_JAVA__", "__MSS_POLICY_ANYTIME__"};
-    constexpr const char *fifty[] = {"__MSS_FIFTY_OLDJAVA__", "__MSS_FIFTY_TEMPLATES__"};
+    constexpr const char *algorithms[] = {"__MSS_POLICY_LOWRISK__", "__MSS_POLICY_ANYTIME__"};
     constexpr const char *widths[] = {"__MSS_SEARCH_ROOT_WIDTH__", "__MSS_SEARCH_MIDDLE_WIDTH__", "__MSS_SEARCH_DEEP_WIDTH__"};
-    for (int i = 0; i < 3; ++i) replace(algorithms[i], config.algorithm == (MovePolicy::Algorithm)i ? "selected" : "");
-    for (int i = 0; i < 2; ++i) replace(fifty[i], config.fiftyFifty.algorithm == (FiftyFifty::Algorithm)i ? "selected" : "");
+    for (int i = 0; i < 2; ++i) replace(algorithms[i], config.algorithm == (MovePolicy::Algorithm)i ? "selected" : "");
     for (int i = 0; i < 3; ++i) replace(widths[i], std::to_string(config.anytime.width[i]));
-    replace("__MSS_TEMPLATE_PREFIX__", std::to_string(config.fiftyFifty.templates.prefix));
+    replace("__MSS_TEMPLATE_PREFIX__", std::to_string(config.fiftyFifty.prefix));
     replace("__MSS_TEMPLATE_COUNT__", std::to_string(FiftyFiftyData().count()));
     replace("__MSS_LTR_EVENT_LIMIT__", std::to_string(config.fiftyFifty.eventLimit));
     replace("__MSS_BRUTE_FORCE_THRESHOLD__", std::to_string(config.brute.limit));
@@ -273,27 +271,19 @@ bool Session::parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolverCo
 }
 
 bool Session::parseFiftyFifty(const std::vector<FormField> &fields, Config &config, std::string &response) {
-    const std::string fifty = value(fields, "fiftyFifty");
-    if (fifty == "oldjava") {
-        config.fiftyFifty.algorithm = FiftyFifty::Algorithm::OldJava;
-        return true;
-    }
-    if (fifty != "templates") { response = error("50-50 算法无效"); return false; }
     int prefix;
     if (!parseInteger(value(fields, "templatePrefix"), prefix) || prefix < 1 || prefix > FiftyFiftyData().count()) { response = error("模板前缀超出目录"); return false; }
     if (config.longTermRisk && (!parseInteger(value(fields, "ltrEventLimit"), config.fiftyFifty.eventLimit) || config.fiftyFifty.eventLimit < 1)) {
         response = error("LTR 模板匹配上限必须是正整数");
         return false;
     }
-    config.fiftyFifty.algorithm = FiftyFifty::Algorithm::Templates;
-    config.fiftyFifty.templates.prefix = prefix;
+    config.fiftyFifty.prefix = prefix;
     return true;
 }
 
 bool Session::parseConfig(const std::vector<FormField> &fields, Config &config, std::string &response) {
     const std::string name = value(fields, "strategy");
     if (name == "lowrisk") config.algorithm = MovePolicy::Algorithm::LowRisk;
-    else if (name == "java") config.algorithm = MovePolicy::Algorithm::JavaEval;
     else if (name == "anytime") config.algorithm = MovePolicy::Algorithm::Anytime;
     else { response = error("建议算法无效"); return false; }
     if (!parseInteger(value(fields, "limit"), config.brute.limit) || config.brute.limit < 0) { response = error("暴力接管阈值必须是非负整数"); return false; }
@@ -421,7 +411,7 @@ void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Co
     result << std::setprecision(18);
     const bool safe = evaluated.engine == SuggestResult::Engine::Safe;
     const bool exact = evaluated.engine == SuggestResult::Engine::BruteForce;
-    const char *engine = evaluated.engine == SuggestResult::Engine::None ? "Finished" : safe ? "Safe" : exact ? "BruteForce" : evaluated.engine == SuggestResult::Engine::LowRisk ? "LowRisk" : evaluated.engine == SuggestResult::Engine::JavaEval ? "JavaEval" : "Anytime";
+    const char *engine = evaluated.engine == SuggestResult::Engine::None ? "Finished" : safe ? "Safe" : exact ? "BruteForce" : evaluated.engine == SuggestResult::Engine::LowRisk ? "LowRisk" : "Anytime";
     result << ",\"engine\":" << jsonString(engine) << ",\"reason\":" << jsonString(evaluated.reason == SuggestResult::Reason::Forced ? "forced5050" : evaluated.reason == SuggestResult::Reason::Semi ? "5050OrSafe" : "score") << ",\"nodes\":" << evaluated.nodes << ",\"recommended\":[";
     for (int i = 0; i < (int)evaluated.suggest.size; ++i) {
         if (i != 0) result << ',';
@@ -518,23 +508,18 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
             else {
                 Config config = config_;
                 if (!parseFiftyFifty(fields, config, response)) return response;
-                if (config.fiftyFifty.algorithm == FiftyFifty::Algorithm::OldJava) {
-                    const LongTermRisk::Details risk = LongTermRisk().describe(cell, position, positions, probability, positions.probabilities, config.fiftyFifty.oldJava);
-                    result << ",\"longTermRisk\":{\"algorithm\":\"oldjava\",\"body\":" << risk.body << ",\"restriction\":" << risk.restriction << '}';
-                } else {
-                    const FiftyFifty::Config fifty{FiftyFifty::Algorithm::Templates, nullptr, &config.fiftyFifty.templates, &config.fiftyFifty.eventLimit};
-                    FiftyFifty::Result risk;
-                    FiftyFifty::Pool &pool = analysis_->suggestions.fiftyFifty;
-                    const FiftyFiftyData::Pool &table = *FiftyFifty().prepareRisk(risk, position, positions, probability, positions.probabilities, fifty, pool);
-                    const TemplateLongTermRisk::Details details = TemplateLongTermRisk().influence<TemplateLongTermRisk::DetailRequest::Details>(
-                        cell, risk.templates, position, positions, probability, positions.probabilities, table);
-                    result << ",\"longTermRisk\":{\"algorithm\":\"templates\",\"bodyUnion\":" << details.body << ",\"restrictionCounts\":[";
-                    for (int k = 0; k < (int)details.restrictions.size; ++k) {
-                        if (k != 0) result << ',';
-                        result << details.restrictions[k];
-                    }
-                    result << "]}";
+                const FiftyFifty::Config fifty{config.fiftyFifty.prefix, &config.fiftyFifty.eventLimit};
+                TemplateLongTermRisk::Result risk;
+                FiftyFifty::Pool &pool = analysis_->suggestions.fiftyFifty;
+                const FiftyFiftyData::Pool &table = FiftyFifty().prepareRisk(risk, position, positions, probability, positions.probabilities, fifty, pool);
+                const TemplateLongTermRisk::Details details = TemplateLongTermRisk().influence<TemplateLongTermRisk::DetailRequest::Details>(
+                    cell, risk, position, positions, probability, positions.probabilities, table);
+                result << ",\"longTermRisk\":{\"algorithm\":\"templates\",\"bodyUnion\":" << details.body << ",\"restrictionCounts\":[";
+                for (int k = 0; k < (int)details.restrictions.size; ++k) {
+                    if (k != 0) result << ',';
+                    result << details.restrictions[k];
                 }
+                result << "]}";
             }
         }
     }

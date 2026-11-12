@@ -87,12 +87,12 @@ struct Selection {
     // requested 为空时先筛常规候选，不足两格才筛第二档。
     // 第二档筛完仍不足两格时，再从更外面按雷率补一个可用的前沿格。
     // T 格安全率须高于全盘最高安全率的 95%，有必安时跳过这批 T 格。
-    // influences 可借用与盘面同尺寸的粗 LTR。旧 Java 传布局数，模板传补偿概率。
+    // influences 可借用与盘面同尺寸的粗 LTR。网格保存每格的补偿概率。
     // requested 非空时只在这组互异的 Hidden 或 ForcedSafe 格内按三个开关筛选，启用支配剪枝时先按雷率排序。
     // result.nodes 记录计算数字概率和重算条件概率的次数。
     void select(Result &result, Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
                 Probability::Pool &probabilities, const Config &config,
-                const vector<ObservedBoard::CellId> &requested, const Grid<long double> *influences, bool oldJava);
+                const vector<ObservedBoard::CellId> &requested, const Grid<long double> *influences);
 
   private:
     struct Workspace;
@@ -100,7 +100,7 @@ struct Selection {
     // 用当前盘面的雷率筛选并排序，覆盖 cells。每格保留常规范围、第二范围或兜底的归属，供调用方逐格筛选。
     void collect(vector<Cell> &cells, Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
                  const Probability::Pool &probabilities, const Config &config, const vector<ObservedBoard::CellId> &requested,
-                 const Grid<long double> *influences, bool oldJava);
+                 const Grid<long double> *influences);
     bool offEdgeCandidate(const ObservedBoard::Result &board, ObservedBoard::CellId cell);
     bool isDead(const Observe::Result &observation);
     bool interchangeable(const Position::Result &position, const Position::ProbabilityResult &probability,

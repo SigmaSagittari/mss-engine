@@ -109,7 +109,7 @@ SuggestResult AnytimeSearch::Result::snapshot(const Pool &pool) const {
 
 AnytimeSearch::Evaluation AnytimeSearch::evaluate(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
                                                    Probability::Pool &probabilities, const Config &config, const Selection::Candidate &candidate,
-                                                   int remaining, long double floor, vectorPool<Outcome> &outcomes, long double compensation, bool scaleCompensation) {
+                                                   int remaining, long double floor, vectorPool<Outcome> &outcomes, long double compensation) {
     using Cell = ObservedBoard::CellState;
     using CellId = ObservedBoard::CellId;
     const long double *digitProbability = candidate.observation.probability;
@@ -217,7 +217,7 @@ AnytimeSearch::Evaluation AnytimeSearch::evaluate(Position::Result &position, Po
     const auto [value, multiplier] = score(false);
     result.value = value;
     result.progressMultiplier = multiplier;
-    result.compensation = scaleCompensation ? value / (1.0L - mine) * compensation : compensation;
+    result.compensation = compensation;
     return result;
 }
 
@@ -258,7 +258,7 @@ vectorPool<AnytimeSearch::Pool::Move>::vector AnytimeSearch::appendMoves(Pool &p
 
 AnytimeSearch::Result AnytimeSearch::buildRoot(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
                                                Probability::Pool &probabilities, const Selection::Result &selected, const Grid<long double> &longTermRisk,
-                                               int remainingSafe, const Config &config, Pool &pool, bool scaleCompensation) {
+                                               int remainingSafe, const Config &config, Pool &pool) {
     pool.clear(positions);
     Result result;
     result.nodes = selected.nodes;
@@ -283,7 +283,7 @@ AnytimeSearch::Result AnytimeSearch::buildRoot(Position::Result &position, Posit
         const Selection::Candidate &candidate = selected.candidates[i];
         const auto [row, col] = board.pos(candidate.cell);
         const Evaluation evaluated = evaluate(position, positions, probability, probabilities, config, candidate, pool.remainingSafe, -1.0L,
-                                              outcomes, longTermRisk[row][col], scaleCompensation);
+                                              outcomes, longTermRisk[row][col]);
         result.nodes += evaluated.nodes;
         evaluations.push_back(evaluated);
     }
@@ -327,7 +327,7 @@ void AnytimeSearch::select(Position::Result &position, Position::Pool &positions
     accepted.resize(0);
     frontier.knownSafe = -1;
     Selection selection;
-    if (safe < 0) selection.collect(cells, position, positions, probability, probabilities, config.selection, {}, nullptr, false);
+    if (safe < 0) selection.collect(cells, position, positions, probability, probabilities, config.selection, {}, nullptr);
     else {
         cells.resize(1);
         cells[0] = {safe, 0.0L, true, Range::First, false};
@@ -602,17 +602,17 @@ void AnytimeSearch::updateImpl(Result &result, Position::Result &position, Posit
 
 AnytimeSearch::Result AnytimeSearch::analyze(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
                                              Probability::Pool &probabilities, const Selection::Result &selected, const Grid<long double> &longTermRisk,
-                                             int remainingSafe, const Config &config, Pool &pool, bool scaleCompensation) {
-    Result result = buildRoot(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, config, pool, scaleCompensation);
+                                             int remainingSafe, const Config &config, Pool &pool) {
+    Result result = buildRoot(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, config, pool);
     update(result, position, positions, config, pool);
     return result;
 }
 
 AnytimeSearch::Result AnytimeSearch::analyze(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
                                              Probability::Pool &probabilities, const Selection::Result &selected, const Grid<long double> &longTermRisk,
-                                             int remainingSafe, const Config &config, Pool &pool, SuggestResult::Details &details, bool scaleCompensation) {
+                                             int remainingSafe, const Config &config, Pool &pool, SuggestResult::Details &details) {
     details.clear();
-    Result result = buildRoot(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, config, pool, scaleCompensation);
+    Result result = buildRoot(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, config, pool);
     for (int i = 0; i < (int)result.roots.count; ++i) record(pool, (int)result.roots.offset + i, details);
     update(result, position, positions, config, pool, details);
     return result;

@@ -7,7 +7,7 @@ namespace mss {
 
 // 选招结果由调用方持有。
 struct SuggestResult {
-    enum class Engine { None, Safe, LowRisk, JavaEval, Anytime, BruteForce };
+    enum class Engine { None, Safe, LowRisk, Anytime, BruteForce };
     // 已结束、已有必安、强制死猜、Semi 本体，或普通评分选优；不记录候选是如何传入的。
     enum class Reason { Finished, Safe, Forced, Semi, ScoreWins };
     struct Candidate {

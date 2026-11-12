@@ -1,7 +1,6 @@
 #pragma once
 
 #include "algo/winrate_engine/basic/anytime_search/anytime_search.h"
-#include "algo/winrate_engine/basic/java_eval/java_eval.h"
 #include "algo/winrate_engine/bruteforce/bruteforce.h"
 #include "algo/winrate_engine/fifty_fifty/fifty_fifty.h"
 #include "core/datastructure/flat_hashtable.h"
@@ -31,19 +30,17 @@ struct Pool {
 } // 命名空间 Suggest
 
 struct MovePolicy {
-    enum class Algorithm { LowRisk, JavaEval, Anytime };
+    enum class Algorithm { LowRisk, Anytime };
 
     struct Config {
         Algorithm algorithm;
 
         struct Guess {
             const Selection::Filter &selection;
-            const Selection::Exchange *exchange; // Anytime 自动选首招时借用。JavaEval 传 nullptr。
+            const Selection::Exchange &exchange; // 自动选首招时使用。
             bool longTermRisk; // 是否计算粗 LTR 和首招的正式 LTR 补偿。
             FiftyFifty::Config fiftyFifty;
-            // 借用所选算法的配置，未选算法的指针可为空。
-            const JavaEval::Config *javaEval;
-            const AnytimeSearch::Config *anytime;
+            const AnytimeSearch::Config *anytime; // 借用本次搜索的配置。
         };
         const Guess *guess; // 借用本次选招的配置。LowRisk 传 nullptr。
 

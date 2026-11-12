@@ -1,13 +1,15 @@
 #pragma once
 
-#include "algo/winrate_engine/fifty_fifty/old_java/semi.h"
 #include "algo/winrate_engine/fifty_fifty/templates/template_data.h"
+#include "game/position.h"
 
 namespace mss {
 
+enum class FiftyFiftyKind;
+
 struct TemplateSemi {
     // templates 已按所需目录前缀编译；输出按格号升序，存在 Forced 时只返回 Forced 格。
-    Semi::Kind detect(vector<ObservedBoard::CellId> &cells, const Position::Result &position,
+    FiftyFiftyKind detect(vector<ObservedBoard::CellId> &cells, const Position::Result &position,
                       const Position::ProbabilityResult &probability, const Probability::Pool &probabilities,
                       const FiftyFiftyData::Pool &templates);
 

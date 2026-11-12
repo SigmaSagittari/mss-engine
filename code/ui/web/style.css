@@ -57,22 +57,22 @@ dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 32px); 
 dialog::backdrop { background: #17203366; }
 .settings-title { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid #e3e7ed; }
 .settings-title h2 { margin: 0; font-size: 17px; }
-.settings-body { display: grid; grid-template-columns: auto auto auto 1fr; gap: 0 6px; min-width: 0; margin: 0; padding: 12px 18px 0; border: 0; }
+.settings-body { display: grid; grid-template-columns: repeat(4, auto) minmax(0, 1fr); gap: 0 6px; min-width: 0; margin: 0; padding: 12px 18px 0; border: 0; }
 .settings-legend { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .settings-category-radio { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); }
-.settings-tab { display: block; margin-bottom: -1px; padding: 8px 12px; border: 1px solid transparent; border-radius: 7px 7px 0 0; background: #f3f5f8; color: #637087; cursor: pointer; text-align: center; }
+.settings-tab { display: block; margin-bottom: -1px; padding: 8px clamp(6px, 2vw, 12px); border: 1px solid transparent; border-radius: 7px 7px 0 0; background: #f3f5f8; color: #637087; cursor: pointer; text-align: center; }
 .settings-category-radio:checked + .settings-tab { border-color: #c8cfda; border-bottom-color: #fff; background: #fff; color: #315fae; }
 .settings-category-radio:focus-visible + .settings-tab { outline: 2px solid #4278df; outline-offset: 2px; }
 .settings-panels { grid-column: 1 / -1; min-width: 0; padding: 14px 0; border-top: 1px solid #e3e7ed; }
 .settings-panel { display: none; gap: 22px; }
 .settings-panel h3 { margin: 0; font-size: 14px; font-weight: 600; }
-#settings-category-solver:checked ~ .settings-panels #settings-solver, #settings-category-display:checked ~ .settings-panels #settings-display, #settings-category-board:checked ~ .settings-panels #settings-board { display: grid; }
+#settings-category-solver:checked ~ .settings-panels #settings-solver, #settings-category-display:checked ~ .settings-panels #settings-display, #settings-category-board:checked ~ .settings-panels #settings-board, #settings-category-advanced:checked ~ .settings-panels #settings-advanced { display: grid; }
 .settings-group, .settings-stack { display: grid; gap: 10px; }
-#settings-solver { row-gap: 12px; }
-#settings-solver > .settings-group { padding-bottom: 12px; border-bottom: 1px solid #e3e7ed; }
+#settings-solver, #settings-advanced { row-gap: 12px; }
+#settings-solver > .settings-group, #settings-advanced > .settings-group:not(:last-child) { padding-bottom: 12px; border-bottom: 1px solid #e3e7ed; }
 .settings-stack[hidden] { display: none; }
 .settings-check { display: flex; align-items: center; gap: 8px; }
-.settings-caption { color: #637087; font-size: 13px; }
+.settings-caption { margin: 0; color: #637087; font-size: 13px; line-height: 1.5; }
 .settings-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; gap: 16px; }
 .settings-row[hidden] { display: none; }
 .settings-row select { min-width: 0; }
@@ -171,12 +171,6 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) clamp(360px, 29vw, 4
 .detail-table .latest { font-weight: 600; }
 #detail-long-term-risk { margin-top: 14px; font-size: 12px; line-height: 1.8; font-variant-numeric: tabular-nums; }
 #detail-long-term-risk h3 { margin: 0 0 4px; color: #66738a; font-size: 13px; font-weight: 400; }
-.analysis-blocker { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; background: #f3f5f8; }
-.analysis-blocker[hidden] { display: none; }
-.analysis-blocker-content { min-width: 250px; padding: 28px; border: 1px solid #dce1e8; border-radius: 10px; background: #fff; text-align: center; box-shadow: 0 6px 24px #1b2a3b12; }
-.analysis-blocker-content h2 { margin: 14px 0 0; font-size: 18px; }
-.analysis-spinner { width: 30px; height: 30px; margin: auto; border: 3px solid #dce4f1; border-top-color: #4278df; border-radius: 50%; animation: analysis-spin .8s linear infinite; }
-@keyframes analysis-spin { to { transform: rotate(360deg); } }
 @media (max-width: 1050px) {
     main { grid-template-columns: minmax(0, 1fr); padding: 12px; gap: 12px; }
 }

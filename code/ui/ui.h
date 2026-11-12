@@ -9,16 +9,12 @@ namespace mss::UI {
 // UI 持有可切换算法的参数；MovePolicy 仅在调用期间借用这些值。
 struct Config {
     struct Fifty {
-        mss::FiftyFifty::Algorithm algorithm;
-        LongTermRisk::Config oldJava;
-        mss::FiftyFifty::TemplateConfig templates;
-        int eventLimit;
+        int prefix, eventLimit;
     };
     ShapeSolverConfig::SA annealing;
     Position::Config game;
     MovePolicy::Algorithm algorithm;
     bool longTermRisk;
-    JavaEval::Config javaEval;
     AnytimeSearch::Config anytime;
     Fifty fiftyFifty;
     MovePolicy::Config::Brute brute;
