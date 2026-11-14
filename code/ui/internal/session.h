@@ -44,7 +44,7 @@ struct Session {
     std::string makeToken() const;
     std::string cellString(const ObservedBoard::Result &board) const;
     std::string candidateCount(long double layouts) const;
-    void writeProbabilities(std::ostream &result, Position::Result &position, Position::Pool &positions) const;
+    void writeProbabilities(std::ostream &result, const Position::Result &position, const Probability::BoxResult &boxes, const Probability::Pool &probabilities) const;
     std::string mctsResult(const MonteCarlo::Result &result, bool complete, long double candidates) const;
     std::string searchResult(const SearchTask &task) const;
     void writeMoveDetails(std::ostream &result, const SuggestResult::Details &details, ObservedBoard::CellId cell) const;
@@ -59,7 +59,7 @@ struct Session {
     std::string analyze(const std::vector<FormField> &fields);
     std::string playUntilNoSafe(const std::vector<FormField> &fields);
     std::string controlSearch(const std::vector<FormField> &fields);
-    void writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config, const vector<ObservedBoard::CellId> &targets);
+    Position::ProbabilityResult writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config, const vector<ObservedBoard::CellId> &targets);
 
     // 普通计算由 HTTP 请求串行访问；仅保留最近一次计算，前端负责串行引用其 id。
     std::unique_ptr<Analysis> analysis_;

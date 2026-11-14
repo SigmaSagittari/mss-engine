@@ -366,15 +366,14 @@ std::string Session::candidateCount(long double layouts) const {
     return jsonString(count.str());
 }
 
-void Session::writeProbabilities(std::ostream &result, Position::Result &position, Position::Pool &positions) const {
+void Session::writeProbabilities(std::ostream &result, const Position::Result &position, const Probability::BoxResult &boxes, const Probability::Pool &probabilities) const {
     const ObservedBoard::Result &board = position.board;
-    const Position::ProbabilityResult probability = Position().analyzeProbability(position, positions);
     result << std::setprecision(18) << ",\"probabilities\":[";
     for (int row = 0; row < board.cells.rows(); ++row)
         for (int col = 0; col < board.cells.cols(); ++col) {
             if (row != 0 || col != 0)
                 result << ',';
-            result << Probability().mineProbability(probability.boxes, positions.probabilities, board.id(row, col), board, position.basic, position.structure);
+            result << Probability().mineProbability(boxes, probabilities, board.id(row, col), board, position.basic, position.structure);
         }
     result << ']';
 }
@@ -401,13 +400,15 @@ void Session::writeMoveDetails(std::ostream &result, const SuggestResult::Detail
     result << ']';
 }
 
-void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config, const vector<ObservedBoard::CellId> &targets) {
+Position::ProbabilityResult Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config, const vector<ObservedBoard::CellId> &targets) {
+    Position::Result &position = analysis.checked.result;
+    Position::Pool &positions = analysis.positions;
     const MovePolicy::Config::Guess guess = config.guess();
     const MovePolicy::Config policy = config.policy(guess);
     AnytimeSearch::Result searched;
     SuggestResult::Details details;
-    const SuggestResult evaluated = MovePolicy().suggest(analysis.checked.result, analysis.positions, policy, analysis.suggestions,
-                                                          targets, searched, details);
+    const SuggestResult evaluated = MovePolicy().suggest(position, positions, policy, analysis.suggestions, targets, searched, details);
+    const Position::ProbabilityResult probability = Position().analyzeProbability(position, positions);
     result << std::setprecision(18);
     const bool safe = evaluated.engine == SuggestResult::Engine::Safe;
     const bool exact = evaluated.engine == SuggestResult::Engine::BruteForce;
@@ -426,13 +427,15 @@ void Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Co
     for (int i = 0; i < (int)evaluated.candidates.size; ++i) {
         if (i != 0) result << ',';
         const SuggestResult::Candidate &candidate = evaluated.candidates.data[i];
-        result << "{\"cell\":" << candidate.cell << ",\"value\":" << candidate.value << ",\"probability\":" << analysis.mineProbability(candidate.cell);
+        const long double mine = Probability().mineProbability(probability.boxes, positions.probabilities, candidate.cell, position.board, position.basic, position.structure);
+        result << "{\"cell\":" << candidate.cell << ",\"value\":" << candidate.value << ",\"probability\":" << mine;
         if (evaluated.engine == SuggestResult::Engine::Anytime) result << ",\"depth\":" << analysis.suggestions.anytime.moves.data[searched.roots.offset + i].expandedDepth;
         writeMoveDetails(result, details, candidate.cell);
         result << '}';
     }
     result << ']';
-    analysis.suggestions.anytime.clear(analysis.positions);
+    analysis.suggestions.anytime.clear(positions);
+    return probability;
 }
 
 std::string Session::analyze(const std::vector<FormField> &fields) {
@@ -450,11 +453,9 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
     }
     Position::Result &position = analysis_->checked.result;
     Position::Pool &positions = analysis_->positions;
-    const Position::ProbabilityResult probability = Position().analyzeProbability(position, positions);
     std::ostringstream result;
-    result << "{\"ok\":true,\"analysisId\":" << analysis_->id << ",\"candidateCount\":" << candidateCount(probability.totalWays);
-    if (value(fields, "includeProbabilities") == "true")
-        writeProbabilities(result, position, positions);
+    result << "{\"ok\":true,\"analysisId\":" << analysis_->id;
+    Position::ProbabilityResult probability;
     if (value(fields, "suggest") == "true") {
         Config config = config_;
         if (!parseConfig(fields, config, response))
@@ -479,8 +480,13 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
             start = end + 1;
         }
         if (targets.size != 0) config.anytime.width[0] = 0;
-        writeSuggestion(result, *analysis_, config, targets);
+        probability = writeSuggestion(result, *analysis_, config, targets);
+    } else {
+        probability = Position().analyzeProbability(position, positions);
     }
+    result << ",\"candidateCount\":" << candidateCount(probability.totalWays);
+    if (value(fields, "includeProbabilities") == "true")
+        writeProbabilities(result, position, probability.boxes, positions.probabilities);
     const std::string cellText = value(fields, "cell");
     if (!cellText.empty()) {
         int cell;
@@ -488,7 +494,8 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
         if (!parseInteger(cellText, cell) || cell < 0 || cell >= board.cells.rows() * board.cells.cols())
             return error("格子编号无效");
         const ObservedBoard::CellState state = board.cells[cell / board.cells.cols()][cell % board.cells.cols()];
-        result << std::setprecision(18) << ",\"probability\":" << analysis_->mineProbability(cell);
+        const long double mine = Probability().mineProbability(probability.boxes, positions.probabilities, cell, board, position.basic, position.structure);
+        result << std::setprecision(18) << ",\"probability\":" << mine;
         if (state < ObservedBoard::CellState::Hidden || state == ObservedBoard::CellState::ForcedMine) {
             result << ",\"observe\":null";
         } else {
@@ -504,7 +511,7 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
             result << ']';
         }
         if (value(fields, "risk") == "true") {
-            if (state != ObservedBoard::CellState::Hidden || analysis_->mineProbability(cell) == 0.0L) result << ",\"longTermRisk\":null";
+            if (state != ObservedBoard::CellState::Hidden || mine == 0.0L) result << ",\"longTermRisk\":null";
             else {
                 Config config = config_;
                 if (!parseFiftyFifty(fields, config, response)) return response;
@@ -572,7 +579,7 @@ std::string Session::playUntilNoSafe(const std::vector<FormField> &fields) {
         Position::Result position = Position().analyze(played, positions, config);
         const Position::ProbabilityResult probability = Position().analyzeProbability(position, positions);
         result << ",\"candidateCount\":" << candidateCount(probability.totalWays);
-        writeProbabilities(result, position, positions);
+        writeProbabilities(result, position, probability.boxes, positions.probabilities);
     }
     result << '}';
     return result.str();

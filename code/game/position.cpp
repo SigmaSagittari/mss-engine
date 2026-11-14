@@ -108,6 +108,7 @@ Position::Delta Position::updateWithDelta(Result &result, const vector<ObservedB
     const Structure::Delta structure = Structure().update(result.structure, result.board, result.basic, pool.structure, observed, basic, pool.basic);
     Delta delta{observed, basic, structure};
     if (observed.changes.count != 0) {
+        delta.probabilityVersion = result.probabilityVersion;
         LogicComponentResult &components = result.logicComponents;
         if (components.valid) delta.logicComponentVersion = components.version;
         components.valid = false;
@@ -130,7 +131,7 @@ void Position::applyDelta(Result &result, const Delta &delta, const Pool &pool, 
         LogicComponentResult &components = result.logicComponents;
         // 临时变更期间没有覆盖原结果时，撤回可以继续使用它。
         components.valid = reverse && delta.logicComponentVersion != 0 && components.version == delta.logicComponentVersion;
-        result.probabilityVersion = 0;
+        result.probabilityVersion = reverse ? delta.probabilityVersion : 0;
     }
 }
 
@@ -166,6 +167,14 @@ Position::ProbabilityResult Position::analyzeProbability(Result &result, Pool &p
     probabilities.blockProbabilities.pop_back(probability.probabilities);
     probabilities.blocks.pop_back(probability.blocks);
     return {boxes, probability.totalWays};
+}
+
+long double Position::countWays(Result &result, Pool &pool) {
+    updateStructure(result, pool);
+    Workspace &workspace = getWorkspace();
+    vector<ShapeSolver::DistributionId> &distributionIds = workspace.distributionIds;
+    analyzeDistributions(result, pool.distributions, distributionIds);
+    return Probability().countWays(distributionIds, result.board.totalMines - result.basic.mineSum, pool.probabilities);
 }
 
 void Position::observe(const Result &position, const ProbabilityResult &probability, const Probability::Pool &probabilities,

@@ -1,6 +1,7 @@
 #include "algo/probability_engine/probability/probability.h"
 
 #include <algorithm>
+#include <bit>
 #include <utility>
 
 #include "core/algorithm/poly.h"
@@ -39,29 +40,15 @@ struct Probability::Workspace {
 struct PolyProductTree {
     using Node = Probability::Workspace::Products::Node;
 
-    // 先回调全乘积，返回真时再回调每个因子的块外乘积。视图只在对应回调期间有效。
-    template <typename Callback, typename TotalCallback> void forEachOutside(const vector<Poly> &factors, const Callback &callback, const TotalCallback &totalCallback) {
-        Probability::Workspace &workspace = Probability().getWorkspace();
-        vectorPool<long double> &values = workspace.frontierProducts.values;
-        vector<Node> &nodes = workspace.frontierProducts.nodes;
-        vector<Node> &outside = workspace.frontierProducts.outside;
-        const int factorCount = factors.size;
-        values.data.resize(0);
-        Node unit{0, values.push_back()};
-        values.push_back(unit.coefficients, 1.0L);
-        if (factorCount == 0) {
-            totalCallback(polyOf(unit, values));
-            return;
-        }
+    // 返回全乘积，视图借用 factors 或 values，改写相应存储前使用。
+    Poly multiplyAll(const vector<Poly> &factors, vector<Node> &nodes, vectorPool<long double> &values) {
         int leafBase = 1;
-        int treeHeight = 0;
-        while (leafBase < factorCount) {
-            leafBase *= 2;
-            ++treeHeight;
-        }
+        while (leafBase < (int)factors.size) leafBase *= 2;
         nodes.resize(leafBase);
-        outside.resize(treeHeight + 1);
-        outside.data[0] = unit;
+        values.data.resize(0);
+        Node &unit = nodes[0];
+        unit = {0, values.push_back()};
+        values.push_back(unit.coefficients, 1.0L);
         // 叶数补到 2 的幂；越界叶子由 unit 作为乘法单位元提供。
         for (int index = leafBase - 1; index > 0; --index) {
             const int left = index << 1;
@@ -70,10 +57,18 @@ struct PolyProductTree {
             product = allocateProduct(nodeOf(left, factors, leafBase, unit, nodes, values), nodeOf(right, factors, leafBase, unit, nodes, values), values);
             multiply(nodeOf(left, factors, leafBase, unit, nodes, values), nodeOf(right, factors, leafBase, unit, nodes, values), product, values);
         }
-        if (totalCallback(leafBase == 1 ? factors[0] : polyOf(nodes.data[1], values))) {
-            // 每个子树的 outside 等于父 outside 乘兄弟子树。
-            visitOutside(1, 0, factors, leafBase, unit, nodes, outside, values, callback);
-        }
+        if (leafBase > 1) return polyOf(nodes.data[1], values);
+        return factors.size == 1 ? factors[0] : polyOf(unit, values);
+    }
+
+    // 使用 multiplyAll 构建的树。每次回调的视图在该次回调内有效。
+    template <typename Callback> void forEachOutside(const vector<Poly> &factors, const vector<Node> &nodes, vectorPool<long double> &values, vector<Node> &outside, const Callback &callback) {
+        if (factors.size == 0) return;
+        const int leafBase = nodes.size;
+        const Node &unit = nodes[0];
+        outside.resize(std::bit_width(nodes.size));
+        outside.data[0] = unit;
+        visitOutside(1, 0, factors, leafBase, unit, nodes, outside, values, callback);
     }
 
   private:
@@ -192,23 +187,44 @@ void Probability::Pool::clear() {
     boxProbabilities.data.resize(0);
 }
 
+// 任一块无解时返回 false。
+bool Probability::collectFrontiers(const vector<ShapeSolver::DistributionId> &distributionIds, const ShapeSolver::DistributionPool &distributions, vector<Poly> &frontiers, int &tSum) {
+    frontiers.resize(0);
+    tSum = 0;
+    for (int component = 0; component < (int)distributionIds.size; ++component) {
+        const ShapeSolver::Distribution &distribution = distributions.list[distributionIds[component]];
+        if (distribution.ways.count == 0) return false;
+        frontiers.push_back({distribution.start, {distributions.values.span(distribution.ways).begin(), (int)distribution.ways.count}});
+        tSum += distribution.tCount;
+    }
+    return true;
+}
+
+long double Probability::countWays(const vector<ShapeSolver::DistributionId> &distributionIds, int totalMines, Pool &results) {
+    Workspace &workspace = getWorkspace();
+    vector<Poly> &frontiers = workspace.frontiers;
+    vector<PolyProductTree::Node> &nodes = workspace.frontierProducts.nodes;
+    vectorPool<long double> &values = workspace.frontierProducts.values;
+    int tSum;
+    if (!collectFrontiers(distributionIds, results.distributions, frontiers, tSum)) return 0.0L;
+    const Poly all = PolyProductTree().multiplyAll(frontiers, nodes, values);
+    return countWeightedWays(all, totalMines, tSum, results.combinations);
+}
+
 Probability::Result Probability::analyze(const vector<ShapeSolver::DistributionId> &distributionIds, int totalMines, Pool &results) {
     Workspace &workspace = getWorkspace();
     const ShapeSolver::DistributionPool &distributions = results.distributions;
     vector<Poly> &frontiers = workspace.frontiers;
-    frontiers.resize(0);
-    const int componentCount = (int)distributionIds.size;
-    int tSum = 0;
+    vector<PolyProductTree::Node> &nodes = workspace.frontierProducts.nodes;
+    vectorPool<long double> &values = workspace.frontierProducts.values;
+    vector<PolyProductTree::Node> &outside = workspace.frontierProducts.outside;
     Result result{results.blocks.push_back(), results.blockProbabilities.push_back(), 0.0L};
-    for (int component = 0; component < componentCount; ++component) {
-        const ShapeSolver::Distribution &distribution = distributions.list.data[distributionIds.data[component]];
-        if (distribution.ways.count == 0)
-            return result;
-        frontiers.push_back(Poly{distribution.start, span<const long double>(distributions.values.data.data + distribution.ways.offset, (int)distribution.ways.count)});
-        tSum += distribution.tCount;
-    }
-
-    PolyProductTree().forEachOutside(frontiers, [&](int component, const Poly &outside) {
+    int tSum;
+    if (!collectFrontiers(distributionIds, distributions, frontiers, tSum)) return result;
+    const Poly all = PolyProductTree().multiplyAll(frontiers, nodes, values);
+    result.totalWays = countWeightedWays(all, totalMines, tSum, results.combinations);
+    if (result.totalWays == 0.0L) return result;
+    PolyProductTree().forEachOutside(frontiers, nodes, values, outside, [&](int component, const Poly &outside) {
         const ShapeSolver::Distribution &distribution = distributions.list.data[distributionIds.data[component]];
         const Poly &frontier = frontiers.data[component];
         const int tCount = distribution.tCount;
@@ -225,9 +241,6 @@ Probability::Result Probability::analyze(const vector<ShapeSolver::DistributionI
             results.blockProbabilities.push_back(probabilities, chance);
         }
         results.blocks.push_back(result.blocks, {start, probabilities});
-    }, [&](const Poly &all) {
-        result.totalWays = countWeightedWays(all, totalMines, tSum, results.combinations);
-        return result.totalWays != 0.0L;
     });
     result.probabilities.count = results.blockProbabilities.data.size - result.probabilities.offset;
     return result;

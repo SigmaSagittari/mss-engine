@@ -40,7 +40,6 @@ struct TemplateLongTermRisk::Query {
     Result &result;
     Position::Result &position;
     Position::Pool &positions;
-    Probability::Pool &probabilities;
     const FiftyFiftyData::Pool &templates;
     vectorPool<Force> &forces;
     vectorPool<Forces> &blockers;
@@ -104,11 +103,7 @@ struct TemplateLongTermRisk::Query {
         // 数字失去最后一个候选格时，先检查约束，再更新 Structure。
         if (valid(basic)) {
             const Structure::Delta structure = Structure().update(position.structure, board, position.basic, positions.structure, observed, basic, positions.basic);
-            const vectorPool<long double>::vector boxTail = probabilities.boxProbabilities.push_back();
-            const Position::ProbabilityResult probability = Position().analyzeProbability(position, positions, probabilities);
-            ways = probability.totalWays;
-            probabilities.boxProbabilities.pop_back(boxTail);
-            probabilities.instanceBoxes.pop_back(probability.boxes.instanceBoxes);
+            ways = Position().countWays(position, positions);
             // 直接撤回本次改动，原盘的 LogicComponent 结果可以继续使用。
             Structure().applyDelta(position.structure, structure, positions.structure, true);
             positions.structure.deltas.added.pop_back(structure.added);
@@ -417,7 +412,7 @@ TemplateLongTermRisk::InfluenceResult<request> TemplateLongTermRisk::influence(
     workspace.assigned.resize(0);
     workspace.fixed.resize(result.mine.size);
     std::fill_n(workspace.fixed.data, workspace.fixed.size, 0);
-    Query query{result, position, positions, probabilities, templates, workspace.forces, workspace.blockers, workspace.values,
+    Query query{result, position, positions, templates, workspace.forces, workspace.blockers, workspace.values,
                 workspace.assigned, workspace.fixed, events, workspace.signature};
     for (int i = 0; i < (int)eventMasks.size; ++i) for (int direction = 0; direction < 4; ++direction) {
         if (!(eventMasks[i] & (1 << direction))) continue;

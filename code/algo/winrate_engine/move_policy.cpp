@@ -155,8 +155,8 @@ SuggestResult MovePolicy::suggest(Position::Result &position, Position::Pool &po
 
     const AnytimeSearch::Config &anytime = *guess.anytime;
     AnytimeSearch::Result searched = Details
-        ? AnytimeSearch().analyze(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, anytime, searchPool, details)
-        : AnytimeSearch().analyze(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, anytime, searchPool);
+        ? AnytimeSearch().analyze(position, positions, probability, selected, longTermRisk, remainingSafe, anytime, searchPool, details)
+        : AnytimeSearch().analyze(position, positions, probability, selected, longTermRisk, remainingSafe, anytime, searchPool);
     if (semi != FiftyFiftyKind::None) searched.reason = reason;
     SuggestResult result = searched.snapshot(searchPool);
     if constexpr (Details) search = searched;

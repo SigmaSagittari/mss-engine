@@ -61,6 +61,9 @@ struct Probability {
     // 各块互不重叠，totalMines 是其中的剩余雷数。返回各块的雷数档后验概率。
     Result analyze(const vector<ShapeSolver::DistributionId> &distributionIds, int totalMines, Pool &results);
 
+    // 按 totalMines 合并各块的摆法数，ID 约定与 analyze 相同。无解时返回 0。
+    long double countWays(const vector<ShapeSolver::DistributionId> &distributionIds, int totalMines, Pool &results);
+
     // 复用 analyze 的 ID 向量与池。ID 按 structure.instanceIds 排列，末尾可带一项纯 T 分布。
     BoxResult projectBoxes(const Result &result, const vector<ShapeSolver::DistributionId> &distributionIds,
                            const Structure::Result &structure, Pool &results);
@@ -76,6 +79,7 @@ struct Probability {
     struct Workspace;
     friend struct PolyProductTree;
     Workspace &getWorkspace();
+    bool collectFrontiers(const vector<ShapeSolver::DistributionId> &distributionIds, const ShapeSolver::DistributionPool &distributions, vector<Poly> &frontiers, int &tSum);
     long double countWeightedWays(const Poly &polynomial, int totalMines, int freeCells, Combination::Pool &combinations);
     long double limitProbability(long double probability);
     long double pickFreeWays(int freeCells, int freeMines, Combination::Pool &combinations);

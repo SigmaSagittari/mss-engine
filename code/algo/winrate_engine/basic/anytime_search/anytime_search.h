@@ -74,15 +74,17 @@ struct AnytimeSearch {
         SuggestResult snapshot(const Pool &pool) const;
     };
 
-    // 候选、概率及 remainingSafe 对应同一盘面，Structure 已同步。longTermRisk 按盘面行列存放各首招的补偿。
+    // 候选、概率及 remainingSafe 对应同一盘面，Structure 已同步。概率切片来自 positions.probabilities。
+    // longTermRisk 按盘面行列存放各首招的补偿。
     // width[0] 为 0 时按输入顺序保留全部首招。为正数时按含 LTR 的分数取前 width[0] 格。
     // 根局面、Position::Pool 的增量记录及概率池借用的分布和组合数池须覆盖续搜期。
+    // 开始搜索时把已判定的必雷写入 position，返回后保留。写入后，查询当前盘面须重新向 Position 取概率。
     // 用本池搜索另一盘前，先用原盘的 Position::Pool 清理未完成的搜索。
     Result analyze(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
-                   Probability::Pool &probabilities, const Selection::Result &selected, const Grid<long double> &longTermRisk,
+                   const Selection::Result &selected, const Grid<long double> &longTermRisk,
                    int remainingSafe, const Config &config, Pool &pool);
     Result analyze(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
-                   Probability::Pool &probabilities, const Selection::Result &selected, const Grid<long double> &longTermRisk,
+                   const Selection::Result &selected, const Grid<long double> &longTermRisk,
                    int remainingSafe, const Config &config, Pool &pool, SuggestResult::Details &details);
 
     // 每次推进使用 config.nodeLimit，续搜只调整预算。返回前恢复根盘面，搜完后回收本次搜索的 Delta。
@@ -102,8 +104,8 @@ struct AnytimeSearch {
                         int remaining, long double floor, vectorPool<Outcome> &outcomes, long double compensation = 0.0L);
     vectorPool<Pool::Move>::vector appendMoves(Pool &pool, int parent, int depth, const vector<Evaluation> &evaluations,
                                                const vectorPool<Outcome> &outcomes, Probability::Pool &probabilities);
-    Result buildRoot(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
-                     Probability::Pool &probabilities, const Selection::Result &selected, const Grid<long double> &longTermRisk,
+    Result buildRoot(Position::Result &position, Position::Pool &positions, Position::ProbabilityResult probability,
+                     const Selection::Result &selected, const Grid<long double> &longTermRisk,
                      int remainingSafe, const Config &config, Pool &pool);
     // 为首招之后的局面选招。进入第二范围和兜底看等价、支配剪枝前的候选数，评分只取前 limit 格。
     // evaluations 与 outcomes 由调用方清空。实际执行的 Observe 和条件概率分析从 budget 扣除。

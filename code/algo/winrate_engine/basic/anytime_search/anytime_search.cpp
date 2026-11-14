@@ -256,8 +256,8 @@ vectorPool<AnytimeSearch::Pool::Move>::vector AnytimeSearch::appendMoves(Pool &p
 }
 
 
-AnytimeSearch::Result AnytimeSearch::buildRoot(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
-                                               Probability::Pool &probabilities, const Selection::Result &selected, const Grid<long double> &longTermRisk,
+AnytimeSearch::Result AnytimeSearch::buildRoot(Position::Result &position, Position::Pool &positions, Position::ProbabilityResult probability,
+                                               const Selection::Result &selected, const Grid<long double> &longTermRisk,
                                                int remainingSafe, const Config &config, Pool &pool) {
     pool.clear(positions);
     Result result;
@@ -269,10 +269,24 @@ AnytimeSearch::Result AnytimeSearch::buildRoot(Position::Result &position, Posit
     if (pool.remainingSafe == 0) return result;
     result.reason = SuggestResult::Reason::ScoreWins;
 
+    Workspace &workspace = getWorkspace();
+    using Cell = ObservedBoard::CellState;
+    Probability::Pool &probabilities = positions.probabilities;
+    vector<ObservedBoard::Delta::Change> &changes = workspace.changes;
+    changes.resize(0);
+    auto markMine = [&](ObservedBoard::CellId cell) { changes.push_back({cell, Cell::Hidden, Cell::ForcedMine}); };
+    probability.boxes.frontierCells(probabilities, position.structure, [&](ObservedBoard::CellId cell, long double mine) {
+        if (mine == 1.0L) markMine(cell);
+    });
+    if (probability.boxes.tCellProbability == 1.0L) position.basic.tCells(markMine);
+    if (changes.size != 0) {
+        Position().update(position, changes, positions);
+        probability = Position().analyzeProbability(position, positions);
+    }
+
     pool.deltaStart = {{positions.board.changes.push_back()}, {positions.basic.changes.push_back()},
                        {positions.structure.deltas.removed.push_back(), positions.structure.deltas.added.push_back()}};
     pool.hasDeltas = true;
-    Workspace &workspace = getWorkspace();
     const vectorPool<long double>::vector boxTail = probabilities.boxProbabilities.push_back();
     const vectorPool<vectorPool<long double>::vector>::vector instanceTail = probabilities.instanceBoxes.push_back();
     vector<Evaluation> &evaluations = workspace.evaluations;
@@ -601,18 +615,18 @@ void AnytimeSearch::updateImpl(Result &result, Position::Result &position, Posit
 }
 
 AnytimeSearch::Result AnytimeSearch::analyze(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
-                                             Probability::Pool &probabilities, const Selection::Result &selected, const Grid<long double> &longTermRisk,
+                                             const Selection::Result &selected, const Grid<long double> &longTermRisk,
                                              int remainingSafe, const Config &config, Pool &pool) {
-    Result result = buildRoot(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, config, pool);
+    Result result = buildRoot(position, positions, probability, selected, longTermRisk, remainingSafe, config, pool);
     update(result, position, positions, config, pool);
     return result;
 }
 
 AnytimeSearch::Result AnytimeSearch::analyze(Position::Result &position, Position::Pool &positions, const Position::ProbabilityResult &probability,
-                                             Probability::Pool &probabilities, const Selection::Result &selected, const Grid<long double> &longTermRisk,
+                                             const Selection::Result &selected, const Grid<long double> &longTermRisk,
                                              int remainingSafe, const Config &config, Pool &pool, SuggestResult::Details &details) {
     details.clear();
-    Result result = buildRoot(position, positions, probability, probabilities, selected, longTermRisk, remainingSafe, config, pool);
+    Result result = buildRoot(position, positions, probability, selected, longTermRisk, remainingSafe, config, pool);
     for (int i = 0; i < (int)result.roots.count; ++i) record(pool, (int)result.roots.offset + i, details);
     update(result, position, positions, config, pool, details);
     return result;

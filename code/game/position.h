@@ -63,11 +63,12 @@ struct Position {
         Structure::Delta structure;
 
         Delta(const ObservedBoard::Delta &board, const Basic::Delta &basic, const Structure::Delta &structure)
-            : board(board), basic(basic), structure(structure), logicComponentVersion(0) {}
+            : board(board), basic(basic), structure(structure), logicComponentVersion(0), probabilityVersion(0) {}
 
       private:
         friend struct Position;
         std::uint64_t logicComponentVersion; // 变更前的分块版本，0 表示当时没有可用结果。
+        std::uint64_t probabilityVersion; // 变更前的概率版本。撤回时只有池仍保留同一版本才复用。
     };
 
     struct Pool {
@@ -114,6 +115,8 @@ struct Position {
     ProbabilityResult analyzeProbability(Result &result, Pool &pool);
     // 先同步 Structure，再向指定的概率池追加本次结果。probabilities.distributions 绑定 pool.structure。
     ProbabilityResult analyzeProbability(Result &result, Pool &pool, Probability::Pool &probabilities);
+    // 先同步 Structure，再返回满足当前盘面和总雷数的摆法数。
+    long double countWays(Result &result, Pool &pool);
 
     // 计算点开 cell 后出现 0～8 或踩雷的概率。cell 是隐藏格或未揭必安格。
     // position 的 Structure 已同步。probability 对应当前盘面，切片来自 probabilities。
