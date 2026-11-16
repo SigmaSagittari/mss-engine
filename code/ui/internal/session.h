@@ -45,6 +45,7 @@ struct Session {
     std::string cellString(const ObservedBoard::Result &board) const;
     std::string candidateCount(long double layouts) const;
     void writeProbabilities(std::ostream &result, const Position::Result &position, const Probability::BoxResult &boxes, const Probability::Pool &probabilities) const;
+    void writeHighlight(std::ostream &result, Position::Result &position, Position::Pool &positions, const std::string &highlight) const;
     std::string mctsResult(const MonteCarlo::Result &result, bool complete, long double candidates) const;
     std::string searchResult(const SearchTask &task) const;
     void writeMoveDetails(std::ostream &result, const SuggestResult::Details &details, ObservedBoard::CellId cell) const;

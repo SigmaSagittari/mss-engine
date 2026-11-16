@@ -378,6 +378,48 @@ void Session::writeProbabilities(std::ostream &result, const Position::Result &p
     result << ']';
 }
 
+void Session::writeHighlight(std::ostream &result, Position::Result &position, Position::Pool &positions, const std::string &highlight) const {
+    if (highlight != "structureInstances" && highlight != "logicComponents") return;
+    const Structure::Pool::Instances &instances = positions.structure.instances;
+    auto writeCell = [&](ObservedBoard::CellId cell, bool &first) {
+        if (!first) result << ',';
+        first = false;
+        result << cell;
+    };
+    auto writeInstance = [&](Structure::InstanceId id, bool &first) {
+        const Structure::Instance &instance = instances.list[id];
+        for (const vectorPool<ObservedBoard::CellId>::vector &box : instances.boxes.span(instance.boxes))
+            for (ObservedBoard::CellId cell : instances.cells.span(box))
+                writeCell(cell, first);
+        for (ObservedBoard::CellId cell : instances.constraintCells.span(instance.constraintCells))
+            writeCell(cell, first);
+    };
+    result << ",\"" << highlight << "\":[";
+    if (highlight == "structureInstances") {
+        for (int i = 0; i < (int)position.structure.instanceIds.size; ++i) {
+            if (i != 0) result << ',';
+            result << '[';
+            bool first = true;
+            writeInstance(position.structure.instanceIds[i], first);
+            result << ']';
+        }
+    } else {
+        const Position::LogicComponentResult &components = Position().analyzeLogicComponents(position, positions);
+        for (int i = 0; i < (int)components.result.components.size; ++i) {
+            const LogicComponent::Result::Component &component = components.result.components[i];
+            if (i != 0) result << ',';
+            result << '[';
+            bool first = true;
+            for (Structure::InstanceId id : components.pool.instanceIds.span(component.instanceIds))
+                writeInstance(id, first);
+            for (ObservedBoard::CellId cell : components.pool.tCells.span(component.tCells))
+                writeCell(cell, first);
+            result << ']';
+        }
+    }
+    result << ']';
+}
+
 void Session::writeMoveDetails(std::ostream &result, const SuggestResult::Details &details, ObservedBoard::CellId cell) const {
     result << ",\"branches\":[";
     bool first = true;
@@ -487,6 +529,7 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
     result << ",\"candidateCount\":" << candidateCount(probability.totalWays);
     if (value(fields, "includeProbabilities") == "true")
         writeProbabilities(result, position, probability.boxes, positions.probabilities);
+    writeHighlight(result, position, positions, value(fields, "highlight"));
     const std::string cellText = value(fields, "cell");
     if (!cellText.empty()) {
         int cell;
@@ -528,6 +571,19 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
                 }
                 result << "]}";
             }
+        }
+        const std::string group = value(fields, "groupDetail");
+        if (group == "structureInstances" || group == "logicComponents") {
+            vector<Position::MineCount> counts;
+            const Position::Group type = group == "structureInstances" ? Position::Group::StructureInstance : Position::Group::LogicComponent;
+            Position().groupMineCounts(position, positions, cell, type, counts);
+            result << ",\"groupMineCounts\":[";
+            for (int i = 0; i < (int)counts.size; ++i) {
+                if (i != 0) result << ',';
+                const Position::MineCount &count = counts[i];
+                result << "{\"mines\":" << count.mines << ",\"ways\":\"" << count.ways << "\",\"probability\":\"" << count.probability << "\"}";
+            }
+            result << ']';
         }
     }
     result << '}';
@@ -574,12 +630,17 @@ std::string Session::playUntilNoSafe(const std::vector<FormField> &fields) {
     const ObservedBoard::Result &played = game.position().board;
     std::ostringstream result;
     result << "{\"ok\":true,\"rows\":" << rows << ",\"cols\":" << cols << ",\"mines\":" << count << ",\"minefield\":" << jsonString(mines) << ",\"cells\":" << jsonString(cellString(played)) << ",\"lost\":" << (game.state() == Game::State::Lost ? "true" : "false") << ",\"won\":" << (game.state() == Game::State::Won ? "true" : "false");
-    if (value(fields, "includeProbabilities") == "true" && game.state() == Game::State::Running) {
+    const bool includeProbabilities = value(fields, "includeProbabilities") == "true";
+    const std::string highlight = value(fields, "highlight");
+    if ((includeProbabilities || !highlight.empty()) && game.state() == Game::State::Running) {
         Position::Pool positions(combinations);
         Position::Result position = Position().analyze(played, positions, config);
-        const Position::ProbabilityResult probability = Position().analyzeProbability(position, positions);
-        result << ",\"candidateCount\":" << candidateCount(probability.totalWays);
-        writeProbabilities(result, position, probability.boxes, positions.probabilities);
+        if (includeProbabilities) {
+            const Position::ProbabilityResult probability = Position().analyzeProbability(position, positions);
+            result << ",\"candidateCount\":" << candidateCount(probability.totalWays);
+            writeProbabilities(result, position, probability.boxes, positions.probabilities);
+        }
+        writeHighlight(result, position, positions, highlight);
     }
     result << '}';
     return result.str();

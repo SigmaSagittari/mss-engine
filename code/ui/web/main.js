@@ -106,10 +106,22 @@ probabilityDisplay.addEventListener("change", () => {
     scheduleProbabilityUpdate(true);
     render();
 });
+highlightDisplay.addEventListener("change", async () => {
+    showHighlight();
+    if (mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
+    const highlight = highlightDisplay.value;
+    if (!highlight || (mode === "play" && (playState.lost || playState.won))) return;
+    const state = activeState();
+    try {
+        await calculate(state, { includeProbabilities: false, highlight });
+    } catch (error) {
+        if (highlight === highlightDisplay.value && state === activeState()) setMessage(error.message, "error");
+    }
+});
 shapeAlgo.addEventListener("change", () => {
     clearSuggestion();
     scheduleProbabilityUpdate(true);
-    if (!probabilityDisplay.checked && mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
+    if (!probabilityDisplay.checked && !highlightDisplay.value && mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
     render();
 });
 function updatePolicySettings() {

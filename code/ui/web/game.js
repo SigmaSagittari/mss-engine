@@ -238,18 +238,20 @@ async function playUntilNoSafe() {
     probabilities = null;
     candidateCount = "";
     const state = playState;
+    const highlight = highlightDisplay.value;
     render();
     setMessage("");
     try {
         const result = await post("/api/play-until-no-safe", {
             rows: state.rows, cols: state.cols, mines: state.mines, cells: state.cells,
-            minefield: state.minefield, algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked
+            minefield: state.minefield, algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, highlight
         });
         const opened = [...state.cells].filter((value, cell) => value === "?" && result.cells[cell] !== "?").length;
         playState = { ...state, rows: result.rows, cols: result.cols, mines: result.mines, minefield: result.minefield, cells: result.cells, lost: result.lost, won: result.won, firstMove: state.firstMove && opened === 0 };
         for (const cell of flags)
             if (result.cells[cell] !== "?")
                 flags.delete(cell);
+        if (highlight) showHighlight(result[highlight]);
         if (result.probabilities) {
             probabilities = result.probabilities;
             candidateCount = result.candidateCount;

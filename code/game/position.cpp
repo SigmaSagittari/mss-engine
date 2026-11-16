@@ -194,4 +194,61 @@ const Position::LogicComponentResult &Position::analyzeLogicComponents(Result &r
     return components;
 }
 
+void Position::groupMineCounts(Result &result, Pool &pool, ObservedBoard::CellId cell, Group group, vector<MineCount> &counts) {
+    counts.resize(0);
+    updateStructure(result, pool);
+    const int instanceIndex = result.structure.cellLoc[cell].instanceIndex;
+    Workspace &workspace = getWorkspace();
+    vector<ShapeSolver::DistributionId> &ids = workspace.distributionIds;
+    const ShapeSolverConfig &config = result.config_.shapeSolver;
+    ShapeSolver::DistributionPool &distributions = pool.distributions;
+    int blockIndex = instanceIndex;
+    if (group == Group::StructureInstance) {
+        if (instanceIndex < 0) return;
+        analyzeDistributions(result, distributions, ids);
+    } else {
+        const auto [row, col] = result.board.pos(cell);
+        if (instanceIndex < 0 && result.basic.marks[row][col] != Basic::Mark::T) return;
+        const LogicComponentResult &components = analyzeLogicComponents(result, pool);
+        ids.resize(0);
+        int outsideT = result.basic.unknownSum;
+        for (int i = 0; i < (int)components.result.components.size; ++i) {
+            const LogicComponent::Result::Component &component = components.result.components[i];
+            auto containsCell = [&] {
+                if (instanceIndex >= 0) {
+                    for (Structure::InstanceId id : components.pool.instanceIds.span(component.instanceIds))
+                        if (id == result.structure.instanceIds[instanceIndex]) return true;
+                } else {
+                    for (ObservedBoard::CellId id : components.pool.tCells.span(component.tCells))
+                        if (id == cell) return true;
+                }
+                return false;
+            };
+            if (containsCell()) {
+                blockIndex = ids.size;
+                ids.push_back(ShapeSolver().analyzeComponent(component, components.pool, config, distributions));
+                outsideT -= component.tCells.count;
+            } else {
+                for (Structure::InstanceId id : components.pool.instanceIds.span(component.instanceIds))
+                    ids.push_back(ShapeSolver().analyze(pool.structure.instances.list[id], config, distributions));
+            }
+        }
+        if (outsideT != 0) ids.push_back(ShapeSolver().analyzeFreeCells(outsideT, distributions));
+    }
+
+    Probability::Pool &probabilities = pool.probabilities;
+    const Probability::Result probability = Probability().analyze(ids, result.board.totalMines - result.basic.mineSum, probabilities);
+    const Probability::Result::Block &block = probabilities.blocks.span(probability.blocks)[blockIndex];
+    const ShapeSolver::DistributionId selected = ids[blockIndex];
+    ids.resize(1);
+    ids[0] = selected;
+    int mines = block.start;
+    for (long double chance : probabilities.blockProbabilities.span(block.probabilities)) {
+        if (chance != 0.0L) counts.push_back({mines, Probability().countWays(ids, mines, probabilities), chance});
+        ++mines;
+    }
+    probabilities.blockProbabilities.pop_back(probability.probabilities);
+    probabilities.blocks.pop_back(probability.blocks);
+}
+
 } // 命名空间 mss

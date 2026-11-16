@@ -77,6 +77,11 @@
                         </table>
                     </div>
                 </div>
+                <table id="detail-group-mines" class="detail-table" hidden>
+                    <caption></caption>
+                    <thead><tr><th scope="col">组内雷数</th><th scope="col">组内摆法数</th><th scope="col">概率</th></tr></thead>
+                    <tbody></tbody>
+                </table>
                 <section id="detail-long-term-risk" aria-label="长期风险" hidden>
                     <h3>LTR 长期风险（已知此格是雷）</h3>
                     <div><span id="detail-risk-body-union"></span> 命中本体死猜</div>
@@ -118,6 +123,7 @@
                 </section>
                 <section id="settings-display" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-display">
                     <label class="settings-row"><span>棋盘概率</span><input id="probability-display" type="checkbox" checked></label>
+                    <label class="settings-row"><span>分组高亮</span><select id="highlight-display"><option value="">不高亮</option><option value="structureInstances">Structure Instance</option><option value="logicComponents">LogicComponent</option></select></label>
                     <label class="settings-row"><span>格子大小</span><select id="cell-size"><option value="auto" selected>自适应</option><option value="25">25 px</option><option value="28">28 px</option><option value="32">32 px</option><option value="34">34 px</option><option value="38">38 px</option><option value="42">42 px</option><option value="48">48 px</option></select></label>
                 </section>
                 <section id="settings-board" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-board">

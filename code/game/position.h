@@ -126,6 +126,16 @@ struct Position {
     // 按需分析当前盘面。返回结果和切片借用 result，重新分析后失效，实例 ID 来自 pool.structure。
     const LogicComponentResult &analyzeLogicComponents(Result &result, Pool &pool);
 
+    enum class Group { StructureInstance, LogicComponent };
+    struct MineCount {
+        int mines;
+        long double ways;
+        long double probability;
+    };
+
+    // 覆写 cell 所在组的可行雷数档。ways 只数本组的摆法，probability 计入整盘剩余雷数。格子不属于所选类型的组时，输出为空。
+    void groupMineCounts(Result &result, Pool &pool, ObservedBoard::CellId cell, Group group, vector<MineCount> &counts);
+
   private:
     struct Workspace;
     Workspace &getWorkspace();

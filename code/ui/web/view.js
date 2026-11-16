@@ -130,6 +130,20 @@ function renderDetail() {
     detailStatus.hidden = !detailStatus.textContent;
     detailContent.hidden = !detailData;
     if (detailData) detailRisk.textContent = formatPercent(detailData.probability);
+    const groupTable = document.getElementById("detail-group-mines");
+    const counts = detailData?.groupMineCounts;
+    groupTable.hidden = !highlightDisplay.value || !counts?.length;
+    if (!groupTable.hidden) {
+        groupTable.caption.textContent = highlightDisplay.selectedOptions[0].textContent;
+        const body = groupTable.tBodies[0];
+        body.replaceChildren();
+        for (const { mines, ways, probability } of counts) {
+            const row = body.insertRow();
+            row.insertCell().textContent = mines;
+            row.insertCell().textContent = Number(ways) < 1e15 ? Number(ways).toLocaleString() : ways;
+            row.insertCell().textContent = formatPercent(probability);
+        }
+    }
     const risk = detailData?.longTermRisk;
     document.getElementById("detail-long-term-risk").hidden = !risk;
     if (risk) {
@@ -218,6 +232,16 @@ function clearPressedCells() {
     for (const cell of pressedCells)
         boardElement.children[cell].classList.remove("open");
     pressedCells.clear();
+}
+
+function showHighlight(groups = []) {
+    for (const button of boardElement.querySelectorAll('[style*="--group-background"]'))
+        button.style.removeProperty("--group-background");
+    groups.forEach((cells, group) => {
+        const background = `hsl(${30 + group * 103.132 % 270} 75% 88%)`;
+        for (const cell of cells)
+            boardElement.children[cell].style.setProperty("--group-background", background);
+    });
 }
 
 function updatePressedCells(cell) {

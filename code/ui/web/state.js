@@ -22,6 +22,7 @@ const ltrEventLimit = document.getElementById("ltr-event-limit");
 const policyNodeBudget = document.getElementById("policy-node-budget");
 const shapeAlgo = document.getElementById("shape-algo");
 const probabilityDisplay = document.getElementById("probability-display");
+const highlightDisplay = document.getElementById("highlight-display");
 const cellSizeSetting = document.getElementById("cell-size");
 const rngSeedInput = document.getElementById("rng-seed");
 const regenerateSeedButton = document.getElementById("regenerate-seed");

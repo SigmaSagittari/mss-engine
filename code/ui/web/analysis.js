@@ -5,19 +5,28 @@ function calculate(state, options = {}) {
     const snapshot = { ...boardSnapshot(state, /[G*]/g), algo: config.algo };
     const key = JSON.stringify(snapshot);
     const includeProbabilities = options.includeProbabilities ?? true;
+    const highlight = options.highlight;
     const task = async () => {
         const cached = cachedAnalysis && cachedAnalysis.key === key ? cachedAnalysis : null;
-        if (cached && !options.suggest && options.cell === undefined && cached.data.probabilities)
+        if (cached && !options.suggest && options.cell === undefined && (!includeProbabilities || cached.data.probabilities) && (!highlight || cached.data[highlight]))
             return cached.data;
         const input = cached ? { analysisId: cached.id } : snapshot;
         const targets = options.suggest ? Array.from(state.cells.matchAll(/G/g), match => match.index).join(",") : "";
         const result = await post("/api/analyze", { ...input, ...config, ...options, includeProbabilities, targets });
-        cachedAnalysis = { key, id: result.analysisId, data: { ...(cached ? cached.data : {}), ...result } };
-        return cachedAnalysis.data;
+        // Anytime 选招会标记必雷，同一盘面之前的分组可能已经变化。
+        cachedAnalysis = { key, id: result.analysisId, data: { ...(cached && !options.suggest ? cached.data : {}), ...result } };
+        return options.cell === undefined ? cachedAnalysis.data : result;
     };
     const result = analysisRequestQueue.then(task, task);
     analysisRequestQueue = result;
-    return result;
+    if (!highlight) return result;
+    return result.then(data => {
+        const active = activeState();
+        if (highlight === highlightDisplay.value && !(mode === "play" && (active.lost || active.won)) &&
+            key === JSON.stringify({ ...boardSnapshot(active, /[G*]/g), algo: shapeAlgo.value }))
+            showHighlight(data[highlight]);
+        return data;
+    });
 }
 
 function analysisConfig(strategy = suggestStrategy.value) {
@@ -47,15 +56,17 @@ async function requestDetail(cell) {
     if (mode !== "analysis") return;
     const request = ++detailRequest;
     const state = analysisState;
+    const groupDetail = highlightDisplay.value;
+    const revealed = state.cells[cell] >= "0" && state.cells[cell] <= "8";
     detailData = null;
     detailStatus.textContent = "正在读取…";
     renderDetail();
-    if (state.cells[cell] >= "0" && state.cells[cell] <= "8") {
+    if (revealed && !groupDetail) {
         showDetail({ probability: 0, observe: null });
         return;
     }
     try {
-        const data = await calculate(state, { cell, includeProbabilities: false, risk: true });
+        const data = await calculate(state, { cell, includeProbabilities: false, risk: !revealed, groupDetail });
         if (request === detailRequest && mode === "analysis" && analysisState === state) {
             candidateCount = data.candidateCount;
             showDetail(data);
@@ -165,30 +176,35 @@ function scheduleProbabilityUpdate(preserveSelection = false) {
     if (!preserveSelection) clearDetail();
     probabilities = null;
     candidateCount = "";
-    probabilityPending = probabilityDisplay.checked;
-    if (!probabilityDisplay.checked || (mode === "play" && (playState.lost || playState.won))) {
+    const includeProbabilities = probabilityDisplay.checked;
+    probabilityPending = includeProbabilities;
+    if (highlightDisplay.value) showHighlight();
+    if ((!includeProbabilities && !highlightDisplay.value) || (mode === "play" && (playState.lost || playState.won))) {
         probabilityPending = false;
         return;
     }
     const requestedMode = mode;
     const state = activeState();
     probabilityUpdateQueue = probabilityUpdateQueue.then(async () => {
-        if (revision !== probabilityRevision || !probabilityDisplay.checked || mode !== requestedMode)
+        const highlight = highlightDisplay.value;
+        if (revision !== probabilityRevision || mode !== requestedMode || (!includeProbabilities && !highlight))
             return;
         const startedAt = performance.now();
         try {
-            const result = await calculate(state);
-            if (revision !== probabilityRevision || !probabilityDisplay.checked || mode !== requestedMode)
+            const result = await calculate(state, { includeProbabilities, highlight });
+            if (revision !== probabilityRevision || mode !== requestedMode)
                 return;
-            probabilities = result.probabilities;
-            candidateCount = result.candidateCount;
+            if (includeProbabilities) {
+                probabilities = result.probabilities;
+                candidateCount = result.candidateCount;
+                setMessage(`概率已更新 · ${(performance.now() - startedAt).toFixed(1)} ms`, "success");
+            }
             probabilityPending = false;
             render();
-            setMessage(`概率已更新 · ${(performance.now() - startedAt).toFixed(1)} ms`, "success");
             if (mode === "analysis" && selectedCell >= 0)
                 requestDetail(selectedCell);
         } catch (error) {
-            if (revision !== probabilityRevision || !probabilityDisplay.checked || mode !== requestedMode)
+            if (revision !== probabilityRevision || mode !== requestedMode || (!includeProbabilities && highlight !== highlightDisplay.value))
                 return;
             probabilityPending = false;
             render();
@@ -226,14 +242,16 @@ async function requestSuggestion() {
     probabilityPending = false;
     try {
         const state = activeState();
+        const highlight = highlightDisplay.value;
         const startedAt = performance.now();
-        const result = await calculate(state, { suggest: true, includeProbabilities: probabilityDisplay.checked });
+        const result = await calculate(state, { suggest: true, includeProbabilities: probabilityDisplay.checked, highlight });
         if (probabilityDisplay.checked) {
             probabilities = result.probabilities;
             candidateCount = result.candidateCount;
         }
         stopAnalysis();
         showSuggestion(result, performance.now() - startedAt);
+        if (highlight && mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
         setMessage("分析完成。", "success");
     } catch (error) {
         setMessage(error.message, "error");

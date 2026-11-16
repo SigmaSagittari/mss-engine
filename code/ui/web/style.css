@@ -108,13 +108,13 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) clamp(360px, 29vw, 4
     border-color: #fff #808080 #808080 #fff;
     border-radius: 0;
     color: #26364d;
-    background: #c6c6c6;
+    background: var(--group-background, #c6c6c6);
     font-family: Arial, sans-serif;
     font-size: 18px;
     font-weight: 700;
     user-select: none;
 }
-.cell.open { border: 2px solid #808080; background: #c6c6c6; box-shadow: none; }
+.cell.open { border: 2px solid #808080; box-shadow: none; }
 .cell.number-1 { color: #0000ff; }
 .cell.number-2 { color: #008000; }
 .cell.number-3 { color: #ff0000; }
@@ -123,6 +123,10 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) clamp(360px, 29vw, 4
 .cell.number-6 { color: #008080; }
 .cell.number-7 { color: #000; }
 .cell.number-8 { color: #808080; }
+.cell.number-2[style*="--group-background"] { color: #005c00; }
+.cell.number-3[style*="--group-background"] { color: #a80000; }
+.cell.number-6[style*="--group-background"] { color: #005959; }
+.cell.number-8[style*="--group-background"] { color: #494949; }
 .cell.prob-safe { background: #d8f1df; }
 .cell.prob-mine { background: #f8dada; }
 .cell.forced-safe { color: #008000; background: #d8f1df; }
@@ -170,6 +174,7 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) clamp(360px, 29vw, 4
 #mcts-detail strong { font-weight: 400; font-variant-numeric: tabular-nums; }
 .detail-table .latest { font-weight: 600; }
 #detail-long-term-risk { margin-top: 14px; font-size: 12px; line-height: 1.8; font-variant-numeric: tabular-nums; }
+#detail-group-mines { margin-top: 14px; }
 #detail-long-term-risk h3 { margin: 0 0 4px; color: #66738a; font-size: 13px; font-weight: 400; }
 @media (max-width: 1050px) {
     main { grid-template-columns: minmax(0, 1fr); padding: 12px; gap: 12px; }
