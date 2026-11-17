@@ -65,6 +65,33 @@ function numberCells(minefield, state) {
     return result;
 }
 
+function countThreeBV(state) {
+    const { numbers } = state;
+    const covered = new Uint8Array(numbers.length);
+    const pending = [];
+    let count = 0;
+    // 每个零区计一次，零区边缘的数字格已随零区揭开。
+    for (let cell = 0; cell < numbers.length; ++cell) {
+        if (numbers[cell] !== "0" || covered[cell])
+            continue;
+        ++count;
+        covered[cell] = 1;
+        pending.push(cell);
+        while (pending.length > 0)
+            for (const neighbor of neighbors(pending.pop(), state)) {
+                if (covered[neighbor])
+                    continue;
+                covered[neighbor] = 1;
+                if (numbers[neighbor] === "0")
+                    pending.push(neighbor);
+            }
+    }
+    for (let cell = 0; cell < numbers.length; ++cell)
+        if (numbers[cell] !== "*" && !covered[cell])
+            ++count;
+    return count;
+}
+
 function createPlayState(rows, cols, mines) {
     const seed = formatRngSeed(rng);
     const cells = new Array(rows * cols);
@@ -80,7 +107,7 @@ function createPlayState(rows, cols, mines) {
     const minefield = new Array(cells.length).fill("0");
     for (let mine = 0; mine < mines; ++mine)
         minefield[cells[mine]] = "1";
-    const state = { rows, cols, mines, seed, minefield: minefield.join(""), cells: "?".repeat(rows * cols), clicks: 0, firstMove: true, lost: false, won: false, lostCell: -1 };
+    const state = { rows, cols, mines, seed, minefield: minefield.join(""), cells: "?".repeat(rows * cols), clicks: 0, startedAt: null, firstMove: true, lost: false, won: false, lostCell: -1 };
     state.numbers = numberCells(state.minefield, state);
     return state;
 }
@@ -137,21 +164,43 @@ function revealLocallyBatch(seedCells) {
         }
 }
 
-function revealCell(cell) {
-    clearSuggestion();
-    playState = { ...playState, clicks: playState.clicks + 1 };
-    if (playState.firstMove && playState.minefield[cell] === "1")
-        moveFirstMine(cell);
-    flags.delete(cell);
-    revealLocally(cell);
+function showVictory(finishedAt) {
+    const seconds = Math.max(1, finishedAt - playState.startedAt) / 1000;
+    const threeBV = countThreeBV(playState);
+    const cls = playState.clicks;
+    const lines = [
+        `时间 ${seconds.toFixed(3)} s`,
+        `3BV ${threeBV}`,
+        `3BV/s ${(threeBV / seconds).toFixed(2)}`,
+        `CLS ${cls}`,
+        `IOE ${(100 * threeBV / cls).toFixed(2)}%`
+    ];
+    setMessage("已获胜", "success");
+    for (const line of lines)
+        messageElement.append(document.createElement("br"), line);
+}
+
+function finishPlayMove() {
+    const finishedAt = performance.now();
     scheduleProbabilityUpdate();
     render();
     if (playState.lost)
         setMessage("踩到地雷，本局结束。", "error");
     else if (playState.won)
-        setMessage("恭喜，所有安全格都已揭开。", "success");
+        showVictory(finishedAt);
     else
         setMessage("");
+}
+
+function revealCell(cell) {
+    const startedAt = playState.startedAt ?? performance.now();
+    clearSuggestion();
+    playState = { ...playState, startedAt, clicks: playState.clicks + 1 };
+    if (playState.firstMove && playState.minefield[cell] === "1")
+        moveFirstMine(cell);
+    flags.delete(cell);
+    revealLocally(cell);
+    finishPlayMove();
 }
 
 function chord(cell) {
@@ -175,14 +224,7 @@ function chord(cell) {
         if (playState.lost || playState.won)
             break;
     }
-    scheduleProbabilityUpdate();
-    render();
-    if (playState.lost)
-        setMessage("踩到地雷，本局结束。", "error");
-    else if (playState.won)
-        setMessage("恭喜，所有安全格都已揭开。", "success");
-    else
-        setMessage("");
+    finishPlayMove();
 }
 
 function activatePlayCell(cell) {
@@ -198,6 +240,8 @@ function activatePlayCell(cell) {
 
 function toggleFlag(cell) {
     const state = activeState();
+    if (mode === "play")
+        state.startedAt ??= performance.now();
     const playerFlags = mode === "play" ? flags : state.playerFlags;
     const wasFlagged = playerFlags.has(cell);
     if (wasFlagged)
@@ -256,6 +300,7 @@ async function playUntilNoSafe() {
     candidateCount = "";
     const state = playState;
     const highlight = highlightDisplay.value;
+    const startedAt = state.startedAt ?? performance.now();
     render();
     setMessage("");
     try {
@@ -263,9 +308,12 @@ async function playUntilNoSafe() {
             rows: state.rows, cols: state.cols, mines: state.mines, cells: state.cells,
             minefield: state.minefield, algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, highlight
         });
+        const finishedAt = performance.now();
         const opened = [...state.cells].filter((value, cell) => value === "?" && result.cells[cell] !== "?").length;
         // Game 批量逐格揭开。被自动清除的玩家旗也各计一次拔旗。
         playState = { ...state, rows: result.rows, cols: result.cols, mines: result.mines, minefield: result.minefield, cells: result.cells, clicks: state.clicks + opened, lost: result.lost, won: result.won, firstMove: state.firstMove && opened === 0 };
+        if (opened > 0)
+            playState.startedAt = startedAt;
         for (const cell of flags)
             if (result.cells[cell] !== "?") {
                 flags.delete(cell);
@@ -276,7 +324,10 @@ async function playUntilNoSafe() {
             probabilities = result.probabilities;
             candidateCount = result.candidateCount;
         }
-        setMessage(result.won ? "恭喜，所有安全格都已揭开。" : `自动揭开 ${opened} 格；没有确定安全格。`, "success");
+        if (result.won)
+            showVictory(finishedAt);
+        else
+            setMessage(`自动揭开 ${opened} 格；没有确定安全格。`, "success");
     } catch (error) {
         setMessage(error.message, "error");
     } finally {
