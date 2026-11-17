@@ -75,7 +75,7 @@ function renderAnalysisResult() {
     analysisSummary.hidden = !summary;
     analysisSummary.textContent = summary;
     analysisCountRow.hidden = !candidateCount;
-    analysisCount.textContent = candidateCount ? formatCount(candidateCount) : "";
+    analysisCount.textContent = candidateCount ? (ioeResultPanel.hidden ? formatCount(candidateCount) : Number(candidateCount).toLocaleString()) : "";
     analysisRecommendation.hidden = recommended.length === 0;
     const state = activeState();
     analysisRecommendation.textContent = safe ? `全部安全格（${recommended.length} 个）` : recommended.length ? `推荐：${recommended.map((cell) => `第 ${Math.floor(cell / state.cols) + 1} 行，第 ${cell % state.cols + 1} 列`).join("；")}` : "";
@@ -214,15 +214,26 @@ function fitIoeLabels() {
     if (dense)
         for (let i = 0; i < maxLabels; ++i)
             labels.add(Math.round(i * (count - 1) / (maxLabels - 1)));
-    for (let i = 0; i < count; ++i)
-        ioeBars.children[i].lastElementChild.hidden = dense && !labels.has(i);
+    let previousRight = -Infinity;
+    for (let i = 0; i < count; ++i) {
+        const label = ioeBars.children[i].lastElementChild;
+        label.hidden = dense && !labels.has(i);
+        if (label.hidden) continue;
+        const { left, right } = label.getBoundingClientRect();
+        if (left < previousRight + 4) label.hidden = true;
+        else previousRight = right;
+    }
 }
 
 window.addEventListener("resize", fitIoeLabels);
 
 function showIoeResult(result) {
-    const percent = (result.wins / result.candidateCount).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 2 });
-    document.getElementById("ioe-wins").textContent = `${result.wins.toLocaleString()} / ${result.candidateCount.toLocaleString()}（${percent}）`;
+    candidateCount = result.candidateCount;
+    const formatRate = count => {
+        const percent = (count / result.candidateCount).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 2 });
+        return `${count.toLocaleString()}(${percent})`;
+    };
+    document.getElementById("ioe-wins").textContent = `${formatRate(result.wins)}\u00a0/\u00a0${formatRate(result.rootEligible)}`;
     const score = result.expectedScore === null ? Infinity : result.expectedScore;
     const notation = score >= 1e8 ? "scientific" : "standard";
     document.getElementById("ioe-score").textContent = score.toLocaleString(undefined, { notation, maximumSignificantDigits: 8 });
@@ -281,6 +292,7 @@ function showIoeResult(result) {
     }
     figure.hidden = !buckets.length;
     ioeResultPanel.hidden = false;
+    renderAnalysisResult();
     if (buckets.length) fitIoeLabels();
 }
 

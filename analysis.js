@@ -283,23 +283,14 @@ async function requestIoeAnalysis() {
             setMessage(`有 ${result.candidateCount.toLocaleString()} 张候选摆法，超过设置的上限。`);
             return;
         }
-        const coordinate = cell => `${String.fromCharCode(65 + cell % state.cols)}${1 + Math.floor(cell / state.cols)}`;
-        const move = result.move;
-        ioeMove = move;
-        let action = result.wins > 0 ? "当前盘面已完成。" : "没有可达到 200% 的首招。";
-        if (move?.kind === "open") action = `左键 ${coordinate(move.cell)}。`;
-        else if (move?.kind === "unflag") action = `拔旗 ${coordinate(move.cell)}。`;
-        else if (move?.kind === "chord") {
-            const steps = [];
-            if (move.removeFlags.length) steps.push(`拔旗 ${move.removeFlags.map(coordinate).join("、")}`);
-            if (move.addFlags.length) steps.push(`插旗 ${move.addFlags.map(coordinate).join("、")}`);
-            steps.push(`双击 ${coordinate(move.cell)}`);
-            action = steps.join("，") + "。";
-        }
+        ioeMove = result.move;
+        let status = "";
         if (!result.exact)
-            action = move ? "已到搜索上限，当前最好招法是" + action : "已到搜索上限，尚未完成任何首招。";
+            status = ioeMove ? "已到搜索上限。 " : "已到搜索上限，尚未完成任何首招。 ";
+        else if (!ioeMove)
+            status = result.wins > 0 ? "当前盘面已完成。 " : "没有可达到 200% 的首招。 ";
         showIoeResult(result);
-        setMessage(`${action} 根部找到 ${result.rootEligible.toLocaleString()} 张可达 200% 的摆法。根部 DOM ${result.rootDomCalls.toLocaleString()} 次，搜索 DOM ${result.searchDomCalls.toLocaleString()} 次。`);
+        setMessage(`${status}根部 DOM ${result.rootDomCalls.toLocaleString()} 次，搜索 DOM ${result.searchDomCalls.toLocaleString()} 次。`);
     } catch (error) {
         setMessage(error.message, "error");
     } finally {
