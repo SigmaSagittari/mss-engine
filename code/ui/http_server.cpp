@@ -225,7 +225,7 @@ void HttpServer::run(bool openBrowser) {
         }
         if (request.host != host) {
             sendResponse(client, 403, "text/plain; charset=utf-8", "Forbidden");
-        } else if (request.path == "/" || request.path == "/state.js" || request.path == "/game.js" || request.path == "/view.js" || request.path == "/analysis.js" || request.path == "/monte_carlo.js" || request.path == "/anytime_search.js" || request.path == "/main.js" || request.path == "/style.css") {
+        } else if (request.path == "/" || request.path == "/state.js" || request.path == "/game.js" || request.path == "/view.js" || request.path == "/analysis.js" || request.path == "/anytime_search.js" || request.path == "/main.js" || request.path == "/style.css") {
             if (request.method != "GET") {
                 sendResponse(client, 405, "text/plain; charset=utf-8", "Method Not Allowed");
             } else {
@@ -240,26 +240,36 @@ void HttpServer::run(bool openBrowser) {
                 sendResponse(client, 405, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"只接受 POST 请求\"}");
             } else if (request.origin != origin || request.token != session_.token()) {
                 sendResponse(client, 403, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"请求来源无效\"}");
-            } else if (request.path == "/api/mcts/stop" || request.path == "/api/anytime-search/stop") {
+            } else if (request.path == "/api/analyze-ioe/stream") {
+                DWORD sendTimeout = 1000;
+                setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, (const char *)&sendTimeout, sizeof(sendTimeout));
+                bool connected = sendAll(client, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n");
+                if (connected) {
+                    auto update = [&](const std::string &event) {
+                        if (connected) connected = sendAll(client, "data: " + event + "\n\n");
+                    };
+                    const std::string result = session_.analyzeIoe(request.body, update);
+                    update(result);
+                }
+            } else if (request.path == "/api/anytime-search/stop") {
                 stopAnalysis();
                 sendResponse(client, 200, "application/json; charset=utf-8", "{\"ok\":true}");
-            } else if (request.path == "/api/mcts/start" || request.path == "/api/anytime-search/start") {
+            } else if (request.path == "/api/anytime-search/start") {
                 stopAnalysis();
                 if (analysisStream.joinable())
                     analysisStream.join();
                 std::string response;
-                const bool search = request.path == "/api/anytime-search/start";
-                if (!(search ? session_.startSearch(request.body, response) : session_.startMcts(request.body, response))) {
+                if (!session_.startSearch(request.body, response)) {
                     sendResponse(client, 200, "application/json; charset=utf-8", response);
                 } else if (sendAll(client, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n")) {
                     DWORD sendTimeout = 1000;
                     setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, (const char *)&sendTimeout, sizeof(sendTimeout));
-                    analysisStream = std::jthread([this, client, search](std::stop_token stop) {
+                    analysisStream = std::jthread([this, client](std::stop_token stop) {
                         std::chrono::steady_clock::time_point next = std::chrono::steady_clock::now();
                         while (!stop.stop_requested()) {
                             next += std::chrono::milliseconds(100);
                             std::this_thread::sleep_until(next);
-                            if (stop.stop_requested() || !sendAll(client, "data: " + (search ? session_.searchUpdate() : session_.mctsUpdate()) + "\n\n"))
+                            if (stop.stop_requested() || !sendAll(client, "data: " + session_.searchUpdate() + "\n\n"))
                                 break;
                         }
                         session_.stopAnalysis();

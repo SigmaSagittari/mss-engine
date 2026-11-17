@@ -4,6 +4,9 @@
     <Filter Include="algo">
       <UniqueIdentifier>{91E509BB-8A79-4C9A-B2E9-8E5C884E3158}</UniqueIdentifier>
     </Filter>
+    <Filter Include="algo\ioe_engine" />
+    <Filter Include="algo\ioe_engine\bruteforce" />
+    <Filter Include="algo\ioe_engine\ref_dom" />
     <Filter Include="algo\probability_engine">
       <UniqueIdentifier>{02BAD26E-5226-43F3-802D-9B2AC2A5CDF5}</UniqueIdentifier>
     </Filter>
@@ -43,9 +46,6 @@
     <Filter Include="algo\winrate_engine\fifty_fifty\templates">
       <UniqueIdentifier>{5E450DAB-52B3-4D60-AED8-8879728FA55E}</UniqueIdentifier>
     </Filter>
-    <Filter Include="algo\winrate_engine\monte_carlo">
-      <UniqueIdentifier>{8D178C82-90B6-4259-81E7-16E435E50469}</UniqueIdentifier>
-    </Filter>
     <Filter Include="core">
       <UniqueIdentifier>{53348232-C395-4FBC-9D9A-40F6FFFD3FDB}</UniqueIdentifier>
     </Filter>
@@ -75,6 +75,30 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\bruteforce.cpp">
+      <Filter>algo\ioe_engine\bruteforce</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\bruteforce.h">
+      <Filter>algo\ioe_engine\bruteforce</Filter>
+    </ClInclude>
+    <ClCompile Include="..\code\algo\ioe_engine\ref_dom\ref_dom.cpp">
+      <Filter>algo\ioe_engine\ref_dom</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\ioe_engine\ref_dom\frontier.cpp">
+      <Filter>algo\ioe_engine\ref_dom</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\ioe_engine\ref_dom\dominance.cpp">
+      <Filter>algo\ioe_engine\ref_dom</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\ioe_engine\ref_dom\ref_dom.h">
+      <Filter>algo\ioe_engine\ref_dom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\ioe_engine\ref_dom\frontier.h">
+      <Filter>algo\ioe_engine\ref_dom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\ioe_engine\ref_dom\dominance.h">
+      <Filter>algo\ioe_engine\ref_dom</Filter>
+    </ClInclude>
     <ClCompile Include="..\code\algo\probability_engine\basic\basic.cpp">
       <Filter>algo\probability_engine\basic</Filter>
     </ClCompile>
@@ -173,12 +197,6 @@
     </ClCompile>
     <ClInclude Include="..\code\algo\winrate_engine\move_policy.h">
       <Filter>algo\winrate_engine</Filter>
-    </ClInclude>
-    <ClCompile Include="..\code\algo\winrate_engine\monte_carlo\monte_carlo.cpp">
-      <Filter>algo\winrate_engine\monte_carlo</Filter>
-    </ClCompile>
-    <ClInclude Include="..\code\algo\winrate_engine\monte_carlo\monte_carlo.h">
-      <Filter>algo\winrate_engine\monte_carlo</Filter>
     </ClInclude>
     <ClCompile Include="..\code\algo\winrate_engine\selection\selection.cpp">
       <Filter>algo\winrate_engine\selection</Filter>
@@ -286,9 +304,6 @@
     <None Include="..\code\ui\web\main.js">
       <Filter>ui\web</Filter>
     </None>
-    <None Include="..\code\ui\web\monte_carlo.js">
-      <Filter>ui\web</Filter>
-    </None>
     <None Include="..\code\ui\web\solver_worker.js">
       <Filter>ui\web</Filter>
     </None>
@@ -357,6 +372,9 @@
     <ClInclude Include="..\code\test\harness.h">
       <Filter>test</Filter>
     </ClInclude>
+    <ClInclude Include="..\code\test\benchmark\ioe_root.h">
+      <Filter>test\benchmark</Filter>
+    </ClInclude>
     <ClInclude Include="..\code\test\benchmark\performance.h">
       <Filter>test\benchmark</Filter>
     </ClInclude>
@@ -372,5 +390,25 @@
   <ItemGroup>
     <ClCompile Include="..\code\algo\winrate_engine\fifty_fifty\templates\semi.cpp"><Filter>algo\winrate_engine\fifty_fifty\templates</Filter></ClCompile>
     <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\templates\semi.h"><Filter>algo\winrate_engine\fifty_fifty\templates</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="archive">
+      <UniqueIdentifier>{C8084807-ED1A-4EBF-A3DC-24C007064812}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="archive\monte_carlo">
+      <UniqueIdentifier>{D5C4F5FD-2812-4026-A16B-BAF0753AED8C}</UniqueIdentifier>
+    </Filter>
+    <None Include="..\archive\monte_carlo\code\algo\winrate_engine\monte_carlo\monte_carlo.cpp">
+      <Filter>archive\monte_carlo</Filter>
+    </None>
+    <None Include="..\archive\monte_carlo\code\algo\winrate_engine\monte_carlo\monte_carlo.h">
+      <Filter>archive\monte_carlo</Filter>
+    </None>
+    <None Include="..\archive\monte_carlo\code\ui\web\monte_carlo.js">
+      <Filter>archive\monte_carlo</Filter>
+    </None>
+    <None Include="..\archive\monte_carlo\integration.patch">
+      <Filter>archive\monte_carlo</Filter>
+    </None>
   </ItemGroup>
 </Project>

@@ -38,11 +38,7 @@ const analysisSummary = document.getElementById("analysis-summary");
 const analysisCountRow = document.getElementById("analysis-count-row");
 const analysisCount = document.getElementById("analysis-count");
 const analysisRecommendation = document.getElementById("analysis-recommendation");
-const mctsButton = document.getElementById("mcts-analysis");
-const mctsDetail = document.getElementById("mcts-detail");
-const mctsVisits = document.getElementById("mcts-visits");
-const mctsWins = document.getElementById("mcts-wins");
-const mctsCountFormat = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
+const ioeResultPanel = document.getElementById("ioe-result");
 let mode = "play";
 let playState = null;
 let analysisState = null;
@@ -61,6 +57,7 @@ let probabilityRevision = 0;
 let probabilityPending = false;
 let operationBusy = false;
 let suggestionResult = null;
+let ioeMove = null;
 let detailData = null;
 let suggestionMoves = new Map();
 let endgameBestCells = new Set();
@@ -102,7 +99,7 @@ async function readUpdates(path, fields, controller, update, nodes) {
             if (controller.signal.aborted) break;
             update(result);
             if (!controller.signal.aborted)
-                await new Promise((resolve) => setTimeout(resolve, result.paused ? 100 : path === "/api/anytime-search" ? 0 : 16));
+                await new Promise((resolve) => setTimeout(resolve, result.paused ? 100 : 0));
         }
         return;
     }
@@ -112,22 +109,49 @@ async function readUpdates(path, fields, controller, update, nodes) {
         throw new Error(result.error || `请求失败（${response.status}）`);
     }
     if (nodes) await post(`${path}/control`, { action: "step", nodes });
+    await readEventStream(response, update, controller.signal);
+}
+
+async function readEventStream(response, update, signal) {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let pending = "";
-    while (!controller.signal.aborted) {
+    while (!signal?.aborted) {
         const { value, done } = await reader.read();
-        if (done || controller.signal.aborted) break;
+        if (done || signal?.aborted) break;
         pending += decoder.decode(value, { stream: true });
         let end;
         while ((end = pending.indexOf("\n\n")) >= 0) {
             const event = pending.slice(0, end);
             pending = pending.slice(end + 2);
             update(JSON.parse(event.slice(6)));
-            if (controller.signal.aborted) break;
+            if (signal?.aborted) break;
         }
     }
 }
+
+async function analyzeIoeWithProgress(fields, update) {
+    const path = "/api/analyze-ioe/stream";
+    let result;
+    if (!token) {
+        result = await wasmRequest(path, fields, update);
+    } else {
+        const response = await postForm(path, fields);
+        if (response.ok && response.headers.get("Content-Type")?.startsWith("text/event-stream")) {
+            await readEventStream(response, event => {
+                if (event.progress) update(event.progress);
+                else result = event;
+            });
+        } else {
+            const error = await response.json();
+            throw new Error(error.error || `请求失败（${response.status}）`);
+        }
+    }
+    if (!result) throw new Error("IOE 分析连接已中断。");
+    if (!result.ok) throw new Error(result.error);
+    return result;
+}
+
 function activeState() {
     return mode === "play" ? playState : analysisState;
 }

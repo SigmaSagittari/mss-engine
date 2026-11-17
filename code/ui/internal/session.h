@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <ostream>
 #include <string>
@@ -22,8 +23,7 @@ struct Session {
     const std::string &token() const;
     bool stopped() const;
     std::string handle(const std::string &path, const std::string &body);
-    bool startMcts(const std::string &body, std::string &response);
-    std::string mctsUpdate() const;
+    std::string analyzeIoe(const std::string &body, const std::function<void(const std::string &)> &publish = {});
     bool startSearch(const std::string &body, std::string &response);
     std::string searchUpdate() const;
     void stopAnalysis();
@@ -31,10 +31,8 @@ struct Session {
   private:
     struct FormField;
     struct Analysis;
-    struct MctsTask;
     struct SearchTask;
 #ifdef __EMSCRIPTEN__
-    std::string advanceMcts();
     std::string advanceSearch();
 #endif
 
@@ -46,7 +44,6 @@ struct Session {
     std::string candidateCount(long double layouts) const;
     void writeProbabilities(std::ostream &result, const Position::Result &position, const Probability::BoxResult &boxes, const Probability::Pool &probabilities) const;
     void writeHighlight(std::ostream &result, Position::Result &position, Position::Pool &positions, const std::string &highlight) const;
-    std::string mctsResult(const MonteCarlo::Result &result, bool complete, long double candidates) const;
     std::string searchResult(const SearchTask &task) const;
     void writeMoveDetails(std::ostream &result, const SuggestResult::Details &details, ObservedBoard::CellId cell) const;
     std::string value(const std::vector<FormField> &fields, const std::string &key) const;
@@ -71,17 +68,13 @@ struct Session {
     long long searchBudget_;
     bool searchRunning_;
 #ifdef __EMSCRIPTEN__
-    std::unique_ptr<MctsTask> mctsTask_;
     std::unique_ptr<SearchTask> searchTask_;
 #else
     // 后台任务独占自己的 Analysis；线程先销毁，发布缓存与互斥锁后销毁。
-    mutable std::mutex mctsMutex_;
-    std::string mctsUpdate_;
     mutable std::mutex searchMutex_;
     std::condition_variable_any searchWake_;
     std::string searchUpdate_;
     unsigned long long searchBudgetEpoch_; // 暂停或切换连续运行时，作废上一批的手动预算。
-    std::jthread mctsWorker_;
     std::jthread searchWorker_;
 #endif
 };

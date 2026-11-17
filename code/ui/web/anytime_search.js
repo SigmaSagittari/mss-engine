@@ -31,7 +31,7 @@ async function requestSearch() {
             return;
         }
         const config = analysisConfig("anytime");
-        await search.start(mcts, () => ({ ...boardSnapshot(activeState()), ...config, run }), updateSearch, run ? 0 : nodes);
+        await search.start(() => ({ ...boardSnapshot(activeState()), ...config, run }), updateSearch, run ? 0 : nodes);
     } catch (error) {
         setMessage(error.message, "error");
     }

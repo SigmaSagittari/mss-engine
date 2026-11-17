@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <iomanip>
 #include <random>
@@ -13,6 +14,7 @@
 #include <emscripten/bind.h>
 #endif
 
+#include "algo/ioe_engine/bruteforce/bruteforce.h"
 #include "algo/winrate_engine/fifty_fifty/templates/long_term_risk.h"
 #include "core/config.h"
 #include "core/assert.h"
@@ -39,41 +41,6 @@ struct Session::Analysis {
         const Position::ProbabilityResult probability = Position().analyzeProbability(position, positions);
         return Probability().mineProbability(probability.boxes, positions.probabilities, cell, position.board, position.basic, position.structure);
     }
-};
-
-struct Session::MctsTask {
-    std::unique_ptr<Analysis> analysis;
-    Config config;
-    MovePolicy::Config::Guess guess;
-    MovePolicy::Config policy;
-    long double layouts;
-    bool complete;
-    MonteCarlo::Result result;
-    MonteCarlo::Pool pool;
-
-    MctsTask(std::unique_ptr<Analysis> &source, const Config &settings, const vector<ObservedBoard::CellId> &targets, bool complete)
-        : analysis(source.release()), config(settings), guess(config.guess()),
-          policy(config.policy(guess)), layouts(Position().analyzeProbability(analysis->checked.result, analysis->positions).totalWays),
-          complete(complete), result(initialize(targets)), pool(analysis->positions.structure, analysis->suggestions) {}
-
-    MonteCarlo::Result initialize(const vector<ObservedBoard::CellId> &targets) {
-        AnytimeSearch::Config anytime = config.anytime;
-        if (targets.size != 0) anytime.width[0] = 0;
-        MovePolicy::Config::Guess initial = guess;
-        initial.anytime = &anytime;
-        AnytimeSearch::Result searched;
-        SuggestResult::Details details;
-        SuggestResult initialized = MovePolicy().suggest(analysis->checked.result, analysis->positions, config.policy(initial), analysis->suggestions, targets, searched, details);
-        analysis->suggestions.anytime.clear(analysis->positions);
-        MonteCarlo::Result result(initialized, 1.0L);
-        if (!result.winrate && result.exact.engine != SuggestResult::Engine::BruteForce)
-            for (int i = 0; i < (int)initialized.candidates.size; ++i)
-                result.candidates.push_back(MonteCarlo::Candidate(initialized.candidates[i].cell, result.priorWeight));
-        return result;
-    }
-
-    bool finished() const { return result.exact.engine == SuggestResult::Engine::BruteForce || (complete && result.samples != 0); }
-    void step() { MonteCarlo().update(result, analysis->checked.result, policy, pool); }
 };
 
 struct Session::SearchTask {
@@ -135,6 +102,18 @@ std::string Session::index(std::string content) const {
     replace("__MSS_POLICY_NODES__", std::to_string(config.anytime.nodeLimit));
     const std::string versionMarker = "__MSS_VERSION__";
     while (content.find(versionMarker) != std::string::npos) replace(versionMarker, mss::version);
+    std::string acknowledgements;
+    for (const char *entry : mss::acknowledgements) {
+        acknowledgements += "<li>";
+        for (const char *ch = entry; *ch; ++ch) {
+            if (*ch == '&') acknowledgements += "&amp;";
+            else if (*ch == '<') acknowledgements += "&lt;";
+            else if (*ch == '>') acknowledgements += "&gt;";
+            else acknowledgements += *ch;
+        }
+        acknowledgements += "</li>";
+    }
+    replace("__MSS_ACKNOWLEDGEMENTS__", acknowledgements);
     return content;
 }
 
@@ -590,6 +569,91 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
     return result.str();
 }
 
+std::string Session::analyzeIoe(const std::string &body, const std::function<void(const std::string &)> &publish) {
+    const std::vector<FormField> fields = parseForm(body);
+    std::string response;
+    int rows, cols, mines;
+    std::string cells;
+    if (!parseBoard(fields, rows, cols, mines, cells, response))
+        return response;
+    if (rows != 9 || cols != 9 || mines != 10)
+        return error("IOE 分析只支持初级盘面");
+    int clicks;
+    if (!parseInteger(value(fields, "clicks"), clicks) || clicks < 0)
+        return error("累计点击数无效");
+    if (clicks == 0 && cells.find_first_of("012345678") != std::string::npos)
+        return error("已揭开的盘面至少有一次点击");
+    const std::string mask = value(fields, "playerFlags");
+    if (mask.size() != cells.size() || mask.find_first_not_of("01") != std::string::npos)
+        return error("玩家旗数据无效");
+    int candidateLimit = 1'000'000;
+    int domLimit = 1'000'000;
+    const std::string candidateLimitText = value(fields, "candidateLimit");
+    const std::string domLimitText = value(fields, "domLimit");
+    if ((!candidateLimitText.empty() && !parseInteger(candidateLimitText, candidateLimit)) || candidateLimit < 1)
+        return error("IOE 候选摆法上限无效");
+    if ((!domLimitText.empty() && !parseInteger(domLimitText, domLimit)) || domLimit < 1)
+        return error("IOE DOM 调用上限无效");
+    Grid<bool> playerFlags(rows, cols, false);
+    for (int cell = 0; cell < rows * cols; ++cell) {
+        if (mask[cell] == '1' && cells[cell] >= '0' && cells[cell] <= '8')
+            return error("已揭格上不能有玩家旗");
+        playerFlags[cell / cols][cell % cols] = mask[cell] == '1';
+    }
+    std::function<void(const IoeBruteForce::Progress &)> progress;
+    if (publish) progress = [&](const IoeBruteForce::Progress &state) {
+        const char *phase = state.phase == IoeBruteForce::Phase::Enumeration ? "enumeration" :
+                            state.phase == IoeBruteForce::Phase::Root ? "root" : "search";
+        std::ostringstream update;
+        update << "{\"progress\":{\"phase\":\"" << phase
+               << "\",\"candidateCount\":" << state.candidates << ",\"enumerated\":" << state.enumerated
+               << ",\"rootAnalyzed\":" << state.rootAnalyzed << ",\"rootEligible\":" << state.rootEligible
+               << ",\"rootDomCalls\":" << state.rootDomCalls << ",\"searchDomCalls\":" << state.searchDomCalls
+               << ",\"domLimit\":" << state.domLimit << "}}";
+        publish(update.str());
+    };
+    const IoeBruteForce::Result analysis = IoeBruteForce().solve(makeBoard(rows, cols, mines, cells), playerFlags, clicks, candidateLimit, domLimit, progress);
+    if (analysis.status == IoeBruteForce::Status::InvalidBoard)
+        return error("IOE 盘面无解");
+    const bool exact = analysis.status == IoeBruteForce::Status::Exact;
+    const bool candidateLimitExceeded = analysis.status == IoeBruteForce::Status::CandidateLimit;
+    std::ostringstream result;
+    result << std::setprecision(18) << "{\"ok\":true,\"exact\":" << (exact ? "true" : "false")
+           << ",\"candidateLimitExceeded\":" << (candidateLimitExceeded ? "true" : "false")
+           << ",\"candidateCount\":" << analysis.candidates
+           << ",\"rootEligible\":" << analysis.rootEligible << ",\"wins\":" << analysis.wins
+           << ",\"rootDomCalls\":" << analysis.rootDomCalls << ",\"searchDomCalls\":" << analysis.searchDomCalls
+           << ",\"expectedScore\":";
+    if (std::isfinite(analysis.expectedScore)) result << analysis.expectedScore;
+    else result << "null";
+    result << ",\"winningIoe\":[";
+    for (size_t i = 0; i < analysis.winningIoe.size; ++i) {
+        if (i != 0) result << ',';
+        const IoeBruteForce::Result::IoeCount &entry = analysis.winningIoe[i];
+        result << '[' << entry.numerator << ',' << entry.denominator << ',' << entry.count << ']';
+    }
+    result << "],\"move\":";
+    if (analysis.action == IoeBruteForce::Action::None) {
+        result << "null";
+    } else {
+        const char *kind = analysis.action == IoeBruteForce::Action::Open ? "open" :
+                           analysis.action == IoeBruteForce::Action::Unflag ? "unflag" : "chord";
+        result << "{\"kind\":\"" << kind << "\",\"cell\":" << analysis.cell << ",\"addFlags\":[";
+        for (int i = 0; i < analysis.addedCount; ++i) {
+            if (i != 0) result << ',';
+            result << analysis.addedFlags[i];
+        }
+        result << "],\"removeFlags\":[";
+        for (int i = 0; i < analysis.removedCount; ++i) {
+            if (i != 0) result << ',';
+            result << analysis.removedFlags[i];
+        }
+        result << "]}";
+    }
+    result << '}';
+    return result.str();
+}
+
 std::string Session::playUntilNoSafe(const std::vector<FormField> &fields) {
     std::string response;
     int rows, cols, totalMines;
@@ -645,131 +709,6 @@ std::string Session::playUntilNoSafe(const std::vector<FormField> &fields) {
     result << '}';
     return result.str();
 }
-
-std::string Session::mctsResult(const MonteCarlo::Result &snapshot, bool complete, long double candidates) const {
-    const ObservedBoard::CellId recommended = snapshot.recommended();
-    const bool exact = snapshot.exact.engine == SuggestResult::Engine::BruteForce;
-    long double winrate = snapshot.samples == 0 ? 0 : (long double)snapshot.wins / snapshot.samples;
-    if (exact) {
-        for (int i = 0; i < (int)snapshot.exact.candidates.size; ++i)
-            if (snapshot.exact.candidates.data[i].cell == recommended) winrate = snapshot.exact.candidates.data[i].value;
-    } else if (!snapshot.winrate)
-        for (int i = 0; i < (int)snapshot.candidates.size; ++i) {
-            const MonteCarlo::Candidate &candidate = snapshot.candidates.data[i];
-            if (candidate.cell == recommended)
-                winrate = candidate.samples == 0 ? 0 : (long double)candidate.wins / candidate.samples;
-        }
-    std::ostringstream result;
-    result << std::setprecision(12) << "{\"ok\":true,\"simulations\":" << snapshot.samples << ",\"value\":" << winrate << ",\"recommended\":" << recommended << ",\"winrate\":" << (snapshot.winrate ? "true" : "false") << ",\"exact\":" << (exact ? "true" : "false") << ",\"complete\":" << (complete ? "true" : "false") << ",\"candidateCount\":" << candidateCount(candidates) << ",\"moves\":[";
-    bool first = true;
-    if (exact) {
-        for (int i = 0; i < (int)snapshot.exact.candidates.size; ++i) {
-            const SuggestResult::Candidate &candidate = snapshot.exact.candidates.data[i];
-            if (!first) result << ',';
-            first = false;
-            result << "{\"cell\":" << candidate.cell << ",\"winrate\":" << candidate.value << '}';
-        }
-    } else for (int i = 0; i < (int)snapshot.candidates.size; ++i) {
-        const MonteCarlo::Candidate &candidate = snapshot.candidates.data[i];
-        if (!first)
-            result << ',';
-        first = false;
-        result << "{\"cell\":" << candidate.cell << ",\"visits\":" << jsonString(std::to_string(candidate.samples)) << ",\"wins\":" << jsonString(std::to_string(candidate.wins)) << ",\"winrate\":";
-        if (candidate.samples == 0) result << "null";
-        else result << (long double)candidate.wins / candidate.samples;
-        result << '}';
-    }
-    result << "]}";
-    return result.str();
-}
-
-bool Session::startMcts(const std::string &body, std::string &response) {
-#ifndef __EMSCRIPTEN__
-    mctsWorker_.request_stop();
-    if (mctsWorker_.joinable())
-        mctsWorker_.join();
-#endif
-    const std::vector<FormField> fields = parseForm(body);
-    Config config = config_;
-    if (!parseConfig(fields, config, response)) return false;
-    std::unique_ptr<Analysis> analysis;
-    if (!createAnalysis(fields, analysis, response))
-        return false;
-    vector<ObservedBoard::CellId> targets;
-    const std::string cells = value(fields, "cells");
-    const ObservedBoard::Result &board = analysis->checked.result.board;
-    int revealed = 0;
-    for (int cell = 0; cell < (int)cells.size(); ++cell) {
-        if (cells[cell] == 'G')
-            targets.push_back(cell);
-        if (cells[cell] >= '0' && cells[cell] <= '8')
-            ++revealed;
-    }
-    const bool complete = revealed + board.totalMines == (int)cells.size();
-    if (!complete && targets.size != 0) {
-        bool safe = false;
-        for (int cell = 0; cell < (int)cells.size(); ++cell)
-            if ((cells[cell] == '?' || cells[cell] == 'G' || cells[cell] == 'S') && analysis->mineProbability(cell) == 0.0L) {
-                safe = true;
-                break;
-            }
-        // 有必安格时 MC 忽略目标并采整局胜率；仅在实际比较首招时检查外部目标。
-        if (!safe)
-            for (int i = 0; i < (int)targets.size; ++i)
-                if (analysis->mineProbability(targets.data[i]) == 1.0L) {
-                    response = error("MC 目标格已确定为雷");
-                    return false;
-                }
-    }
-#ifdef __EMSCRIPTEN__
-    mctsTask_.reset(new MctsTask(analysis, config, targets, complete));
-#else
-    {
-        const std::lock_guard<std::mutex> lock(mctsMutex_);
-        mctsUpdate_ = "{\"ok\":true,\"simulations\":0,\"value\":0,\"recommended\":-1,\"winrate\":false,\"exact\":false,\"complete\":false,\"moves\":[]}";
-    }
-    Analysis *source = analysis.release();
-    mctsWorker_ = std::jthread([this, source, config, targets, complete](std::stop_token stop) {
-        std::unique_ptr<Analysis> analysis(source);
-        MctsTask task(analysis, config, targets, complete);
-        auto publish = [&]() {
-            const std::string update = mctsResult(task.result, task.complete, task.layouts);
-            const std::lock_guard<std::mutex> lock(mctsMutex_);
-            mctsUpdate_ = update;
-        };
-        publish();
-        if (task.finished()) return;
-        std::chrono::steady_clock::time_point next = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
-        while (!stop.stop_requested()) {
-            task.step();
-            if (task.finished()) break;
-            if (std::chrono::steady_clock::now() >= next) {
-                publish();
-                next = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
-            }
-        }
-        publish();
-    });
-#endif
-    return true;
-}
-
-#ifndef __EMSCRIPTEN__
-std::string Session::mctsUpdate() const {
-    const std::lock_guard<std::mutex> lock(mctsMutex_);
-    return mctsUpdate_;
-}
-#else
-std::string Session::advanceMcts() {
-    MctsTask &task = *mctsTask_;
-    const std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now() + std::chrono::milliseconds(8);
-    while (!task.finished()) {
-        task.step();
-        if (std::chrono::steady_clock::now() >= end) break;
-    }
-    return mctsResult(task.result, task.complete, task.layouts);
-}
-#endif
 
 bool Session::startSearch(const std::string &body, std::string &response) {
 #ifndef __EMSCRIPTEN__
@@ -910,10 +849,8 @@ std::string Session::controlSearch(const std::vector<FormField> &fields) {
 
 void Session::stopAnalysis() {
 #ifdef __EMSCRIPTEN__
-    mctsTask_.reset();
     searchTask_.reset();
 #else
-    mctsWorker_.request_stop();
     searchWorker_.request_stop();
 #endif
 }
@@ -928,16 +865,17 @@ std::string Session::searchUpdate() const {
 #endif
 
 std::string Session::handle(const std::string &path, const std::string &body) {
+    if (path == "/api/analyze-ioe")
+        return analyzeIoe(body);
 #ifdef __EMSCRIPTEN__
     if (path == "/api/anytime-search/update") return advanceSearch();
-    if (path == "/api/mcts/update") return advanceMcts();
-    if (path == "/api/anytime-search/start" || path == "/api/mcts/start") {
+    if (path == "/api/anytime-search/start") {
         stopAnalysis();
         std::string response;
-        const bool started = path == "/api/anytime-search/start" ? startSearch(body, response) : startMcts(body, response);
+        const bool started = startSearch(body, response);
         return started ? "{\"ok\":true}" : response;
     }
-    if (path == "/api/anytime-search/stop" || path == "/api/mcts/stop") {
+    if (path == "/api/anytime-search/stop") {
         stopAnalysis();
         return "{\"ok\":true}";
     }
@@ -964,6 +902,9 @@ EMSCRIPTEN_BINDINGS(mss) {
     emscripten::class_<mss::UI::Session>("Session")
         .constructor<>()
         .function("index", &mss::UI::Session::index)
-        .function("handle", &mss::UI::Session::handle);
+        .function("handle", &mss::UI::Session::handle)
+        .function("analyzeIoeStream", emscripten::optional_override([](mss::UI::Session &session, const std::string &body, emscripten::val publish) {
+            return session.analyzeIoe(body, [&](const std::string &update) { publish(update); });
+        }));
 }
 #endif

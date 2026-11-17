@@ -28,7 +28,7 @@
             <button id="analysis-mode" class="mode" role="tab">分析</button>
         </div>
         <button id="endgame-analysis" class="secondary">招法分析</button>
-        <button id="mcts-analysis" class="secondary" aria-pressed="false" hidden>蒙特卡洛</button>
+        <button id="ioe-analysis" class="secondary" hidden>分析 IOE</button>
         <button id="anytime-search" class="secondary" hidden>开始搜索</button>
         <div id="play-actions" class="play-actions">
             <button id="play-until-no-safe">开到无安全格</button>
@@ -50,6 +50,19 @@
                 <div id="analysis-summary" class="muted" hidden></div>
                 <div id="analysis-count-row" class="candidate-row" hidden><span>可行摆法数</span><strong id="analysis-count"></strong></div>
                 <div id="analysis-recommendation" class="recommendation" hidden></div>
+                <div id="ioe-result" hidden>
+                    <div class="candidate-row"><span>胜出摆法（IOE ≥ 200%）</span><strong id="ioe-wins"></strong></div>
+                    <div class="candidate-row"><span>加权评分</span><strong id="ioe-score"></strong></div>
+                    <figure id="ioe-distribution" class="ioe-distribution" hidden>
+                        <figcaption>获胜 IOE 分布</figcaption>
+                        <div class="ioe-y-label">胜出摆法数</div>
+                        <div class="ioe-chart">
+                            <div class="ioe-y-axis" aria-hidden="true"></div>
+                            <div class="ioe-plot"><ul></ul></div>
+                        </div>
+                        <div class="ioe-x-label">IOE</div>
+                    </figure>
+                </div>
             </section>
             <section id="cell-detail" class="details" aria-label="格子详情" hidden>
                 <div class="detail-heading"><h2 id="detail-position"></h2><span id="detail-engine"></span></div>
@@ -65,11 +78,6 @@
                         <tbody></tbody>
                     </table>
                     <div id="detail-side" class="detail-side" hidden>
-                        <section id="mcts-detail" hidden>
-                            <h3>采样统计</h3>
-                            <div><span>采样</span><strong id="mcts-visits"></strong></div>
-                            <div><span>获胜</span><strong id="mcts-wins"></strong></div>
-                        </section>
                         <table id="anytime-search-history" class="detail-table" hidden>
                             <caption>各层评分</caption>
                             <thead><tr><th>层</th><th>评分</th></tr></thead>
@@ -103,6 +111,8 @@
             <label class="settings-tab" id="settings-tab-board" for="settings-category-board">盘面</label>
             <input class="settings-category-radio" id="settings-category-advanced" type="radio" name="settings-category" value="advanced">
             <label class="settings-tab" id="settings-tab-advanced" for="settings-category-advanced">高级设置</label>
+            <input class="settings-category-radio" id="settings-category-acknowledgements" type="radio" name="settings-category" value="acknowledgements">
+            <label class="settings-tab" id="settings-tab-acknowledgements" for="settings-category-acknowledgements">致谢</label>
             <div class="settings-panels">
                 <section id="settings-solver" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-solver">
                     <section class="settings-group">
@@ -120,6 +130,11 @@
                     </section>
                     <label class="settings-row"><span>手动搜索节点数</span><input id="anytime-search-nodes" type="number" min="-1" max="2147483647" value="-1" aria-describedby="manual-search-hint"></label>
                     <p class="settings-caption" id="manual-search-hint">填 −1 时持续搜索，直到手动停止或搜完。</p>
+                    <section class="settings-group">
+                        <h3>IOE</h3>
+                        <label class="settings-row"><span>候选摆法上限</span><input id="ioe-candidate-limit" type="number" min="1" max="2147483647" step="1" value="1000000"></label>
+                        <label class="settings-row"><span>后续搜索 DOM 调用上限</span><input id="ioe-dom-limit" type="number" min="1" max="2147483647" step="1" value="1000000"></label>
+                    </section>
                 </section>
                 <section id="settings-display" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-display">
                     <label class="settings-row"><span>棋盘概率</span><input id="probability-display" type="checkbox" checked></label>
@@ -159,6 +174,9 @@
                         <p class="settings-caption" id="shape-algo-hint">autoSA 会为复杂局面多试几种计算顺序，算出的雷率相同。</p>
                     </section>
                 </section>
+                <section id="settings-acknowledgements" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-acknowledgements">
+                    <ul class="settings-acknowledgements">__MSS_ACKNOWLEDGEMENTS__</ul>
+                </section>
             </div>
         </fieldset>
     </dialog>
@@ -166,7 +184,6 @@
     <script src="game.js" defer></script>
     <script src="view.js" defer></script>
     <script src="analysis.js" defer></script>
-    <script src="monte_carlo.js" defer></script>
     <script src="anytime_search.js" defer></script>
     <script src="main.js" defer></script>
 </body>

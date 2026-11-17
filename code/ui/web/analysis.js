@@ -41,7 +41,7 @@ function analysisConfig(strategy = suggestStrategy.value) {
         if (width.some((value) => !Number.isInteger(value) || value < 1 || value > 2147483647)) throw new Error("候选宽度必须是正整数。");
     }
     const templateRisk = strategy === "anytime" ? templateRiskSettings() : {};
-    return { strategy, ...templateRisk, limit, maxThreads, nodeBudget: nodes, rootWidth: width[0], middleWidth: width[1], deepWidth: width[2], algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, checkAllMoves: endgameCheckAllMoves.value === "all", multiThread: endgameMultithread.checked };
+    return { strategy, ...templateRisk, limit, maxThreads, nodeBudget: nodes, rootWidth: width[0], middleWidth: width[1], deepWidth: width[2], algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, multiThread: endgameMultithread.checked };
 }
 
 function templateRiskSettings() {
@@ -123,8 +123,7 @@ class AnalysisStream {
         this.render();
     }
 
-    async start(other, fields, update, nodes = 0) {
-        other.stop(true);
+    async start(fields, update, nodes = 0) {
         setMessage("");
         clearSuggestion();
         this.result = null;
@@ -138,7 +137,7 @@ class AnalysisStream {
         const timer = setInterval(() => this.render(), 100);
         controller.signal.addEventListener("abort", () => clearInterval(timer), { once: true });
         try {
-            await Promise.all([this.stopQueue, other.stopQueue]);
+            await this.stopQueue;
             if (this.controller !== controller) return;
             await readUpdates(this.path, fields(), controller, update, nodes);
         } catch (error) {
@@ -154,14 +153,14 @@ class AnalysisStream {
 }
 
 function stopAnalysis() {
-    mcts.stop(true);
     search.stop(true);
 }
 
 function openAnalysis() {
     if (mode === "analysis")
         return;
-    analysisState = boardSnapshot(playState);
+    analysisState = { ...boardSnapshot(playState), clicks: playState.clicks, playerFlags: new Set(flags) };
+    clearIoeResult();
     mode = "analysis";
     hoveredCell = -1;
     selectedCell = -1;
@@ -220,7 +219,9 @@ function editAnalysisCell(cell, state) {
     const previous = analysisState.cells[cell];
     const cells = analysisState.cells.split("");
     cells[cell] = state;
-    analysisState = { ...analysisState, cells: cells.join("") };
+    const changedReveal = /[0-8]/.test(previous + state);
+    analysisState = { ...analysisState, cells: cells.join(""), clicks: changedReveal ? null : analysisState.clicks };
+    if (/[0-8]/.test(state)) analysisState.playerFlags.delete(cell);
     if ((previous === "?" || previous === "G") && (state === "?" || state === "G")) {
         stopAnalysis();
     } else
@@ -229,18 +230,90 @@ function editAnalysisCell(cell, state) {
     setMessage("盘面已修改。", "success");
 }
 
+function showIoeProgress(progress) {
+    const count = value => value.toLocaleString();
+    if (progress.phase === "enumeration") {
+        setMessage(`正在枚举候选摆法 · ${count(progress.enumerated)} / ${count(progress.candidateCount)} 张`);
+    } else if (progress.phase === "root") {
+        setMessage(`正在筛选根部 · 已分析 ${count(progress.rootAnalyzed)} / ${count(progress.candidateCount)} 张 · 已找到 ${count(progress.rootEligible)} 张可达 200% 的摆法 · DOM ${count(progress.rootDomCalls)} 次`);
+    } else {
+        setMessage(`正在后续搜索 · DOM ${count(progress.searchDomCalls)} / ${count(progress.domLimit)} 次 · 根部找到 ${count(progress.rootEligible)} 张可达 200% 的摆法`);
+    }
+}
+
+function lockAnalysis(message) {
+    operationBusy = true;
+    stopAnalysis();
+    clearSuggestion();
+    ++probabilityRevision;
+    probabilityPending = false;
+    setMessage(message);
+    render();
+}
+
+async function requestIoeAnalysis() {
+    const state = activeState();
+    if (operationBusy || !isBeginner(state) || (mode === "play" && (state.lost || state.won)))
+        return;
+    const playerFlags = mode === "play" ? flags : state.playerFlags;
+    const candidateLimitInput = document.getElementById("ioe-candidate-limit");
+    const domLimitInput = document.getElementById("ioe-dom-limit");
+    const candidateLimit = candidateLimitInput.valueAsNumber;
+    const domLimit = domLimitInput.valueAsNumber;
+    if (!Number.isInteger(candidateLimit) || !Number.isInteger(domLimit) || !candidateLimitInput.validity.valid || !domLimitInput.validity.valid) {
+        setMessage("请在设置中填写有效的 IOE 上限。", "error");
+        return;
+    }
+    let clicks = state.clicks;
+    if (clicks === null) {
+        const input = window.prompt("输入此局面已花的累计点击数（含插旗、拔旗）", "");
+        if (input === null) return;
+        clicks = Number(input.trim());
+        if (!/^\d+$/.test(input.trim()) || !Number.isSafeInteger(clicks) || clicks > 2147483647) {
+            setMessage("累计点击数无效。", "error");
+            return;
+        }
+    }
+    lockAnalysis("正在计算候选摆法数…");
+    try {
+        await search.stopQueue;
+        const mask = Array.from(state.cells, (_, cell) => playerFlags.has(cell) ? "1" : "0").join("");
+        const result = await analyzeIoeWithProgress({ ...boardSnapshot(state, /[G*]/g), playerFlags: mask, clicks, candidateLimit, domLimit }, showIoeProgress);
+        if (result.candidateLimitExceeded) {
+            setMessage(`有 ${result.candidateCount.toLocaleString()} 张候选摆法，超过设置的上限。`);
+            return;
+        }
+        const coordinate = cell => `${String.fromCharCode(65 + cell % state.cols)}${1 + Math.floor(cell / state.cols)}`;
+        const move = result.move;
+        ioeMove = move;
+        let action = result.wins > 0 ? "当前盘面已完成。" : "没有可达到 200% 的首招。";
+        if (move?.kind === "open") action = `左键 ${coordinate(move.cell)}。`;
+        else if (move?.kind === "unflag") action = `拔旗 ${coordinate(move.cell)}。`;
+        else if (move?.kind === "chord") {
+            const steps = [];
+            if (move.removeFlags.length) steps.push(`拔旗 ${move.removeFlags.map(coordinate).join("、")}`);
+            if (move.addFlags.length) steps.push(`插旗 ${move.addFlags.map(coordinate).join("、")}`);
+            steps.push(`双击 ${coordinate(move.cell)}`);
+            action = steps.join("，") + "。";
+        }
+        if (!result.exact)
+            action = move ? "已到搜索上限，当前最好招法是" + action : "已到搜索上限，尚未完成任何首招。";
+        showIoeResult(result);
+        setMessage(`${action} 根部找到 ${result.rootEligible.toLocaleString()} 张可达 200% 的摆法。根部 DOM ${result.rootDomCalls.toLocaleString()} 次，搜索 DOM ${result.searchDomCalls.toLocaleString()} 次。`);
+    } catch (error) {
+        setMessage(error.message, "error");
+    } finally {
+        operationBusy = false;
+        render();
+    }
+}
+
 async function requestSuggestion() {
     if (operationBusy || (mode === "play" && (playState.lost || playState.won)))
         return;
-    operationBusy = true;
-    mcts.stop();
-    search.stop();
-    setMessage("正在分析…");
-    document.getElementById("play-until-no-safe").disabled = true;
-    document.getElementById("endgame-analysis").disabled = true;
-    ++probabilityRevision;
-    probabilityPending = false;
+    lockAnalysis("正在分析…");
     try {
+        await search.stopQueue;
         const state = activeState();
         const highlight = highlightDisplay.value;
         const startedAt = performance.now();
@@ -249,7 +322,6 @@ async function requestSuggestion() {
             probabilities = result.probabilities;
             candidateCount = result.candidateCount;
         }
-        stopAnalysis();
         showSuggestion(result, performance.now() - startedAt);
         if (highlight && mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
         setMessage("分析完成。", "success");

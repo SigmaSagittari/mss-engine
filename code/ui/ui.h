@@ -2,7 +2,7 @@
 
 #include "algo/winrate_engine/basic/anytime_search/anytime_search.h"
 #include "algo/winrate_engine/fifty_fifty/fifty_fifty.h"
-#include "algo/winrate_engine/monte_carlo/monte_carlo.h"
+#include "algo/winrate_engine/move_policy.h"
 
 namespace mss::UI {
 

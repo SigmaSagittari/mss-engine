@@ -82,6 +82,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\code\main.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\bruteforce.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\ref_dom\ref_dom.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\ref_dom\frontier.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\ref_dom\dominance.cpp" />
     <ClCompile Include="..\code\algo\probability_engine\basic\basic.cpp" />
     <ClCompile Include="..\code\algo\probability_engine\logic_component\logic_component.cpp" />
     <ClCompile Include="..\code\algo\probability_engine\observed_board\observed_board.cpp" />
@@ -97,7 +101,6 @@
     <ClCompile Include="..\code\algo\winrate_engine\bruteforce\bruteforce_multimask.cpp" />
     <ClCompile Include="..\code\algo\winrate_engine\bruteforce\bruteforce_normal.cpp" />
     <ClCompile Include="..\code\algo\winrate_engine\move_policy.cpp" />
-    <ClCompile Include="..\code\algo\winrate_engine\monte_carlo\monte_carlo.cpp" />
     <ClCompile Include="..\code\algo\winrate_engine\selection\selection.cpp" />
     <ClCompile Include="..\code\game\game.cpp" />
     <ClCompile Include="..\code\core\algorithm\combination.cpp" />
@@ -107,6 +110,10 @@
     <ClCompile Include="..\code\ui\ui.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\bruteforce.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\ref_dom\ref_dom.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\ref_dom\frontier.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\ref_dom\dominance.h" />
     <ClInclude Include="..\code\algo\probability_engine\basic\basic.h" />
     <ClInclude Include="..\code\algo\probability_engine\logic_component\logic_component.h" />
     <ClInclude Include="..\code\algo\probability_engine\observed_board\observed_board.h" />
@@ -125,7 +132,6 @@
     <ClInclude Include="..\code\algo\winrate_engine\bruteforce\bruteforce_type.h" />
     <ClInclude Include="..\code\algo\winrate_engine\bruteforce\bruteforce.h" />
     <ClInclude Include="..\code\algo\winrate_engine\move_policy.h" />
-    <ClInclude Include="..\code\algo\winrate_engine\monte_carlo\monte_carlo.h" />
     <ClInclude Include="..\code\algo\winrate_engine\selection\selection.h" />
     <ClInclude Include="..\code\core\algorithm\combination.h" />
     <ClInclude Include="..\code\core\algorithm\neighbors.h" />
@@ -156,7 +162,6 @@
     <None Include="..\code\ui\web\game.js" />
     <None Include="..\code\ui\web\index.html" />
     <None Include="..\code\ui\web\main.js" />
-    <None Include="..\code\ui\web\monte_carlo.js" />
     <None Include="..\code\ui\web\solver_worker.js" />
     <None Include="..\code\ui\web\state.js" />
     <None Include="..\code\ui\web\style.css" />
@@ -165,6 +170,8 @@
   </ItemGroup>
   <ItemDefinitionGroup>
     <ClCompile>
+      <!-- 源路径相对于 vs 目录。保留这一层，让 ..\code 仍在当前配置的中间目录内。 -->
+      <ObjectFileName>$(IntDir)vs\%(RelativeDir)</ObjectFileName>
       <DisableSpecificWarnings>4267;%(DisableSpecificWarnings)</DisableSpecificWarnings>
     </ClCompile>
     <PostBuildEvent>
@@ -186,10 +193,17 @@
     <ClInclude Include="..\code\test\common.h" />
     <ClInclude Include="..\code\test\cases.h" />
     <ClInclude Include="..\code\test\harness.h" />
+    <ClInclude Include="..\code\test\benchmark\ioe_root.h" />
     <ClInclude Include="..\code\test\benchmark\performance.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\code\algo\winrate_engine\fifty_fifty\templates\semi.cpp" />
     <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\templates\semi.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\archive\monte_carlo\code\algo\winrate_engine\monte_carlo\monte_carlo.cpp" />
+    <None Include="..\archive\monte_carlo\code\algo\winrate_engine\monte_carlo\monte_carlo.h" />
+    <None Include="..\archive\monte_carlo\code\ui\web\monte_carlo.js" />
+    <None Include="..\archive\monte_carlo\integration.patch" />
   </ItemGroup>
 </Project>

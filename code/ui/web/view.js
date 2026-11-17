@@ -55,21 +55,7 @@ function renderAnalysisResult() {
     let summary = "";
     let recommended = [];
     let safe = false;
-    if (mcts.result || mcts.controller) {
-        const result = mcts.result;
-        const samples = result?.simulations || 0;
-        let speed = 0;
-        if (mcts.controller && mcts.samples.length > 1) {
-            const first = mcts.samples[0];
-            const next = mcts.samples[1];
-            const start = Math.max(first.time, now - 1000);
-            const baseline = first.count + (next.count - first.count) * (start - first.time) / (next.time - first.time);
-            speed = (samples - baseline) * 1000 / (now - start);
-        }
-        summary = result?.exact ? "精确枚举 · 已完成" : `蒙特卡洛 · ${formatCount(samples)} 次模拟 · ${formatCount(Math.round(speed))} 局/s · ${mcts.controller ? "运行中" : "已停止"}`;
-        if (result?.winrate && samples > 0) summary += ` · 整局胜率 ${formatPercent(result.value)}`;
-        if (result && result.recommended >= 0) recommended = [result.recommended];
-    } else if (search.result || search.controller) {
+    if (search.result || search.controller) {
         const result = search.result;
         const speed = search.controller && result && !result.paused && !result.finished ? (result.nodes - search.samples[0].count) * 1000 / Math.max(1, now - search.samples[0].time) : 0;
         const engine = result?.engine === "BruteForce" ? "精确枚举" : result?.safe ? "确定安全" : "Anytime";
@@ -167,31 +153,23 @@ function renderDetail() {
     if (search.result) {
         engine = search.result.engine;
         move = search.moves.get(selectedCell);
-    } else if (mcts.result) {
-        engine = mcts.result.exact ? "BruteForce" : "MonteCarlo";
-        move = mcts.moves.get(selectedCell);
     } else if (suggestionResult) {
         engine = suggestionResult.engine;
         move = suggestionMoves.get(selectedCell);
     }
     detailScoreRow.hidden = !move;
-    const names = { Safe: "确定安全", LowRisk: "LowRisk", Anytime: "Anytime", BruteForce: "精确枚举", MonteCarlo: "蒙特卡洛" };
+    const names = { Safe: "确定安全", LowRisk: "LowRisk", Anytime: "Anytime", BruteForce: "精确枚举" };
     detailEngine.textContent = move ? names[engine] : "";
     if (move) {
-        const labels = { Safe: "安全率", LowRisk: "安全率", Anytime: "当前评分", BruteForce: "精确胜率", MonteCarlo: "胜率" };
+        const labels = { Safe: "安全率", LowRisk: "安全率", Anytime: "当前评分", BruteForce: "精确胜率" };
         detailScoreLabel.textContent = labels[engine];
-        const score = engine === "MonteCarlo" || (mcts.result && engine === "BruteForce") ? move.winrate : move.value;
+        const score = move.value;
         detailScore.textContent = score === null ? "—" : formatPercent(score);
-    }
-    mctsDetail.hidden = engine !== "MonteCarlo" || !move;
-    if (!mctsDetail.hidden) {
-        mctsVisits.textContent = move.visits;
-        mctsWins.textContent = move.wins;
     }
     renderObserve(engine === "Anytime" && move ? move.branches : []);
     const history = engine === "Anytime" && move ? move.history : [];
     searchHistory.hidden = history.length === 0;
-    detailSide.hidden = mctsDetail.hidden && searchHistory.hidden;
+    detailSide.hidden = searchHistory.hidden;
     detailColumns.classList.toggle("split", !detailSide.hidden);
     const body = searchHistory.tBodies[0];
     for (let index = 0; index < history.length; ++index) {
@@ -218,8 +196,84 @@ function clearDetail() {
     detailPanel.hidden = true;
 }
 
+function clearIoeResult() {
+    ioeMove = null;
+    ioeResultPanel.hidden = true;
+}
+
+const ioeBars = document.querySelector("#ioe-distribution ul");
+
+function fitIoeLabels() {
+    const count = ioeBars.children.length;
+    const width = ioeBars.clientWidth;
+    if (!count || !width) return;
+    const maxLabels = Math.max(2, Math.floor(width / 64));
+    const dense = count > maxLabels;
+    ioeBars.classList.toggle("ioe-dense", dense);
+    const labels = new Set();
+    if (dense)
+        for (let i = 0; i < maxLabels; ++i)
+            labels.add(Math.round(i * (count - 1) / (maxLabels - 1)));
+    for (let i = 0; i < count; ++i)
+        ioeBars.children[i].lastElementChild.hidden = dense && !labels.has(i);
+}
+
+window.addEventListener("resize", fitIoeLabels);
+
+function showIoeResult(result) {
+    const percent = (result.wins / result.candidateCount).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 2 });
+    document.getElementById("ioe-wins").textContent = `${result.wins.toLocaleString()} / ${result.candidateCount.toLocaleString()}（${percent}）`;
+    const score = result.expectedScore === null ? Infinity : result.expectedScore;
+    const notation = score >= 1e8 ? "scientific" : "standard";
+    document.getElementById("ioe-score").textContent = score.toLocaleString(undefined, { notation, maximumSignificantDigits: 8 });
+    const figure = document.getElementById("ioe-distribution");
+    const buckets = result.winningIoe;
+    if (buckets.length) {
+        const maxCount = Math.max(...buckets.map(([, , count]) => count));
+        const step = Math.ceil(maxCount / 4);
+        const axisMax = Math.ceil(maxCount / step) * step;
+        const axis = figure.querySelector(".ioe-y-axis");
+        const ticks = document.createDocumentFragment();
+        const maxLabel = axisMax.toLocaleString();
+        axis.style.minWidth = `${maxLabel.length + 1}ch`;
+        for (let count = axisMax; count >= 0; count -= step) {
+            const tick = document.createElement("span");
+            tick.textContent = count.toLocaleString();
+            tick.style.top = `${(1 - count / axisMax) * 100}%`;
+            ticks.append(tick);
+        }
+        axis.replaceChildren(ticks);
+
+        const rows = document.createDocumentFragment();
+        buckets.sort(([a, b], [c, d]) => a / b - c / d);
+        for (const [numerator, denominator, count] of buckets) {
+            const label = document.createElement("span");
+            label.textContent = (numerator / denominator).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 2 });
+            const track = document.createElement("div");
+            track.className = "ioe-bar-track";
+            track.style.setProperty("--ioe-bar-height", `${count / axisMax * 100}%`);
+            const bar = document.createElement("span");
+            bar.className = "ioe-bar";
+            const value = document.createElement("span");
+            value.className = "ioe-bar-value";
+            value.textContent = count.toLocaleString();
+            track.append(bar, value);
+            const row = document.createElement("li");
+            row.title = `${label.textContent}，${value.textContent} 张`;
+            row.setAttribute("aria-label", row.title);
+            row.append(track, label);
+            rows.append(row);
+        }
+        ioeBars.replaceChildren(rows);
+    }
+    figure.hidden = !buckets.length;
+    ioeResultPanel.hidden = false;
+    if (buckets.length) fitIoeLabels();
+}
+
 function clearSuggestion() {
     suggestionResult = null;
+    clearIoeResult();
     for (const cell of suggestionMoves.keys())
         boardElement.children[cell].classList.remove("analysis-candidate", "analysis-best");
     suggestionMoves.clear();
@@ -265,18 +319,21 @@ function updatePressedCells(cell) {
 function updateCell(button, cell, state) {
     const value = state.cells[cell];
     const isHidden = value === "?" || value === "G";
-    const move = mode === "analysis" ? mcts.moves.get(cell) : null;
-    const showMcts = (isHidden || value === "S") && move;
     const searchMove = mode === "analysis" ? search.moves.get(cell) : null;
     const showSearch = (isHidden || value === "S") && searchMove;
     const suggested = suggestionMoves.get(cell);
     const showSuggestion = (isHidden || value === "S") && suggested;
+    const ioeTarget = ioeMove?.cell === cell;
+    const playerFlag = mode === "play" ? isHidden && flags.has(cell) : state.playerFlags.has(cell);
+    const ioeFlag = !playerFlag && ioeMove?.kind === "chord" && ioeMove.addFlags.includes(cell);
+    const ioeUnflag = ioeMove?.kind === "chord" && ioeMove.removeFlags.includes(cell);
     // 先算出最终样式和文字；概率刷新时只写变化项，不清空再恢复整格。
     let className = "cell";
     let text = "";
+    let best = false;
     if (value === "G")
-        className += " mcts-goal";
-    if (!showSearch && !showMcts && !showSuggestion) button.removeAttribute("data-analysis-detail");
+        className += " analysis-goal";
+    if (!showSearch && !showSuggestion) button.removeAttribute("data-analysis-detail");
     button.removeAttribute("title");
     button.setAttribute("aria-label", `第 ${Math.floor(cell / state.cols) + 1} 行，第 ${cell % state.cols + 1} 列`);
     if (value >= "0" && value <= "8")
@@ -287,7 +344,9 @@ function updateCell(button, cell, state) {
         className += " forced-safe";
     else if (value === "M")
         className += " forced-mine";
-    if (mode === "play" && isHidden && flags.has(cell)) {
+    if (ioeFlag)
+        className += " ioe-flag";
+    if (playerFlag) {
         className += " flagged";
         text = "⚑";
     } else if (value === "*") {
@@ -295,28 +354,21 @@ function updateCell(button, cell, state) {
         if (cell === playState.lostCell)
             className += " hit-mine";
         text = "✹";
-    } else if (showSearch || showMcts || showSuggestion) {
+    } else if (showSearch || showSuggestion) {
         className += " analysis-candidate";
         let score;
         let detail;
-        let best;
         if (showSearch) {
             score = searchMove.value;
             detail = search.result.engine === "BruteForce" ? "精确" : `${searchMove.depth} 层`;
             best = search.result.safe || cell === search.result.recommended;
             button.title = `评分 ${(Number(score) * 100).toFixed(4)}%，${detail}`;
-        } else if (showMcts) {
-            score = move.winrate;
-            detail = mcts.result.exact ? "精确" : mctsCountFormat.format(BigInt(move.visits));
-            best = cell === mcts.result.recommended;
-            button.title = mcts.result.exact ? `精确胜率 ${(Number(score) * 100).toFixed(4)}%` : `采样 ${move.visits} 次，胜出 ${move.wins} 次，胜率 ${score === null ? "尚未采样" : `${(Number(score) * 100).toFixed(4)}%`}`;
         } else {
             score = suggested.value;
             detail = suggested.depth === undefined ? `${(Number(suggested.probability) * 100).toFixed(1)}%` : `${suggested.depth} 层`;
             best = endgameBestCells.has(cell);
             button.title = `评分 ${(Number(score) * 100).toFixed(4)}%，${suggested.depth === undefined ? "雷率 " : ""}${detail}`;
         }
-        if (best) className += " analysis-best";
         text = score === null ? "—" : `${(Number(score) * 100).toFixed(1)}%`;
         button.dataset.analysisDetail = detail;
         button.setAttribute("aria-label", `${button.getAttribute("aria-label")}，${button.title}`);
@@ -344,6 +396,16 @@ function updateCell(button, cell, state) {
         className += " selected";
     if (mode === "analysis" && hoveredCell === cell)
         className += " hovered";
+    if (best || ioeTarget)
+        className += " analysis-best";
+    if (ioeTarget) {
+        const action = { open: "左键", chord: "双击", unflag: "拔旗" }[ioeMove.kind];
+        button.setAttribute("aria-label", `${button.getAttribute("aria-label")}，IOE 推荐${action}`);
+    } else if (ioeFlag) {
+        button.setAttribute("aria-label", `${button.getAttribute("aria-label")}，IOE 推荐插旗`);
+    } else if (ioeUnflag) {
+        button.setAttribute("aria-label", `${button.getAttribute("aria-label")}，IOE 推荐拔旗`);
+    }
     if (button.className !== className)
         button.className = className;
     if (button.textContent !== text)
@@ -397,13 +459,15 @@ function render() {
     document.getElementById("play-actions").hidden = mode !== "play";
     document.getElementById("play-until-no-safe").disabled = operationBusy || playState.lost || playState.won;
     document.getElementById("endgame-analysis").disabled = operationBusy || (mode === "play" && (playState.lost || playState.won));
+    const ioeAnalysis = document.getElementById("ioe-analysis");
+    ioeAnalysis.hidden = !isBeginner(state);
+    ioeAnalysis.disabled = operationBusy || (mode === "play" && (playState.lost || playState.won));
     rngSeedInput.disabled = mode !== "play";
     regenerateSeedButton.disabled = mode !== "play";
     importBoardStringButton.disabled = mode !== "analysis";
     document.getElementById("board-status").textContent = mode === "play" ? playState.lost ? "本局结束" : playState.won ? "已获胜" : "游玩模式" : "分析模式";
-    const marked = mode === "play" ? flags.size : 0;
+    const marked = (mode === "play" ? flags : state.playerFlags).size;
     document.getElementById("mine-counter").textContent = `${state.mines - marked} 雷`;
-    mcts.render();
     search.render();
 }
 
