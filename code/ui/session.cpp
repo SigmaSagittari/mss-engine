@@ -627,10 +627,10 @@ std::string Session::analyzeIoe(const std::string &body, const std::function<voi
     if (std::isfinite(analysis.expectedScore)) result << analysis.expectedScore;
     else result << "null";
     result << ",\"winningIoe\":[";
-    for (size_t i = 0; i < analysis.winningIoe.size; ++i) {
+    for (size_t i = 0; i < analysis.ioeDistribution.size; ++i) {
         if (i != 0) result << ',';
-        const IoeBruteForce::Result::IoeCount &entry = analysis.winningIoe[i];
-        result << '[' << entry.numerator << ',' << entry.denominator << ',' << entry.count << ']';
+        const IoeBruteForce::Result::IoeCount &entry = analysis.ioeDistribution[i];
+        result << '[' << entry.numerator << ',' << entry.denominator << ',' << entry.won << ',' << entry.discarded << ']';
     }
     result << "],\"move\":";
     if (analysis.action == IoeBruteForce::Action::None) {

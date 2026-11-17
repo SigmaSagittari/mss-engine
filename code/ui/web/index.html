@@ -51,11 +51,15 @@
                 <div id="analysis-count-row" class="candidate-row" hidden><span>可行摆法数</span><strong id="analysis-count"></strong></div>
                 <div id="analysis-recommendation" class="recommendation" hidden></div>
                 <div id="ioe-result" hidden>
-                    <div class="candidate-row"><span>胜出摆法（IOE ≥ 200%）</span><strong id="ioe-wins"></strong></div>
+                    <div class="candidate-row"><span>通关且 IOE ≥ 200%</span><strong id="ioe-wins"></strong></div>
                     <div class="candidate-row"><span>加权评分</span><strong id="ioe-score"></strong></div>
                     <figure id="ioe-distribution" class="ioe-distribution" hidden>
-                        <figcaption>获胜 IOE 分布</figcaption>
-                        <div class="ioe-y-label">胜出摆法数</div>
+                        <figcaption>IOE 分布（≥ 200%）</figcaption>
+                        <div class="ioe-legend">
+                            <span class="ioe-won" title="按此策略实际达到的 IOE">实际达标</span>
+                            <span class="ioe-discarded" title="按已知雷盘时可达到的最高 IOE">能达标但被舍弃</span>
+                        </div>
+                        <div class="ioe-y-label">摆法数（对数）</div>
                         <div class="ioe-chart">
                             <div class="ioe-y-axis" aria-hidden="true"></div>
                             <div class="ioe-plot"><ul></ul></div>

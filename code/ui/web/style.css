@@ -154,8 +154,12 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) clamp(360px, 29vw, 4
 .muted { color: #66738a; font-size: 13px; line-height: 1.5; }
 .candidate-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 9px 0; color: #66738a; font-size: 13px; }
 .candidate-row strong { font-family: Consolas, monospace; font-variant-numeric: tabular-nums; }
-.ioe-distribution { --ioe-plot-height: 8rem; --ioe-label-space: 1.2em; margin: 10px 0 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+.ioe-distribution { --ioe-plot-height: 8rem; --ioe-label-space: 1.2em; --ioe-won-color: #287a57; --ioe-discarded-color: #d28a28; margin: 10px 0 0; font-size: 13px; font-variant-numeric: tabular-nums; }
 .ioe-distribution figcaption { margin-bottom: 8px; font-weight: 600; }
+.ioe-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 8px; color: #647484; }
+.ioe-legend span::before { display: inline-block; width: .8em; height: .8em; margin-right: .35em; background: var(--ioe-color); content: ""; }
+.ioe-won { --ioe-color: var(--ioe-won-color); }
+.ioe-discarded { --ioe-color: var(--ioe-discarded-color); }
 .ioe-y-label, .ioe-x-label { color: #647484; }
 .ioe-x-label { margin-top: 4px; text-align: center; }
 .ioe-chart { display: grid; grid-template-columns: max-content minmax(0, 1fr); }
@@ -169,7 +173,7 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) clamp(360px, 29vw, 4
 .ioe-dense li:last-child > span { right: 0; left: auto; transform: none; }
 .ioe-dense .ioe-bar-value { display: none; }
 .ioe-bar-track { position: relative; display: grid; justify-items: center; align-items: end; box-sizing: content-box; height: var(--ioe-plot-height); border-bottom: 1px solid #aab6c4; margin-bottom: 4px; }
-.ioe-bar { width: 100%; height: var(--ioe-bar-height); min-height: 1px; background: #287a57; }
+.ioe-bar { position: absolute; inset-inline: 0; bottom: 0; min-height: 1px; background: var(--ioe-color); }
 .ioe-bar-value { position: absolute; bottom: var(--ioe-bar-height); padding-bottom: 2px; font-size: .9em; }
 .recommendation { margin-top: 8px; font-size: 14px; line-height: 1.5; }
 .detail-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }

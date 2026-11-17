@@ -35,7 +35,8 @@ struct IoeBruteForce {
         struct IoeCount {
             int numerator;
             int denominator;
-            std::size_t count;
+            std::size_t won;
+            std::size_t discarded;
         };
 
         Status status;
@@ -51,7 +52,7 @@ struct IoeBruteForce {
         int removedFlags[8];
         int addedCount;
         int removedCount;
-        vector<IoeCount> winningIoe;
+        vector<IoeCount> ioeDistribution;
 
         Result(const RootResult &root)
             : status(root.status), candidates(root.candidates), expectedScore(0), rootDomCalls(root.domCalls),

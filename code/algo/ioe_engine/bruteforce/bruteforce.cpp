@@ -392,6 +392,9 @@ struct Search {
     struct Layout {
         Model model;
         FlatHashTable<DistanceKey, int, DistanceKey::Hash> distance;
+        int winningClicks;
+
+        Layout() : winningClicks(0) {}
     };
 
     struct Outcome {
@@ -447,7 +450,7 @@ struct Search {
     IoeBruteForce::RootResult filterRoot(const ObservedBoard::Result &board, const Observation &root, size_t candidateLimit);
     void prepareLayouts();
     Value solve(const Observation &state, bool root, long double need);
-    void summarizeWins(size_t trace, IoeBruteForce::Result &result);
+    void summarizeWins(const Observation &root, size_t trace, IoeBruteForce::Result &result);
 
 private:
     struct Workspace;
@@ -461,12 +464,12 @@ private:
     vector<size_t> winBranches;
     long double tolerance;
 
-    // 0 表示无胜局，小于 firstBranch 的值编码 3BV 和点击数，其余值索引以 0 结尾的子分支。
-    enum : size_t { clickBuckets = maxWinningClicks + 1, firstBranch = (cells - mines + 1) * clickBuckets };
+    enum : size_t { clickBuckets = maxWinningClicks + 1, histogramSize = (cells - mines + 1) * clickBuckets };
 
-    size_t winIndex(int threeBv, int clicks) const { return threeBv * clickBuckets + clicks; }
+    // 0 表示无胜局。偶数编码摆法编号和实际点击数，奇数索引以 0 结尾的子分支。
+    size_t winLeaf(size_t id, int clicks) const { return 2 * (id * clickBuckets + clicks); }
     size_t recordWins(const Outcome *outcomes, size_t processed);
-    void accumulateWins(size_t trace, size_t *histogram);
+    void collectWins(size_t trace);
     int distance(size_t id, const DistanceKey &key);
     bool below(long double upper, long double need) const { return upper + tolerance < need; }
     void qualifying(const Observation &state, vector<int> &optimum, Ways &viable, Reward &upper);
@@ -617,33 +620,37 @@ size_t Search::recordWins(const Outcome *outcomes, size_t processed) {
     }
     if (winBranches.size == offset) return first;
     winBranches.push_back(0);
-    return firstBranch + offset;
+    return 2 * offset + 1;
 }
 
-void Search::accumulateWins(size_t trace, size_t *histogram) {
+void Search::collectWins(size_t trace) {
     if (!trace) return;
-    if (trace < firstBranch) {
-        const int threeBv = trace / clickBuckets;
-        const int clicks = trace % clickBuckets;
-        const int divisor = std::gcd(threeBv, clicks);
-        ++histogram[winIndex(threeBv / divisor, clicks / divisor)];
+    const size_t index = trace / 2;
+    if (!(trace & 1)) {
+        layouts[index / clickBuckets]->winningClicks = index % clickBuckets;
         return;
     }
-    for (size_t i = trace - firstBranch; winBranches[i]; ++i)
-        accumulateWins(winBranches[i], histogram);
+    for (size_t i = index; winBranches[i]; ++i) collectWins(winBranches[i]);
 }
 
-void Search::summarizeWins(size_t trace, IoeBruteForce::Result &result) {
-    if (!trace) return;
-    size_t histogram[firstBranch]{};
-    accumulateWins(trace, histogram);
-    size_t total = 0;
-    for (size_t i = 1; i < firstBranch; ++i) {
-        if (!histogram[i]) continue;
-        result.winningIoe.push_back({(int)(i / clickBuckets), (int)(i % clickBuckets), histogram[i]});
-        total += histogram[i];
+void Search::summarizeWins(const Observation &root, size_t trace, IoeBruteForce::Result &result) {
+    collectWins(trace);
+    const DistanceKey key{root.revealed(), root.flags};
+    size_t histogram[histogramSize][2]{};
+    size_t wins = 0;
+    for (size_t id = 0; id < layouts.size; ++id) {
+        const Layout *layout = layouts[id];
+        const bool won = layout->winningClicks != 0;
+        const int clicks = won ? layout->winningClicks : root.clicks + *layout->distance.find(key);
+        const int threeBv = layout->model.three_bv();
+        const int divisor = std::gcd(threeBv, clicks);
+        ++histogram[(threeBv / divisor) * clickBuckets + clicks / divisor][!won];
+        wins += won;
     }
-    assert_(total == result.wins, "IOE 分布的摆法数与胜出摆法数不符");
+    assert_(wins == result.wins, "IOE 分布的摆法数与胜出摆法数不符");
+    for (size_t i = 1; i < histogramSize; ++i)
+        if (histogram[i][0] || histogram[i][1])
+            result.ioeDistribution.push_back({(int)(i / clickBuckets), (int)(i % clickBuckets), histogram[i][0], histogram[i][1]});
 }
 
 int Search::distance(size_t id, const DistanceKey &key) {
@@ -813,7 +820,7 @@ void Search::refine(Choice &choice, vectorPool<Outcome> &outcomes, const vectorP
     if (clicks <= threeBv / 2) {
         const Reward actual(threeBv, clicks);
         choice.checked.add(actual);
-        if (!outcome.upper.wins) outcome.winTrace = winIndex(threeBv, clicks);
+        if (!outcome.upper.wins) outcome.winTrace = winLeaf(trial.layout, clicks);
         outcome.upper.add(actual);
         choice.largest = std::max(choice.largest, outcome.upper.points);
     }
@@ -848,7 +855,7 @@ Search::Value Search::solve(const Observation &state, bool root, long double nee
     if (root) tolerance = 64 * std::numeric_limits<long double>::epsilon() * layouts.size * ceiling.points;
     if ((!root && ceiling.wins <= 1) || !ceiling.wins || state.finished()) {
         size_t trace = 0;
-        each(viable, [&](size_t id) { trace = winIndex(layouts[id]->model.three_bv(), optimum[id]); });
+        each(viable, [&](size_t id) { trace = winLeaf(id, optimum[id]); });
         return save({ceiling, ceiling.points, true, trace});
     }
     const long double stateUpper = std::min(ceiling.points, previousUpper);
@@ -1017,7 +1024,7 @@ IoeBruteForce::Result IoeBruteForce::solve(const ObservedBoard::Result &board, c
     result.searchDomCalls = search.domCalls;
     result.wins = value.best.wins;
     result.expectedScore = value.best.points / result.candidates;
-    search.summarizeWins(value.winTrace, result);
+    if (value.winTrace || !search.domLimited) search.summarizeWins(root, value.winTrace, result);
     const ioe::Move move = search.rootMove;
     if (move.action == Action::None) return result;
     result.action = move.action;
