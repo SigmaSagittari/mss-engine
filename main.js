@@ -4,13 +4,15 @@ document.addEventListener("mousedown", (event) => {
         return;
     event.preventDefault();
     document.activeElement.blur();
-    if (operationBusy || mode !== "play" || !playState || playState.lost || playState.won)
+    if (operationBusy || (mode === "play" && (!playState || playState.lost || playState.won)))
         return;
     if (event.button === 2) {
-        if (playState.cells[cell] === "?")
+        const value = activeState().cells[cell];
+        if (mode === "analysis" ? !/[0-8]/.test(value) : value === "?")
             toggleFlag(cell);
         return;
     }
+    if (mode !== "play") return;
     leftMouseDown = true;
     updatePressedCells(cell);
 });
@@ -33,8 +35,11 @@ document.addEventListener("mouseup", (event) => {
 });
 
 difficulty.addEventListener("change", () => {
+    clearIoeResult();
     setDifficultyValues(difficulty.value);
-    if (difficulty.value !== "custom")
+    if (difficulty.value === "custom" || (mode === "analysis" && difficulty.value === "beginner" && isBeginner(analysisState)))
+        render();
+    else
         startNewGame();
 });
 document.getElementById("new-game").addEventListener("click", () => startNewGame());
@@ -52,52 +57,71 @@ document.getElementById("export-davidnhill").addEventListener("click", () => {
     boardStringInput.value = lines.join("\n");
     boardExportStatus.textContent = "已导出 davidNhill。";
 });
-importBoardStringButton.addEventListener("click", () => {
-    if (mode !== "analysis")
-        return;
-    try {
-        const source = boardStringInput.value.trim();
-        let board;
-        if (source.startsWith("{")) {
-            board = JSON.parse(source);
-        } else {
-            const lines = source.split(/\r?\n/);
-            const header = lines[0].match(/^(\d+)x(\d+)x(\d+)$/i);
-            if (!header)
-                throw new Error("无法识别盘面格式");
-            if (lines.length !== Number(header[2]) + 1 || lines.slice(1).some((line) => line.length !== Number(header[1])))
-                throw new Error("davidNhill 盘面行数或宽度无效");
-            board = { rows: Number(header[2]), cols: Number(header[1]), mines: Number(header[3]), cells: lines.slice(1).join("").replace(/H/g, "?") };
-        }
-        if (!board || typeof board !== "object")
-            throw new Error("盘面参数无效");
-        if (!Number.isInteger(board.rows) || !Number.isInteger(board.cols) || !Number.isInteger(board.mines))
-            throw new Error("盘面参数无效");
-        if (board.rows < 1 || board.cols < 1 || board.rows > 100 || board.cols > 100 || board.rows * board.cols > 10000 || board.mines < 0 || board.mines >= board.rows * board.cols)
-            throw new Error("自定义盘面范围无效");
-        if (typeof board.cells !== "string" || board.cells.length !== board.rows * board.cols)
-            throw new Error("盘面数据长度无效");
-        for (let cell = 0; cell < board.cells.length; ++cell) {
-            const value = board.cells[cell];
-            if (value !== "?" && value !== "M" && value !== "S" && value !== "G" && !(value >= "0" && value <= "8"))
-                throw new Error("盘面状态无效");
-        }
-        clearSuggestion();
-        analysisState = { rows: board.rows, cols: board.cols, mines: board.mines, cells: board.cells };
+function importBoardString(text) {
+    const source = text.trim();
+    let board;
+    if (source.startsWith("{")) {
+        board = JSON.parse(source);
+    } else {
+        const lines = source.split(/\r?\n/);
+        const header = lines[0].match(/^(\d+)x(\d+)x(\d+)$/i);
+        if (!header)
+            throw new Error("无法识别盘面格式");
+        if (lines.length !== Number(header[2]) + 1 || lines.slice(1).some((line) => line.length !== Number(header[1])))
+            throw new Error("davidNhill 盘面行数或宽度无效");
+        board = { rows: Number(header[2]), cols: Number(header[1]), mines: Number(header[3]), cells: lines.slice(1).join("").replace(/H/g, "?") };
+    }
+    if (!board || typeof board !== "object")
+        throw new Error("盘面参数无效");
+    if (!Number.isInteger(board.rows) || !Number.isInteger(board.cols) || !Number.isInteger(board.mines))
+        throw new Error("盘面参数无效");
+    if (board.rows < 1 || board.cols < 1 || board.rows > 100 || board.cols > 100 || board.rows * board.cols > 10000 || board.mines < 0 || board.mines >= board.rows * board.cols)
+        throw new Error("自定义盘面范围无效");
+    if (typeof board.cells !== "string" || board.cells.length !== board.rows * board.cols)
+        throw new Error("盘面数据长度无效");
+    for (let cell = 0; cell < board.cells.length; ++cell) {
+        const value = board.cells[cell];
+        if (value !== "?" && value !== "M" && value !== "S" && value !== "G" && !(value >= "0" && value <= "8"))
+            throw new Error("盘面状态无效");
+    }
+    clearSuggestion();
+    analysisState = { rows: board.rows, cols: board.cols, mines: board.mines, cells: board.cells, clicks: null, playerFlags: new Set() };
+    if (difficulty.value !== "beginner" || !isBeginner(analysisState))
         difficulty.value = "custom";
-        setDifficultyValues("custom");
-        document.getElementById("rows").value = board.rows;
-        document.getElementById("cols").value = board.cols;
-        document.getElementById("mines").value = board.mines;
-        hoveredCell = -1;
-        selectedCell = -1;
-        scheduleProbabilityUpdate();
-        boardStringInput.value = currentBoardString();
-        render();
-        setMessage("盘面已导入。", "success");
+    setDifficultyValues(difficulty.value);
+    document.getElementById("rows").value = board.rows;
+    document.getElementById("cols").value = board.cols;
+    document.getElementById("mines").value = board.mines;
+    hoveredCell = -1;
+    selectedCell = -1;
+    scheduleProbabilityUpdate();
+    boardStringInput.value = currentBoardString();
+    render();
+    setMessage("盘面已导入。", "success");
+}
+
+importBoardStringButton.addEventListener("click", () => {
+    if (mode !== "analysis" || operationBusy) return;
+    try {
+        importBoardString(boardStringInput.value);
         boardExportStatus.textContent = "盘面已导入到分析模式。";
     } catch (error) {
         boardExportStatus.textContent = `导入失败：${error.message}`;
+    }
+});
+
+document.addEventListener("paste", (event) => {
+    if (mode !== "analysis" || operationBusy || settingsDialog.open) return;
+    const target = event.target;
+    if (target.isContentEditable || target.closest?.("input, textarea, select")) return;
+    if (!boardElement.contains(target) && !boardElement.matches(":hover")) return;
+    const text = event.clipboardData?.getData("text/plain");
+    if (!text) return;
+    event.preventDefault();
+    try {
+        importBoardString(text);
+    } catch (error) {
+        setMessage(`导入失败：${error.message}`, "error");
     }
 });
 window.addEventListener("resize", render);
@@ -106,10 +130,22 @@ probabilityDisplay.addEventListener("change", () => {
     scheduleProbabilityUpdate(true);
     render();
 });
+highlightDisplay.addEventListener("change", async () => {
+    showHighlight();
+    if (mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
+    const highlight = highlightDisplay.value;
+    if (!highlight || (mode === "play" && (playState.lost || playState.won))) return;
+    const state = activeState();
+    try {
+        await calculate(state, { includeProbabilities: false, highlight });
+    } catch (error) {
+        if (highlight === highlightDisplay.value && state === activeState()) setMessage(error.message, "error");
+    }
+});
 shapeAlgo.addEventListener("change", () => {
     clearSuggestion();
     scheduleProbabilityUpdate(true);
-    if (!probabilityDisplay.checked && mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
+    if (!probabilityDisplay.checked && !highlightDisplay.value && mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
     render();
 });
 function updatePolicySettings() {
@@ -150,7 +186,7 @@ document.getElementById("play-mode").addEventListener("click", () => {
 document.getElementById("analysis-mode").addEventListener("click", openAnalysis);
 document.getElementById("play-until-no-safe").addEventListener("click", playUntilNoSafe);
 document.getElementById("endgame-analysis").addEventListener("click", requestSuggestion);
-mctsButton.addEventListener("click", requestMcts);
+document.getElementById("ioe-analysis").addEventListener("click", requestIoeAnalysis);
 searchButton.addEventListener("click", requestSearch);
 searchNodeBudget.addEventListener("input", () => search.render());
 

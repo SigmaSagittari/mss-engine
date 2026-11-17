@@ -4,6 +4,11 @@ const presets = {
     advanced: [16, 30, 99]
 };
 
+function isBeginner({ rows, cols, mines }) {
+    const [beginnerRows, beginnerCols, beginnerMines] = presets.beginner;
+    return rows === beginnerRows && cols === beginnerCols && mines === beginnerMines;
+}
+
 function parseRngSeed(value) {
     if (!/^[0-9a-f]{32}$/i.test(value))
         return null;
@@ -75,7 +80,7 @@ function createPlayState(rows, cols, mines) {
     const minefield = new Array(cells.length).fill("0");
     for (let mine = 0; mine < mines; ++mine)
         minefield[cells[mine]] = "1";
-    const state = { rows, cols, mines, seed, minefield: minefield.join(""), cells: "?".repeat(rows * cols), firstMove: true, lost: false, won: false, lostCell: -1 };
+    const state = { rows, cols, mines, seed, minefield: minefield.join(""), cells: "?".repeat(rows * cols), clicks: 0, firstMove: true, lost: false, won: false, lostCell: -1 };
     state.numbers = numberCells(state.minefield, state);
     return state;
 }
@@ -134,7 +139,7 @@ function revealLocallyBatch(seedCells) {
 
 function revealCell(cell) {
     clearSuggestion();
-    playState = { ...playState };
+    playState = { ...playState, clicks: playState.clicks + 1 };
     if (playState.firstMove && playState.minefield[cell] === "1")
         moveFirstMine(cell);
     flags.delete(cell);
@@ -159,7 +164,7 @@ function chord(cell) {
     if (targets.length === 0)
         return;
     clearSuggestion();
-    playState = { ...playState };
+    playState = { ...playState, clicks: playState.clicks + 1 };
     for (const target of targets) {
         if (playState.cells[target] !== "?" || flags.has(target))
             continue;
@@ -192,10 +197,22 @@ function activatePlayCell(cell) {
 }
 
 function toggleFlag(cell) {
-    if (flags.has(cell))
-        flags.delete(cell);
+    const state = activeState();
+    const playerFlags = mode === "play" ? flags : state.playerFlags;
+    const wasFlagged = playerFlags.has(cell);
+    if (wasFlagged)
+        playerFlags.delete(cell);
     else
-        flags.add(cell);
+        playerFlags.add(cell);
+    if (state.clicks !== null)
+        ++state.clicks;
+    const operation = wasFlagged ? "removeFlags" : "addFlags";
+    if (ioeMove?.kind === "chord" && ioeMove[operation].includes(cell)) {
+        ioeMove = { ...ioeMove, [operation]: ioeMove[operation].filter(target => target !== cell) };
+    } else if (!ioeResultPanel.hidden) {
+        clearIoeResult();
+        setMessage("");
+    }
     render();
 }
 
@@ -238,18 +255,23 @@ async function playUntilNoSafe() {
     probabilities = null;
     candidateCount = "";
     const state = playState;
+    const highlight = highlightDisplay.value;
     render();
     setMessage("");
     try {
         const result = await post("/api/play-until-no-safe", {
             rows: state.rows, cols: state.cols, mines: state.mines, cells: state.cells,
-            minefield: state.minefield, algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked
+            minefield: state.minefield, algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, highlight
         });
         const opened = [...state.cells].filter((value, cell) => value === "?" && result.cells[cell] !== "?").length;
-        playState = { ...state, rows: result.rows, cols: result.cols, mines: result.mines, minefield: result.minefield, cells: result.cells, lost: result.lost, won: result.won, firstMove: state.firstMove && opened === 0 };
+        // Game 批量逐格揭开。被自动清除的玩家旗也各计一次拔旗。
+        playState = { ...state, rows: result.rows, cols: result.cols, mines: result.mines, minefield: result.minefield, cells: result.cells, clicks: state.clicks + opened, lost: result.lost, won: result.won, firstMove: state.firstMove && opened === 0 };
         for (const cell of flags)
-            if (result.cells[cell] !== "?")
+            if (result.cells[cell] !== "?") {
                 flags.delete(cell);
+                ++playState.clicks;
+            }
+        if (highlight) showHighlight(result[highlight]);
         if (result.probabilities) {
             probabilities = result.probabilities;
             candidateCount = result.candidateCount;
