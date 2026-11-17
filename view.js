@@ -228,6 +228,11 @@ function fitIoeLabels() {
 window.addEventListener("resize", fitIoeLabels);
 
 function showIoeResult(result) {
+    const buckets = result.winningIoe;
+    if (buckets.some(bucket => bucket.length !== 4)) {
+        clearIoeResult();
+        throw new Error("载入的 Wasm 版本过旧，请用 Ctrl+F5 刷新页面后重新分析。");
+    }
     candidateCount = result.candidateCount;
     const formatRate = count => {
         const percent = (count / result.candidateCount).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 2 });
@@ -238,9 +243,8 @@ function showIoeResult(result) {
     const notation = score >= 1e8 ? "scientific" : "standard";
     document.getElementById("ioe-score").textContent = score.toLocaleString(undefined, { notation, maximumSignificantDigits: 8 });
     const figure = document.getElementById("ioe-distribution");
-    const buckets = result.winningIoe;
     if (buckets.length) {
-        const maxCount = Math.max(...buckets.map(([, , won, discarded = 0]) => won + discarded));
+        const maxCount = Math.max(...buckets.map(([, , won, discarded]) => won + discarded));
         const axisMax = 10 ** Math.ceil(Math.log10(maxCount));
         const height = count => 100 * Math.log1p(count) / Math.log1p(axisMax);
         const axis = figure.querySelector(".ioe-y-axis");
@@ -257,13 +261,14 @@ function showIoeResult(result) {
 
         const rows = document.createDocumentFragment();
         buckets.sort(([a, b], [c, d]) => a / b - c / d);
-        for (const [numerator, denominator, won, discarded = 0] of buckets) {
+        for (const [numerator, denominator, won, discarded] of buckets) {
             const label = document.createElement("span");
             label.textContent = (numerator / denominator).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 2 });
             const track = document.createElement("div");
             track.className = "ioe-bar-track";
-            const wonHeight = height(won);
-            const totalHeight = height(won + discarded);
+            const total = won + discarded;
+            const totalHeight = height(total);
+            const wonHeight = totalHeight * won / total;
             track.style.setProperty("--ioe-bar-height", `${totalHeight}%`);
             if (won) {
                 const bar = document.createElement("span");
@@ -280,10 +285,10 @@ function showIoeResult(result) {
             }
             const value = document.createElement("span");
             value.className = "ioe-bar-value";
-            value.textContent = (won + discarded).toLocaleString();
+            value.textContent = total.toLocaleString();
             track.append(value);
             const row = document.createElement("li");
-            row.title = `${label.textContent} · 实际达标 ${won.toLocaleString()} 张 · 能达标但被舍弃 ${discarded.toLocaleString()} 张`;
+            row.title = `${label.textContent} · 总共 ${value.textContent} 张 · 实际达标 ${won.toLocaleString()} 张`;
             row.setAttribute("aria-label", row.title);
             row.append(track, label);
             rows.append(row);
