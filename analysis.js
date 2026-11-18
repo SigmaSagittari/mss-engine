@@ -224,7 +224,7 @@ function editAnalysisCell(cell, state) {
         stopAnalysis();
     } else
         scheduleProbabilityUpdate(true);
-    requestDetail(cell);
+    if (selectedCell >= 0) requestDetail(selectedCell);
     render();
     setMessage(boardMessage, "editedBoard", "success");
 }

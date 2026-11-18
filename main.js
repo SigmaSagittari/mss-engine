@@ -367,25 +367,27 @@ document.addEventListener("keydown", (event) => {
         return;
     if (mode === "analysis") {
         const cell = cellFromTarget(event.target);
-        if (cell < 0) return;
-        const { rows, cols } = analysisState;
-        let target = cell;
-        if (event.key === "ArrowLeft" && cell % cols > 0) --target;
-        else if (event.key === "ArrowRight" && cell % cols < cols - 1) ++target;
-        else if (event.key === "ArrowUp" && cell >= cols) target -= cols;
-        else if (event.key === "ArrowDown" && cell < (rows - 1) * cols) target += cols;
         if (event.key.startsWith("Arrow")) {
+            if (cell < 0) return;
+            const { rows, cols } = analysisState;
+            let target = cell;
+            if (event.key === "ArrowLeft" && cell % cols > 0) --target;
+            else if (event.key === "ArrowRight" && cell % cols < cols - 1) ++target;
+            else if (event.key === "ArrowUp" && cell >= cols) target -= cols;
+            else if (event.key === "ArrowDown" && cell < (rows - 1) * cols) target += cols;
             event.preventDefault();
             boardElement.children[target].click();
             boardElement.children[target].scrollIntoView({ block: "nearest", inline: "nearest" });
             return;
         }
-        if (selectedCell !== cell) return;
         const key = event.key.toUpperCase();
-        if (/^[0-8HSMG]$/.test(key)) {
-            event.preventDefault();
-            editAnalysisCell(selectedCell, key === "H" ? "?" : key);
-        }
+        if (!/^[0-8HSMG]$/.test(key) || event.target.isContentEditable ||
+            event.target.closest("input:not(#analysis-mode), select, textarea"))
+            return;
+        const target = hoveredCell >= 0 ? hoveredCell : cell === selectedCell ? cell : -1;
+        if (target < 0) return;
+        event.preventDefault();
+        editAnalysisCell(target, key === "H" ? "?" : key);
         return;
     }
     if (event.code !== "Space")
