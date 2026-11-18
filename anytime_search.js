@@ -1,38 +1,47 @@
 const search = new AnalysisStream("/api/anytime-search", renderSearchButton);
 
 function renderSearchButton() {
-    searchButton.hidden = mode !== "analysis";
-    searchButton.disabled = operationBusy;
-    const nodes = Number(searchNodeBudget.value);
-    searchButton.textContent = search.controller && search.result?.paused !== true ? "结束搜索" : nodes === -1 ? "开始搜索" : `搜索 ${nodes} 节点`;
+    searchButton.disabled = operationBusy || (mode === "play" && (playState.lost || playState.won));
+    searchButton.textContent = tr(search.controller ? search.result?.paused ? "resumeSearch" : "pauseSearch" : "startSearch");
 }
 
 function updateSearch(result) {
+    if (result.engine !== undefined && !Object.values(SearchEngine).includes(result.engine))
+        throw new UiError("outdatedWasm");
     // 暂停期间重复推送无需刷新。
     if (JSON.stringify(result) === JSON.stringify(search.result)) return;
     search.samples.push({ time: performance.now(), count: result.nodes });
     search.show(result);
-    if (result.finished) search.stop();
+    if (result.finished || result.limitReached) search.stop();
+}
+
+async function pauseSearch() {
+    const { controller, startRequest } = search;
+    if (!controller) return;
+    try {
+        await startRequest;
+    } catch {
+        return; // 搜索启动失败由 AnalysisStream.start 报告。
+    }
+    if (search.controller === controller && !search.result?.paused)
+        await post("/api/anytime-search/control", { action: SearchAction.Pause });
 }
 
 async function requestSearch() {
-    if (mode !== "analysis" || operationBusy) return;
+    if (searchButton.disabled) return;
     try {
-        if (search.controller && search.result?.paused !== true) {
-            await post("/api/anytime-search/control", { action: "pause" });
-            return;
-        }
-        const nodes = Number(searchNodeBudget.value);
-        if (!Number.isInteger(nodes) || (nodes !== -1 && nodes < 1) || nodes > 2147483647) throw new Error("节点数必须是 -1 或正整数。");
-        const run = nodes === -1;
         if (search.controller) {
-            search.samples = [{ time: performance.now(), count: search.result.nodes }];
-            await post("/api/anytime-search/control", { action: run ? "resume" : "step", nodes });
+            if (search.result?.paused) {
+                search.samples = [{ time: performance.now(), count: search.result.nodes }];
+                await post("/api/anytime-search/control", { action: SearchAction.Resume });
+            } else {
+                await pauseSearch();
+            }
             return;
         }
-        const config = analysisConfig("anytime");
-        await search.start(() => ({ ...boardSnapshot(activeState()), ...config, run }), updateSearch, run ? 0 : nodes);
+        const config = searchConfig();
+        await search.start(() => ({ ...boardSnapshot(activeState()), ...config }), updateSearch);
     } catch (error) {
-        setMessage(error.message, "error");
+        setErrorMessage(analysisMessage, error);
     }
 }

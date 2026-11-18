@@ -1,6 +1,6 @@
 // 普通分析串行引用同一个计算 ID；候选标记 G 不改变观测约束。
 function calculate(state, options = {}) {
-    const config = options.suggest ? analysisConfig() : { algo: shapeAlgo.value };
+    const config = { algo: shapeAlgo.value };
     if (options.risk) Object.assign(config, templateRiskSettings());
     const snapshot = { ...boardSnapshot(state, /[G*]/g), algo: config.algo };
     const key = JSON.stringify(snapshot);
@@ -8,13 +8,11 @@ function calculate(state, options = {}) {
     const highlight = options.highlight;
     const task = async () => {
         const cached = cachedAnalysis && cachedAnalysis.key === key ? cachedAnalysis : null;
-        if (cached && !options.suggest && options.cell === undefined && (!includeProbabilities || cached.data.probabilities) && (!highlight || cached.data[highlight]))
+        if (cached && options.cell === undefined && (!includeProbabilities || cached.data.probabilities) && (!highlight || cached.data[highlight]))
             return cached.data;
         const input = cached ? { analysisId: cached.id } : snapshot;
-        const targets = options.suggest ? Array.from(state.cells.matchAll(/G/g), match => match.index).join(",") : "";
-        const result = await post("/api/analyze", { ...input, ...config, ...options, includeProbabilities, targets });
-        // Anytime 选招会标记必雷，同一盘面之前的分组可能已经变化。
-        cachedAnalysis = { key, id: result.analysisId, data: { ...(cached && !options.suggest ? cached.data : {}), ...result } };
+        const result = await post("/api/analyze", { ...input, ...config, ...options, includeProbabilities });
+        cachedAnalysis = { key, id: result.analysisId, data: { ...cached?.data, ...result } };
         return options.cell === undefined ? cachedAnalysis.data : result;
     };
     const result = analysisRequestQueue.then(task, task);
@@ -29,26 +27,23 @@ function calculate(state, options = {}) {
     });
 }
 
-function analysisConfig(strategy = suggestStrategy.value) {
+function searchConfig() {
     const limit = bruteEnabled.checked ? Number(endgameCandidateLimit.value) : 0;
-    if (bruteEnabled.checked && (!Number.isInteger(limit) || limit < 1 || limit > 2147483647)) throw new Error("暴力接管阈值必须是正整数。");
+    if (bruteEnabled.checked && (!Number.isInteger(limit) || limit < 1 || limit > 2147483647)) throw new UiError("positiveBruteLimit");
     const maxThreads = limit > 0 && endgameMultithread.checked ? Number(endgameMaxThreads.value) : 1;
-    if (!Number.isInteger(maxThreads) || maxThreads < 1 || maxThreads > 2147483647) throw new Error("线程上限必须是正整数。");
+    if (!Number.isInteger(maxThreads) || maxThreads < 1 || maxThreads > 2147483647) throw new UiError(ApiError.ThreadLimit);
     const nodes = Number(policyNodeBudget.value);
     const width = searchWidths.map((input) => Number(input.value));
-    if (strategy === "anytime") {
-        if (!Number.isInteger(nodes) || nodes < 1 || nodes > 2147483647) throw new Error("Anytime 每步节点数必须是正整数。");
-        if (width.some((value) => !Number.isInteger(value) || value < 1 || value > 2147483647)) throw new Error("候选宽度必须是正整数。");
-    }
-    const templateRisk = strategy === "anytime" ? templateRiskSettings() : {};
-    return { strategy, ...templateRisk, limit, maxThreads, nodeBudget: nodes, rootWidth: width[0], middleWidth: width[1], deepWidth: width[2], algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, multiThread: endgameMultithread.checked };
+    if (!Number.isInteger(nodes) || (nodes !== -1 && nodes < 1) || nodes > 2147483647) throw new UiError(ApiError.NodeLimit);
+    if (width.some((value) => !Number.isInteger(value) || value < 1 || value > 2147483647)) throw new UiError(ApiError.SearchWidth);
+    return { ...templateRiskSettings(), limit, maxThreads, nodeBudget: nodes, rootWidth: width[0], middleWidth: width[1], deepWidth: width[2], algo: shapeAlgo.value, multiThread: endgameMultithread.checked, checkAllMoves: endgameCheckAllMoves.value === "all" };
 }
 
 function templateRiskSettings() {
     const prefix = Number(templatePrefix.value);
     const eventLimit = Number(ltrEventLimit.value);
-    if (!Number.isInteger(prefix) || prefix < 1 || prefix > Number(templatePrefix.max)) throw new Error("模板前缀超出目录。");
-    if (!Number.isInteger(eventLimit) || eventLimit < 1 || eventLimit > 2147483647) throw new Error("LTR 模板匹配上限必须是正整数。");
+    if (!Number.isInteger(prefix) || prefix < 1 || prefix > Number(templatePrefix.max)) throw new UiError(ApiError.TemplatePrefix);
+    if (!Number.isInteger(eventLimit) || eventLimit < 1 || eventLimit > 2147483647) throw new UiError(ApiError.LtrEventLimit);
     return { templatePrefix: prefix, ltrEventLimit: eventLimit };
 }
 
@@ -59,7 +54,7 @@ async function requestDetail(cell) {
     const groupDetail = highlightDisplay.value;
     const revealed = state.cells[cell] >= "0" && state.cells[cell] <= "8";
     detailData = null;
-    detailStatus.textContent = "正在读取…";
+    setLocalizedText(detailStatus, "reading");
     renderDetail();
     if (revealed && !groupDetail) {
         showDetail({ probability: 0, observe: null });
@@ -74,7 +69,8 @@ async function requestDetail(cell) {
         }
     } catch (error) {
         if (request === detailRequest) {
-            detailStatus.textContent = error.message;
+            const message = localizedError(error);
+            setLocalizedText(detailStatus, message.key, ...message.args);
             renderDetail();
         }
     }
@@ -85,6 +81,7 @@ class AnalysisStream {
         this.path = path;
         this.renderButton = renderButton;
         this.controller = null;
+        this.startRequest = null;
         this.stopQueue = Promise.resolve();
         this.result = null;
         this.moves = new Map();
@@ -103,7 +100,8 @@ class AnalysisStream {
         if (this.controller) {
             this.controller.abort();
             this.controller = null;
-            this.stopQueue = this.stopQueue.then(() => post(`${this.path}/stop`)).catch((error) => setMessage(error.message, "error"));
+            this.startRequest = null;
+            this.stopQueue = this.stopQueue.then(() => post(`${this.path}/stop`)).catch((error) => setErrorMessage(analysisMessage, error));
         }
         if (clear) {
             this.result = null;
@@ -123,9 +121,8 @@ class AnalysisStream {
         this.render();
     }
 
-    async start(fields, update, nodes = 0) {
-        setMessage("");
-        clearSuggestion();
+    async start(fields, update) {
+        clearIoeResult();
         this.result = null;
         this.moves.clear();
         this.samples = [{ time: performance.now(), count: 0 }];
@@ -136,16 +133,21 @@ class AnalysisStream {
         render();
         const timer = setInterval(() => this.render(), 100);
         controller.signal.addEventListener("abort", () => clearInterval(timer), { once: true });
+        this.startRequest = this.stopQueue.then(() => {
+            if (this.controller === controller)
+                return startUpdates(this.path, fields(), controller.signal);
+        });
         try {
-            await this.stopQueue;
+            const response = await this.startRequest;
             if (this.controller !== controller) return;
-            await readUpdates(this.path, fields(), controller, update, nodes);
+            await readUpdates(this.path, response, controller, update);
         } catch (error) {
-            if (!controller.signal.aborted) setMessage(error.message, "error");
+            if (!controller.signal.aborted) setErrorMessage(analysisMessage, error);
         } finally {
             clearInterval(timer);
             if (this.controller === controller) {
                 this.controller = null;
+                this.startRequest = null;
                 this.render();
             }
         }
@@ -157,16 +159,14 @@ function stopAnalysis() {
 }
 
 function openAnalysis() {
-    if (mode === "analysis")
-        return;
-    analysisState = { ...boardSnapshot(playState), clicks: playState.clicks, playerFlags: new Set(flags) };
     clearIoeResult();
+    analysisState = { ...boardSnapshot(playState), clicks: playState.clicks, playerFlags: new Set(flags) };
     mode = "analysis";
     hoveredCell = -1;
     selectedCell = -1;
     scheduleProbabilityUpdate();
     render();
-    setMessage("已复制可见棋盘。", "success");
+    setMessage(boardMessage, "");
 }
 
 function scheduleProbabilityUpdate(preserveSelection = false) {
@@ -188,7 +188,6 @@ function scheduleProbabilityUpdate(preserveSelection = false) {
         const highlight = highlightDisplay.value;
         if (revision !== probabilityRevision || mode !== requestedMode || (!includeProbabilities && !highlight))
             return;
-        const startedAt = performance.now();
         try {
             const result = await calculate(state, { includeProbabilities, highlight });
             if (revision !== probabilityRevision || mode !== requestedMode)
@@ -196,7 +195,6 @@ function scheduleProbabilityUpdate(preserveSelection = false) {
             if (includeProbabilities) {
                 probabilities = result.probabilities;
                 candidateCount = result.candidateCount;
-                setMessage(`概率已更新 · ${(performance.now() - startedAt).toFixed(1)} ms`, "success");
             }
             probabilityPending = false;
             render();
@@ -207,7 +205,7 @@ function scheduleProbabilityUpdate(preserveSelection = false) {
                 return;
             probabilityPending = false;
             render();
-            setMessage(error.message, "error");
+            setErrorMessage(boardMessage, error);
         }
     });
 }
@@ -215,7 +213,7 @@ function scheduleProbabilityUpdate(preserveSelection = false) {
 function editAnalysisCell(cell, state) {
     if (cell < 0 || analysisState.cells[cell] === state)
         return;
-    clearSuggestion();
+    clearIoeResult();
     const previous = analysisState.cells[cell];
     const cells = analysisState.cells.split("");
     cells[cell] = state;
@@ -225,33 +223,29 @@ function editAnalysisCell(cell, state) {
     if ((previous === "?" || previous === "G") && (state === "?" || state === "G")) {
         stopAnalysis();
     } else
-        scheduleProbabilityUpdate();
+        scheduleProbabilityUpdate(true);
+    requestDetail(cell);
     render();
-    setMessage("盘面已修改。", "success");
+    setMessage(boardMessage, "editedBoard", "success");
 }
 
 function showIoeProgress(progress) {
-    const count = value => value.toLocaleString();
-    if (progress.phase === "enumeration") {
-        setMessage(`正在枚举候选摆法 · ${count(progress.enumerated)} / ${count(progress.candidateCount)} 张`);
-    } else if (progress.phase === "root") {
-        setMessage(`正在筛选根部 · 已分析 ${count(progress.rootAnalyzed)} / ${count(progress.candidateCount)} 张 · 已找到 ${count(progress.rootEligible)} 张可达 200% 的摆法 · DOM ${count(progress.rootDomCalls)} 次`);
-    } else {
-        setMessage(`正在后续搜索 · DOM ${count(progress.searchDomCalls)} / ${count(progress.domLimit)} 次 · 根部找到 ${count(progress.rootEligible)} 张可达 200% 的摆法`);
-    }
+    const key = { [IoePhase.Enumeration]: "ioeEnumerating", [IoePhase.Root]: "ioeRoot", [IoePhase.Search]: "ioeSearching" }[progress.phase];
+    if (key === undefined) throw new UiError("outdatedWasm");
+    setMessage(analysisMessage, key, "", progress);
 }
 
 function lockAnalysis(message) {
     operationBusy = true;
     stopAnalysis();
-    clearSuggestion();
+    clearIoeResult();
     ++probabilityRevision;
     probabilityPending = false;
-    setMessage(message);
+    setMessage(analysisMessage, message);
     render();
 }
 
-async function requestIoeAnalysis() {
+async function requestIoeAnalysis(clicks) {
     const state = activeState();
     if (operationBusy || !isBeginner(state) || (mode === "play" && (state.lost || state.won)))
         return;
@@ -261,65 +255,33 @@ async function requestIoeAnalysis() {
     const candidateLimit = candidateLimitInput.valueAsNumber;
     const domLimit = domLimitInput.valueAsNumber;
     if (!Number.isInteger(candidateLimit) || !Number.isInteger(domLimit) || !candidateLimitInput.validity.valid || !domLimitInput.validity.valid) {
-        setMessage("请在设置中填写有效的 IOE 上限。", "error");
+        setMessage(analysisMessage, "invalidIoeLimits", "error");
         return;
     }
-    let clicks = state.clicks;
-    if (clicks === null) {
-        const input = window.prompt("输入此局面已花的累计点击数（含插旗、拔旗）", "");
-        if (input === null) return;
-        clicks = Number(input.trim());
-        if (!/^\d+$/.test(input.trim()) || !Number.isSafeInteger(clicks) || clicks > 2147483647) {
-            setMessage("累计点击数无效。", "error");
-            return;
-        }
-    }
-    lockAnalysis("正在计算候选摆法数…");
+    lockAnalysis("countingLayouts");
     try {
         await search.stopQueue;
         const mask = Array.from(state.cells, (_, cell) => playerFlags.has(cell) ? "1" : "0").join("");
         const result = await analyzeIoeWithProgress({ ...boardSnapshot(state, /[G*]/g), playerFlags: mask, clicks, candidateLimit, domLimit }, showIoeProgress);
-        if (result.candidateLimitExceeded) {
-            setMessage(`有 ${result.candidateCount.toLocaleString()} 张候选摆法，超过设置的上限。`);
+        if (result.status === IoeStatus.CandidateLimit) {
+            setMessage(analysisMessage, "tooManyLayouts", "", result.candidateCount);
             return;
         }
+        if (result.status !== IoeStatus.Exact && result.status !== IoeStatus.DomLimit)
+            throw new UiError("outdatedWasm");
+        if (result.move && !Object.values(IoeAction).includes(result.move.kind))
+            throw new UiError("outdatedWasm");
         ioeMove = result.move;
         let status = "";
-        if (!result.exact)
-            status = ioeMove ? "已到搜索上限。 " : "已到搜索上限，尚未完成任何首招。 ";
+        if (result.status === IoeStatus.DomLimit)
+            status = ioeMove ? "ioeLimitReached" : "ioeLimitNoMove";
         else if (!ioeMove)
-            status = result.wins > 0 ? "当前盘面已完成。 " : "没有可达到 200% 的首招。 ";
+            status = result.wins > 0 ? "ioeBoardComplete" : "ioeNoOpening";
         showIoeResult(result);
-        setMessage(`${status}根部 DOM ${result.rootDomCalls.toLocaleString()} 次，搜索 DOM ${result.searchDomCalls.toLocaleString()} 次。`);
+        setMessage(analysisMessage, "ioeDomCalls", "", status, result.rootDomCalls, result.searchDomCalls);
     } catch (error) {
-        setMessage(error.message, "error");
+        setErrorMessage(analysisMessage, error);
     } finally {
-        operationBusy = false;
-        render();
-    }
-}
-
-async function requestSuggestion() {
-    if (operationBusy || (mode === "play" && (playState.lost || playState.won)))
-        return;
-    lockAnalysis("正在分析…");
-    try {
-        await search.stopQueue;
-        const state = activeState();
-        const highlight = highlightDisplay.value;
-        const startedAt = performance.now();
-        const result = await calculate(state, { suggest: true, includeProbabilities: probabilityDisplay.checked, highlight });
-        if (probabilityDisplay.checked) {
-            probabilities = result.probabilities;
-            candidateCount = result.candidateCount;
-        }
-        showSuggestion(result, performance.now() - startedAt);
-        if (highlight && mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
-        setMessage("分析完成。", "success");
-    } catch (error) {
-        setMessage(error.message, "error");
-    } finally {
-        probabilityPending = false;
         operationBusy = false;
         render();
     }

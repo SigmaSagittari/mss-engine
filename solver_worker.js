@@ -11,7 +11,8 @@ onmessage = async ({ data: { path, body }, ports: [port] }) => {
             : engine.handle(path, body);
         port.postMessage(JSON.parse(result));
     } catch (error) {
-        port.postMessage({ ok: false, error: error.message });
+        console.error(error);
+        port.postMessage({ ok: false, errorCode: 34 }); // i18n.js 中的 WorkerFailed
     } finally {
         port.close();
     }
