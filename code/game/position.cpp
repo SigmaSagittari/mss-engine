@@ -39,11 +39,11 @@ Position::Result Position::analyze(const ObservedBoard::Result &board, Pool &poo
 }
 
 Position::CheckedResult Position::analyzeChecked(const ObservedBoard::Result &board, Pool &pool, const Config &config, Probability::Pool &probabilityPool) {
-    CheckedResult checked{{board, config}, nullptr};
+    CheckedResult checked{{board, config}, CheckError::None};
     Result &result = checked.result;
     Basic().analyze(result.basic, result.board);
     if (!Basic().checkValid(result.board, result.basic)) {
-        checked.error = "基础逻辑冲突";
+        checked.error = CheckError::BasicConflict;
         return checked;
     }
     Structure().analyze(result.structure, result.board, result.basic, pool.structure);
@@ -58,10 +58,10 @@ Position::CheckedResult Position::analyzeChecked(const ObservedBoard::Result &bo
 
     // Probability 遇到空分布会直接返回零，只在无解时区分连通块冲突和总雷数冲突。
     if (probability.totalWays == 0.0L) {
-        checked.error = "连通块都有解，却与雷数冲突";
+        checked.error = CheckError::MineCountConflict;
         for (std::size_t i = 0; i < result.structure.instanceIds.size; ++i) {
             if (distributions.list[distributionIds[i]].ways.count == 0) {
-                checked.error = "某连通块无解";
+                checked.error = CheckError::ComponentConflict;
                 break;
             }
         }

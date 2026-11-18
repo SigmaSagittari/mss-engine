@@ -9,9 +9,9 @@
 namespace mss {
 
 struct IoeBruteForce {
-    enum class Status { Exact, CandidateLimit, DomLimit, InvalidBoard };
-    enum class Action { None, Open, Unflag, Chord };
-    enum class Phase { Enumeration, Root, Search };
+    enum class Status { Exact = 0, CandidateLimit = 1, DomLimit = 2, InvalidBoard = 3 };
+    enum class Action { None = 0, Open = 1, Unflag = 2, Chord = 3 };
+    enum class Phase { Enumeration = 0, Root = 1, Search = 2 };
 
     struct Progress {
         Phase phase;

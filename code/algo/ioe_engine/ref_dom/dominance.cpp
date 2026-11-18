@@ -54,10 +54,17 @@ struct Dominance::Workspace {
         void push_back(CachedItem *item) { data[count++] = item; }
     };
 
+    struct UnionSignature {
+        uint64_t words[signatureCapacity];
+        bool operator==(const UnionSignature &) const = default;
+    };
     struct UnionHash {
-        size_t operator()(Mask reach) const {
-            const size_t low = FrontierWord().combine(0, reach.low);
-            return reach.high ? FrontierWord().combine(low, reach.high) : low;
+        size_t operator()(const UnionSignature &reach) const {
+            const FrontierWord word;
+            size_t hash = word.combine(0, reach.words[0]);
+            for (int i = 1; i < signatureCapacity; ++i)
+                if (reach.words[i]) hash = word.combine(hash, reach.words[i]);
+            return hash;
         }
     };
     struct PendingPosting {
@@ -67,14 +74,14 @@ struct Dominance::Workspace {
 
     // 危险：复用匹配和分量比较的缓冲。仅当前签名占用的前缀有效，各入口先写入再使用。
     struct {
-        int fineMatch[cells];
+        int fineMatch[maxCells];
         uint64_t eligibleWord[64];
-        Mask eligibleWide[cells];
-        uint64_t recovered[2 * cells];
-        int parent[cells];
+        bitMask<signatureCapacity> eligibleWide[maxCells];
+        uint64_t recovered[signatureCapacity * maxCells];
+        int parent[maxCells];
     } components;
     struct {
-        FlatHashTable<Mask, size_t, UnionHash> bucketByUnion;
+        FlatHashTable<UnionSignature, size_t, UnionHash> bucketByUnion;
         mss::vector<size_t> stateCounts;
         mss::vector<Bucket> buckets;
         mss::vector<size_t> connectivityBucket;
@@ -131,19 +138,17 @@ bool Dominance::matchWord(const uint64_t *eligible, int *match, int candidate, u
     return false;
 }
 
-bool Dominance::matchWide(const Mask *eligible, int *match, int candidate, Mask &seen) {
-    for (int word = 0; word < 2; ++word) {
-        const uint64_t allowed = word ? eligible[candidate].high : eligible[candidate].low;
-        uint64_t &visited = word ? seen.high : seen.low;
-        for (uint64_t choices = allowed & ~visited; choices; choices &= ~visited) {
-            const int bit = std::countr_zero(choices);
-            const int fine = 64 * word + bit;
-            visited |= uint64_t{1} << bit;
-            if (match[fine] < 0 || matchWide(eligible, match, match[fine], seen)) {
-                match[fine] = candidate;
-                return true;
-            }
+bool Dominance::matchWide(const bitMask<signatureCapacity> *eligible, int *match, int candidate, bitMask<signatureCapacity> &seen) {
+    bitMask<signatureCapacity> choices = eligible[candidate];
+    choices &= ~seen;
+    while (choices.any()) {
+        const int fine = choices.firstSetBit();
+        seen.set(fine);
+        if (match[fine] < 0 || matchWide(eligible, match, match[fine], seen)) {
+            match[fine] = candidate;
+            return true;
         }
+        choices &= ~seen;
     }
     return false;
 }
@@ -166,7 +171,7 @@ bool Dominance::coarsensImpl(SignatureView coarse,
     if (coarseCount == 0) return fineCount == 0;
 
     Workspace &workspace = getWorkspace();
-    int (&fineMatch)[cells] = workspace.components.fineMatch;
+    int (&fineMatch)[maxCells] = workspace.components.fineMatch;
     // 至多 64 个细分量时，用一个字保存每个粗分量的匹配候选。
     constexpr size_t kInlineComponents = 64;
     if (coarseCount <= kInlineComponents && fineCount <= kInlineComponents) {
@@ -201,9 +206,9 @@ bool Dominance::coarsensImpl(SignatureView coarse,
         return true;
     }
 
-    // 每个粗分量用双字掩码保存可匹配的细分量。
-    Mask (&eligible)[cells] = workspace.components.eligibleWide;
-    std::fill_n(eligible, coarseCount, Mask{0, 0});
+    // 每个粗分量用位掩码保存可匹配的细分量。
+    bitMask<signatureCapacity> (&eligible)[maxCells] = workspace.components.eligibleWide;
+    std::fill_n(eligible, coarseCount, bitMask<signatureCapacity>{});
     for (size_t f = 0; f < fineCount; ++f) {
         bool represented = false;
         for (size_t c = 0; c < coarseCount; ++c) {
@@ -225,7 +230,7 @@ bool Dominance::coarsensImpl(SignatureView coarse,
     // 先给每个粗分量匹配一个不同的细分量。其余细分量只需归属任一粗分量。
     std::fill_n(fineMatch, fineCount, -1);
     for (size_t c = 0; c < coarseCount; ++c) {
-        Mask seen{};
+        bitMask<signatureCapacity> seen;
         if (!matchWide(eligible, fineMatch, (int)c, seen)) return false;
     }
     return true;
@@ -249,7 +254,7 @@ bool Dominance::exactQuotient(SignatureView coarse,
     // 同一桶的总可达集合相同。
     if (coarseCount == 1) return true;
     Workspace &workspace = getWorkspace();
-    uint64_t (&recovered)[2 * cells] = workspace.components.recovered;
+    uint64_t (&recovered)[signatureCapacity * maxCells] = workspace.components.recovered;
     std::fill_n(recovered, coarse.size(), 0);
     if (signatureWords == 1 && coarseCount <= 64) {
         for (uint64_t component : fine) {
@@ -302,7 +307,7 @@ int Dominance::mergePenaltyImpl(SignatureView a,
     if (na + nb > 128) return std::numeric_limits<int>::max();
     // 把同一 A 分量触及的 B 分量用并查集合起来。
     Workspace &workspace = getWorkspace();
-    int (&parent)[cells] = workspace.components.parent;
+    int (&parent)[maxCells] = workspace.components.parent;
     std::iota(parent, parent + nb, 0);
     auto root = [&](int v) {
         while (parent[v] != v) { parent[v] = parent[parent[v]]; v = parent[v]; }
@@ -361,7 +366,7 @@ void Dominance::prune(FactorTable &table, uint64_t baseMask,
         ++stateCounts[item->state.connectivityId];
 
     // 以总可达集合分桶，同一桶的局部排序供三轮支配剪枝复用。
-    FlatHashTable<Mask, size_t, Workspace::UnionHash> &lookup = workspace.partition.bucketByUnion;
+    FlatHashTable<Workspace::UnionSignature, size_t, Workspace::UnionHash> &lookup = workspace.partition.bucketByUnion;
     lookup.clear();
     lookup.reserve(connectivityCount);
     mss::vector<Bucket> &buckets = workspace.partition.buckets;
@@ -372,11 +377,10 @@ void Dominance::prune(FactorTable &table, uint64_t baseMask,
     for (uint32_t id = 0; id < connectivityCount; ++id) {
         if (!stateCounts[id]) continue;
         const SignatureView signature = connectivityPool[id];
-        Mask reach{};
-        for (size_t i = 0; i < signature.size(); i += signatureWords) {
-            reach.low |= signature[i];
-            if (signatureWords == 2) reach.high |= signature[i + 1];
-        }
+        Workspace::UnionSignature reach{};
+        for (size_t i = 0; i < signature.size(); i += signatureWords)
+            for (size_t word = 0; word < signatureWords; ++word)
+                reach.words[word] |= signature[i + word];
         size_t &index = lookup[reach];
         if (!index) {
             buckets.push_back({{}, {}, 0, noPosting});

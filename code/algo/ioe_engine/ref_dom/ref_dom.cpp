@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <type_traits>
 
 #include "algo/ioe_engine/ref_dom/frontier.h"
 #include "core/algorithm/neighbors.h"
+#include "core/datastructure/bit_mask.h"
 
 namespace mss::ioe::ref_dom {
 
@@ -21,43 +23,71 @@ void Scopes::append(span<const int> items) {
     parts.push_back(part);
 }
 
-struct RefDom::Workspace {
-    struct Relations {
-        Mask propagation[cells];
-        uint16_t mineFactors[cells];
-        Mask baseFactors[cells];
-    };
+template <int Rows, int Cols> struct RefDom::Engine {
+    static constexpr int cells = Rows * Cols;
+    using Model = BoardModel<cells>;
+    using Neighbors = BoardNeighbors<cells>;
+    using BoardBits = bitMask<(cells + 63) / 64>;
+    using MineBits = bitMask<(Cols == 30 ? 2 : 1)>;
 
-    struct {
-        Model partial;
-        Model remaining;
-        Model reduced[2];
-        Model ordered;
-    } model;
+    using StateMask = std::conditional_t<cells == ref_dom::cells, Mask, BoardBits>;
 
-    // 危险：各阶段复用缓冲，仅本次写入的棋盘或下标范围有效。
-    struct {
-        bool unseen[cells], adjacentToZero[cells];
-        int component[cells], stack[cells], scope[cells];
-    } build;
-    struct {
-        int anchors[cells], remap[cells];
-        bool keep[cells];
-    } restriction;
-    struct {
-        Relations relations;
-        int privateMines[cells], adjacent[cells], baseIds[cells];
-        uint64_t localEdges[cells], localBaseHits[cells];
-    } reduction;
-    struct {
-        int bestOrder[cells], byRank[cells], order[cells], inverse[cells];
-        int graphDelta[cells], factorDelta[cells];
-    } order;
-};
+    Neighbors makeNeighbors() {
+        Neighbors result{};
+        for (int cell = 0; cell < cells; ++cell) {
+            typename Neighbors::Row &row = result.rows[cell];
+            const int r = cell / Cols, c = cell % Cols;
+            forEachAdjacent(r, c, Rows, Cols, [&](int nr, int nc) { row.items[row.count++] = nr * Cols + nc; });
+        }
+        return result;
+    }
 
-struct RefDom::Builder {
-    void build(Mask shown, const Neighbors &adjacent, Model &model) {
-        Workspace &workspace = RefDom().getWorkspace();
+    bool partialOpening(const Model &model, const StateMask &shown, const Neighbors &adjacent) {
+        for (int i = 0; i < model.zeros.size(); ++i)
+            for (int zero : model.zeros[i])
+                if (shown.test(zero))
+                    for (int next : adjacent[zero])
+                        if (!shown.test(next)) return true;
+        return false;
+    }
+
+    int remainingClicks(const Model &layout, const StateMask &shown, const StateMask &flags, const Neighbors &adjacent) {
+        Workspace &workspace = getWorkspace();
+        int wrongFlags = 0;
+        for (int cell = 0; cell < cells; ++cell)
+            if (flags.test(cell) && !layout.mines[cell]) ++wrongFlags;
+        const Model *model = &layout;
+        if (partialOpening(layout, shown, adjacent)) {
+            // 错旗可能挡住展开。已揭开的零格不重复展开，按仍盖住的零格重算连通区。
+            Model &partial = workspace.model.partial;
+            std::copy_n(layout.mines, cells, partial.mines);
+            build(shown, adjacent, partial);
+            model = &partial;
+        }
+        Model &remaining = workspace.model.remaining;
+        Model (&reduced)[2] = workspace.model.reduced;
+        Model &ordered = workspace.model.ordered;
+        int paidSeed;
+        remainingModel(*model, shown, flags, adjacent, remaining, paidSeed);
+        const Model &input = reduce(remaining, reduced);
+        chooseOrder(input, ordered);
+        return wrongFlags + Frontier().solve(ordered) - paidSeed;
+    }
+
+    int remainingClicks(const Grid<char> &layout, span<const int> shownCells, span<const int> flagCells) {
+        Workspace &workspace = getWorkspace();
+        Model &model = workspace.model.layout;
+        const Neighbors adjacent = makeNeighbors();
+        for (int cell = 0; cell < cells; ++cell) model.mines[cell] = layout[0][cell];
+        build({}, adjacent, model);
+        StateMask shown{}, flags{};
+        for (int cell : shownCells) shown.set(cell);
+        for (int cell : flagCells) flags.set(cell);
+        return remainingClicks(model, shown, flags, adjacent);
+    }
+
+    void build(const StateMask &shown, const Neighbors &adjacent, Model &model) {
+        Workspace &workspace = getWorkspace();
         const uint8_t (&mineCells)[cells] = model.mines;
         model.zeros.clear();
         model.mine_cells.size = 0;
@@ -73,7 +103,7 @@ struct RefDom::Builder {
                 for (int other : adjacent[cell]) number += mineCells[other];
             }
             model.numbers[cell] = (int8_t)number;
-            unseen[cell] = number == 0 && !shown.has(cell);
+            unseen[cell] = number == 0 && !shown.test(cell);
             adjacentToZero[cell] = false;
         }
 
@@ -114,7 +144,7 @@ struct RefDom::Builder {
             model.graph.append({scope, count});
         }
         for (int z = 0; z < model.zeros.size(); ++z) {
-            Mask boundary{0, 0};
+            BoardBits boundary{};
             const span<const int> opening = model.zeros[z];
             for (int zero : opening) {
                 for (int cell : adjacent[zero]) {
@@ -132,7 +162,7 @@ struct RefDom::Builder {
             model.mine_scopes.append({scope, count});
         }
         for (int cell = 0; cell < cells; ++cell) {
-            if (model.numbers[cell] <= 0 || shown.has(cell) || adjacentToZero[cell]) continue;
+            if (model.numbers[cell] <= 0 || shown.test(cell) || adjacentToZero[cell]) continue;
             const int count = adjacentCandidates(model, adjacent[cell], scope);
             scope[count] = model.candidate_index[cell];
             std::sort(scope, scope + count + 1);
@@ -141,9 +171,9 @@ struct RefDom::Builder {
         }
     }
 
-    void remainingModel(const Model &model, Mask shown, Mask flags, const Neighbors &adjacent,
+    void remainingModel(const Model &model, const StateMask &shown, const StateMask &flags, const Neighbors &adjacent,
                         Model &remaining, int &paidSeed) {
-        Workspace &workspace = RefDom().getWorkspace();
+        Workspace &workspace = getWorkspace();
         int (&anchors)[cells] = workspace.restriction.anchors;
         int (&remap)[cells] = workspace.restriction.remap;
         bool (&keep)[cells] = workspace.restriction.keep;
@@ -152,13 +182,13 @@ struct RefDom::Builder {
             const int cell = model.candidates[i];
             bool hasHiddenNeighbor = false;
             for (int next : adjacent[cell]) {
-                if (!shown.has(next) && !model.mines[next]) {
+                if (!shown.test(next) && !model.mines[next]) {
                     hasHiddenNeighbor = true;
                     break;
                 }
             }
             keep[i] = hasHiddenNeighbor;
-            if (hasHiddenNeighbor && shown.has(cell)) anchors[anchorCount++] = i;
+            if (hasHiddenNeighbor && shown.test(cell)) anchors[anchorCount++] = i;
         }
         restrictCandidates(model, keep, remap, remaining);
         const auto addOpening = [&](span<const int> scope) {
@@ -166,19 +196,19 @@ struct RefDom::Builder {
             remaining.base_scopes.append(remaining.zero_scopes[remaining.zero_scopes.size() - 1]);
         };
         for (int i = 0; i < model.zeros.size(); ++i)
-            if (!shown.has(model.zeros[i][0])) addOpening(model.zero_scopes[i]);
+            if (!shown.test(model.zeros[i][0])) addOpening(model.zero_scopes[i]);
         paidSeed = anchorCount > 0;
         if (paidSeed) addOpening({anchors, anchorCount});
         for (int i = model.zeros.size(); i < model.base_scopes.size(); ++i)
-            if (!shown.has(model.base_descriptions[i].representative)) appendRestricted(remaining.base_scopes, model.base_scopes[i], remap);
+            if (!shown.test(model.base_descriptions[i].representative)) appendRestricted(remaining.base_scopes, model.base_scopes[i], remap);
         for (int i = 0; i < (int)model.mine_cells.size; ++i) {
-            if (flags.has(model.mine_cells[i])) remaining.mine_scopes.append({});
+            if (flags.test(model.mine_cells[i])) remaining.mine_scopes.append({});
             else appendRestricted(remaining.mine_scopes, model.mine_scopes[i], remap);
         }
     }
 
     const Model &reduce(const Model &original, Model (&models)[2]) {
-        Workspace &workspace = RefDom().getWorkspace();
+        Workspace &workspace = getWorkspace();
         Relations &relations = workspace.reduction.relations;
         bool (&keep)[cells] = workspace.restriction.keep;
         int (&remap)[cells] = workspace.restriction.remap;
@@ -191,17 +221,12 @@ struct RefDom::Builder {
             std::fill_n(keep, q, true);
             int removed = 0;
             for (int victim = 0; victim < q; ++victim) {
-                const Mask neighbors = relations.propagation[victim];
-                for (int word = 0; word < 2 && keep[victim]; ++word) {
-                    for (uint64_t bits = word ? neighbors.high : neighbors.low; bits; bits &= bits - 1) {
-                        const int replacement = 64 * word + std::countr_zero(bits);
-                        if (keep[replacement] && swapDominated(relations, victim, replacement)) {
-                            keep[victim] = false;
-                            ++removed;
-                            break;
-                        }
+                relations.propagation[victim].forEachSetBit([&](int replacement) {
+                    if (keep[victim] && keep[replacement] && swapDominated(relations, victim, replacement)) {
+                        keep[victim] = false;
+                        ++removed;
                     }
-                }
+                });
             }
             if (!removed) {
                 if (!removeLeftClickDominated(model, relations, keep)) return model;
@@ -217,17 +242,19 @@ struct RefDom::Builder {
         }
     }
 
-    // 四个单行或单列扫掠沿用参考版的评分和并列顺序。
+    // 单行或单列扫掠沿用参考版的评分和并列顺序。
     int sweepRank(int cell, int sweep) {
-        const int row = cell / side;
-        const int col = cell % side;
+        const int row = cell / Cols;
+        const int col = cell % Cols;
         const int line = sweep < 2 ? col : row;
         const int along = sweep < 2 ? row : col;
-        return ((sweep & 1) ? side - 1 - line : line) * side + along;
+        const int lines = sweep < 2 ? Cols : Rows;
+        const int length = sweep < 2 ? Rows : Cols;
+        return ((sweep & 1) ? lines - 1 - line : line) * length + along;
     }
 
     void chooseOrder(const Model &model, Model &output) {
-        Workspace &workspace = RefDom().getWorkspace();
+        Workspace &workspace = getWorkspace();
         const int q = (int)model.candidates.size;
         int (&bestOrder)[cells] = workspace.order.bestOrder;
         int (&byRank)[cells] = workspace.order.byRank;
@@ -246,7 +273,9 @@ struct RefDom::Builder {
             }
         };
         Score best;
-        for (int sweep = 0; sweep < 4; ++sweep) {
+        // 每个扫掠位置最多同时活跃三条线上的旗和独立数字格。高级按列扫掠，留在单字因子掩码内。
+        constexpr int sweepCount = 3 * Cols > 64 ? 2 : 4;
+        for (int sweep = 0; sweep < sweepCount; ++sweep) {
             std::fill_n(byRank, cells, -1);
             for (int i = 0; i < q; ++i) byRank[sweepRank(model.candidates[i], sweep)] = i;
             int n = 0;
@@ -299,7 +328,40 @@ struct RefDom::Builder {
 
 
 private:
-    using Relations = Workspace::Relations;
+    struct Relations {
+        BoardBits propagation[cells], baseFactors[cells];
+        MineBits mineFactors[cells];
+    };
+
+    struct Workspace {
+        struct {
+            Model layout, partial, remaining, reduced[2], ordered;
+        } model;
+
+        // 危险：各阶段复用缓冲，仅本次写入的棋盘或下标范围有效。
+        struct {
+            bool unseen[cells], adjacentToZero[cells];
+            int component[cells], stack[cells], scope[cells];
+        } build;
+        struct {
+            int anchors[cells], remap[cells];
+            bool keep[cells];
+        } restriction;
+        struct {
+            Relations relations;
+            int privateMines[cells], adjacent[cells], baseIds[cells];
+            uint64_t localEdges[cells], localBaseHits[cells];
+        } reduction;
+        struct {
+            int bestOrder[cells], byRank[cells], order[cells], inverse[cells];
+            int graphDelta[cells], factorDelta[cells];
+        } order;
+    };
+
+    __declspec(noinline) Workspace &getWorkspace() {
+        static thread_local Workspace workspace;
+        return workspace;
+    }
 
     int adjacentCandidates(const Model &model, span<const int> adjacent, int *output) {
         int count = 0;
@@ -348,7 +410,7 @@ private:
     }
 
     void orderModel(const Model &model, const int *order, Model &output) {
-        Workspace &workspace = RefDom().getWorkspace();
+        Workspace &workspace = getWorkspace();
         clearGraph(output);
         int (&inverse)[cells] = workspace.order.inverse;
         const int n = (int)model.candidates.size;
@@ -372,53 +434,49 @@ private:
 
     void calculateRelations(const Model &model, Relations &result) {
         const int q = (int)model.candidates.size;
-        std::fill_n(result.propagation, q, Mask{0, 0});
-        std::fill_n(result.mineFactors, q, 0);
-        std::fill_n(result.baseFactors, q, Mask{0, 0});
+        std::fill_n(result.propagation, q, BoardBits{});
+        std::fill_n(result.mineFactors, q, MineBits{});
+        std::fill_n(result.baseFactors, q, BoardBits{});
         for (int i = 0; i < q; ++i)
             for (int other : model.graph[i]) result.propagation[i].set(other);
         // 同一零区的相邻双击中心属于同一个连通分量。
         for (int i = 0; i < model.zero_scopes.size(); ++i) {
             const span<const int> scope = model.zero_scopes[i];
-            Mask unionMask{};
+            BoardBits unionMask{};
             for (int candidate : scope) unionMask.set(candidate);
-            for (int candidate : scope) {
-                Mask &mask = result.propagation[candidate];
-                mask.low |= unionMask.low;
-                mask.high |= unionMask.high;
-            }
+            for (int candidate : scope) result.propagation[candidate] |= unionMask;
         }
-        for (int i = 0; i < q; ++i) result.propagation[i].clear(i);
+        for (int i = 0; i < q; ++i) result.propagation[i].reset(i);
         for (int f = 0; f < model.mine_scopes.size(); ++f)
-            for (int candidate : model.mine_scopes[f]) result.mineFactors[candidate] |= uint16_t{1} << f;
+            for (int candidate : model.mine_scopes[f]) result.mineFactors[candidate].set(f);
         for (int f = 0; f < model.base_scopes.size(); ++f)
             for (int candidate : model.base_scopes[f]) result.baseFactors[candidate].set(f);
     }
 
-    bool isSubset(Mask subset, Mask superset) {
-        return !(subset.low & ~superset.low) && !(subset.high & ~superset.high);
-    }
-
     // 传播邻居要保留已有的覆盖和连通关系，同时不增加插旗要求。
     bool swapDominated(const Relations &relation, int victim, int by) {
-        if (!isSubset(relation.baseFactors[victim], relation.baseFactors[by])) return false;
-        if (relation.mineFactors[by] & ~relation.mineFactors[victim]) return false;
-        Mask needed = relation.propagation[victim];
-        needed.clear(by);
-        return isSubset(needed, relation.propagation[by]);
+        BoardBits missingBases = relation.baseFactors[victim];
+        missingBases &= ~relation.baseFactors[by];
+        if (missingBases.any()) return false;
+        MineBits extraMines = relation.mineFactors[by];
+        extraMines &= ~relation.mineFactors[victim];
+        if (extraMines.any()) return false;
+        BoardBits needed = relation.propagation[victim];
+        needed.reset(by);
+        needed &= ~relation.propagation[by];
+        return !needed.any();
     }
 
-    int unpack(Mask bits, int *ids) {
+    int unpack(const BoardBits &bits, int *ids) {
         int count = 0;
-        for (uint64_t word = bits.low; word; word &= word - 1) ids[count++] = std::countr_zero(word);
-        for (uint64_t word = bits.high; word; word &= word - 1) ids[count++] = 64 + std::countr_zero(word);
+        bits.forEachSetBit([&](int bit) { ids[count++] = bit; });
         return count;
     }
 
     // 删除中心后，各分量取一个代表，代表构成独立集。
     // 最大的 |独立集| 减其覆盖数，与空集的点击上界合起来用于证明删除安全。
     bool removeLeftClickDominated(const Model &model, const Relations &relation, bool *keep) {
-        Workspace &workspace = RefDom().getWorkspace();
+        Workspace &workspace = getWorkspace();
         int (&privateMines)[cells] = workspace.reduction.privateMines;
         int (&adjacent)[cells] = workspace.reduction.adjacent;
         int (&baseIds)[cells] = workspace.reduction.baseIds;
@@ -441,9 +499,9 @@ private:
             for (int i = 0; i < degree; ++i) {
                 uint64_t edges = 0, hits = 0;
                 for (int j = 0; j < degree; ++j)
-                    if (relation.propagation[adjacent[i]].has(adjacent[j])) edges |= uint64_t{1} << j;
+                    if (relation.propagation[adjacent[i]].test(adjacent[j])) edges |= uint64_t{1} << j;
                 for (int b = 0; b < bases; ++b)
-                    if (relation.baseFactors[adjacent[i]].has(baseIds[b])) hits |= uint64_t{1} << b;
+                    if (relation.baseFactors[adjacent[i]].test(baseIds[b])) hits |= uint64_t{1} << b;
                 localEdges[i] = edges;
                 localBaseHits[i] = hits;
             }
@@ -480,57 +538,27 @@ private:
 
 };
 
-__declspec(noinline) RefDom::Workspace &RefDom::getWorkspace() {
-    static thread_local Workspace workspace;
-    return workspace;
-}
-
 Neighbors RefDom::makeNeighbors() {
-    Neighbors result{};
-    for (int cell = 0; cell < cells; ++cell) {
-        Neighbors::Row &row = result.rows[cell];
-        const int r = cell / side, c = cell % side;
-        forEachAdjacent(r, c, side, side, [&](int nr, int nc) { row.items[row.count++] = nr * side + nc; });
-    }
-    return result;
+    return Engine<side, side>().makeNeighbors();
 }
 
 void RefDom::buildModel(Mask layout, const Neighbors &adjacent, Model &model) {
     for (int cell = 0; cell < cells; ++cell) model.mines[cell] = layout.has(cell);
-    Builder().build({}, adjacent, model);
+    Engine<side, side>().build({}, adjacent, model);
 }
 
 bool RefDom::partialOpening(const Model &model, Mask shown, const Neighbors &adjacent) {
-    for (int i = 0; i < model.zeros.size(); ++i)
-        for (int zero : model.zeros[i])
-            if (shown.has(zero))
-                for (int next : adjacent[zero])
-                    if (!shown.has(next)) return true;
-    return false;
+    return Engine<side, side>().partialOpening(model, shown, adjacent);
 }
 
 int RefDom::remainingClicks(const Model &layout, Mask shown, Mask playerFlags, const Neighbors &adjacent) {
-    int wrongFlags = 0;
-    for (int cell = 0; cell < cells; ++cell)
-        if (playerFlags.has(cell) && !layout.mines[cell]) ++wrongFlags;
-    Builder builder;
-    Workspace &workspace = getWorkspace();
-    const Model *model = &layout;
-    if (partialOpening(layout, shown, adjacent)) {
-        // 错旗可能挡住展开。已揭开的零格不重复展开，按仍盖住的零格重算连通区。
-        Model &partial = workspace.model.partial;
-        std::copy_n(layout.mines, cells, partial.mines);
-        builder.build(shown, adjacent, partial);
-        model = &partial;
-    }
-    Model &remaining = workspace.model.remaining;
-    Model (&reduced)[2] = workspace.model.reduced;
-    Model &ordered = workspace.model.ordered;
-    int paidSeed;
-    builder.remainingModel(*model, shown, playerFlags, adjacent, remaining, paidSeed);
-    const Model &input = builder.reduce(remaining, reduced);
-    builder.chooseOrder(input, ordered);
-    return wrongFlags + Frontier().solve(ordered) - paidSeed;
+    return Engine<side, side>().remainingClicks(layout, shown, playerFlags, adjacent);
+}
+
+int RefDom::remainingClicks(const Grid<char> &layout, span<const int> shown, span<const int> playerFlags) {
+    if (layout.rows() == side) return Engine<side, side>().remainingClicks(layout, shown, playerFlags);
+    if (layout.cols() == 16) return Engine<16, 16>().remainingClicks(layout, shown, playerFlags);
+    return Engine<16, 30>().remainingClicks(layout, shown, playerFlags);
 }
 
 } // 命名空间 mss::ioe::ref_dom

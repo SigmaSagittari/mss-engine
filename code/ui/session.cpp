@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <iomanip>
 #include <random>
 #include <sstream>
@@ -15,7 +16,9 @@
 #endif
 
 #include "algo/ioe_engine/bruteforce/bruteforce.h"
+#include "algo/ioe_engine/eight_way/eight_way.h"
 #include "algo/winrate_engine/fifty_fifty/templates/long_term_risk.h"
+#include "core/algorithm/rng.h"
 #include "core/config.h"
 #include "core/assert.h"
 
@@ -25,6 +28,17 @@ struct Session::FormField {
     std::string key;
     std::string value;
 };
+
+struct Session::Workspace {
+    Grid<char> layout;
+    vector<int> effOpening;
+};
+
+__declspec(noinline) Session::Workspace &Session::getWorkspace() {
+    static thread_local Workspace workspace;
+    return workspace;
+}
+
 // 一次计算拥有固定盘面及其结果、缓存；后续查询只引用 id，不接受盘面修改。
 struct Session::Analysis {
     int id;
@@ -46,6 +60,7 @@ struct Session::Analysis {
 struct Session::SearchTask {
     std::unique_ptr<Analysis> analysis;
     AnytimeSearch::Config config;
+    const long long nodeLimit;
     vector<ObservedBoard::CellId> safe;
     long double layouts;
     AnytimeSearch::Result result;
@@ -54,30 +69,35 @@ struct Session::SearchTask {
 
     SearchTask(std::unique_ptr<Analysis> &source, const Config &settings, const vector<ObservedBoard::CellId> &targets,
                const vector<ObservedBoard::CellId> &safe)
-        : analysis(source.release()), config(settings.anytime), safe(safe),
+        : analysis(source.release()), config(settings.anytime), nodeLimit(settings.anytime.nodeLimit), safe(safe),
           layouts(Position().analyzeProbability(analysis->checked.result, analysis->positions).totalWays),
           initialized(initialize(settings, targets)) {
         if (initialized.engine == SuggestResult::Engine::BruteForce) result.nodes = initialized.nodes;
     }
 
     SuggestResult initialize(const Config &settings, const vector<ObservedBoard::CellId> &targets) {
-        const MovePolicy::Config::Guess guess = settings.guess();
-        return MovePolicy().suggest(analysis->checked.result, analysis->positions, settings.policy(guess), analysis->suggestions, targets, result, details);
+        config.nodeLimit = 0;
+        const MovePolicy::Config::Guess guess{settings.anytime.selection.filter, settings.anytime.selection.exchange, settings.longTermRisk,
+                                             {settings.fiftyFifty.prefix, settings.longTermRisk ? &settings.fiftyFifty.eventLimit : nullptr}, &config};
+        const MovePolicy::Config policy{MovePolicy::Algorithm::Anytime, &guess, settings.brute.limit != 0 ? &settings.brute : nullptr};
+        return MovePolicy().suggest(analysis->checked.result, analysis->positions, policy, analysis->suggestions, targets, result, details);
     }
 
-    long long step(long long budget) {
-        const long long before = result.nodes;
-        config.nodeLimit = budget;
+    bool limitReached() const {
+        return !result.finished && nodeLimit != -1 && result.nodes >= nodeLimit;
+    }
+
+    void step(long long batch) {
+        config.nodeLimit = nodeLimit == -1 ? batch : (std::min)(nodeLimit - result.nodes, batch);
         AnytimeSearch().update(result, analysis->checked.result, analysis->positions, config, analysis->suggestions.anytime, details);
-        return result.nodes - before;
     }
 };
 
 Session::Session()
 #ifdef __EMSCRIPTEN__
-    : nextAnalysis_(1), stopped_(false), config_(false), searchBudget_(0), searchRunning_(false) {}
+    : nextAnalysis_(1), stopped_(false), config_(false), searchRunning_(false) {}
 #else
-    : nextAnalysis_(1), stopped_(false), token_(makeToken()), config_(true), searchBudget_(0), searchRunning_(false), searchBudgetEpoch_(0) {}
+    : nextAnalysis_(1), stopped_(false), token_(makeToken()), config_(true), searchRunning_(false) {}
 #endif
 
 Session::~Session() = default;
@@ -88,9 +108,7 @@ std::string Session::index(std::string content) const {
         content.replace(content.find(marker), marker.size(), value);
     };
     replace("__MSS_TOKEN__", token_);
-    constexpr const char *algorithms[] = {"__MSS_POLICY_LOWRISK__", "__MSS_POLICY_ANYTIME__"};
     constexpr const char *widths[] = {"__MSS_SEARCH_ROOT_WIDTH__", "__MSS_SEARCH_MIDDLE_WIDTH__", "__MSS_SEARCH_DEEP_WIDTH__"};
-    for (int i = 0; i < 2; ++i) replace(algorithms[i], config.algorithm == (MovePolicy::Algorithm)i ? "selected" : "");
     for (int i = 0; i < 3; ++i) replace(widths[i], std::to_string(config.anytime.width[i]));
     replace("__MSS_TEMPLATE_PREFIX__", std::to_string(config.fiftyFifty.prefix));
     replace("__MSS_TEMPLATE_COUNT__", std::to_string(FiftyFiftyData().count()));
@@ -102,18 +120,6 @@ std::string Session::index(std::string content) const {
     replace("__MSS_POLICY_NODES__", std::to_string(config.anytime.nodeLimit));
     const std::string versionMarker = "__MSS_VERSION__";
     while (content.find(versionMarker) != std::string::npos) replace(versionMarker, mss::version);
-    std::string acknowledgements;
-    for (const char *entry : mss::acknowledgements) {
-        acknowledgements += "<li>";
-        for (const char *ch = entry; *ch; ++ch) {
-            if (*ch == '&') acknowledgements += "&amp;";
-            else if (*ch == '<') acknowledgements += "&lt;";
-            else if (*ch == '>') acknowledgements += "&gt;";
-            else acknowledgements += *ch;
-        }
-        acknowledgements += "</li>";
-    }
-    replace("__MSS_ACKNOWLEDGEMENTS__", acknowledgements);
     return content;
 }
 
@@ -234,8 +240,8 @@ std::string Session::makeToken() const {
     return token.str();
 }
 
-std::string Session::error(const std::string &message) const {
-    return "{\"ok\":false,\"error\":" + jsonString(message) + "}";
+std::string Session::error(Error code) const {
+    return "{\"ok\":false,\"errorCode\":" + std::to_string((int)code) + "}";
 }
 
 bool Session::parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolverConfig::Order &algo) {
@@ -251,9 +257,9 @@ bool Session::parseOrderAlgo(const std::vector<FormField> &fields, ShapeSolverCo
 
 bool Session::parseFiftyFifty(const std::vector<FormField> &fields, Config &config, std::string &response) {
     int prefix;
-    if (!parseInteger(value(fields, "templatePrefix"), prefix) || prefix < 1 || prefix > FiftyFiftyData().count()) { response = error("模板前缀超出目录"); return false; }
+    if (!parseInteger(value(fields, "templatePrefix"), prefix) || prefix < 1 || prefix > FiftyFiftyData().count()) { response = error(Error::TemplatePrefix); return false; }
     if (config.longTermRisk && (!parseInteger(value(fields, "ltrEventLimit"), config.fiftyFifty.eventLimit) || config.fiftyFifty.eventLimit < 1)) {
-        response = error("LTR 模板匹配上限必须是正整数");
+        response = error(Error::LtrEventLimit);
         return false;
     }
     config.fiftyFifty.prefix = prefix;
@@ -261,44 +267,42 @@ bool Session::parseFiftyFifty(const std::vector<FormField> &fields, Config &conf
 }
 
 bool Session::parseConfig(const std::vector<FormField> &fields, Config &config, std::string &response) {
-    const std::string name = value(fields, "strategy");
-    if (name == "lowrisk") config.algorithm = MovePolicy::Algorithm::LowRisk;
-    else if (name == "anytime") config.algorithm = MovePolicy::Algorithm::Anytime;
-    else { response = error("建议算法无效"); return false; }
-    if (!parseInteger(value(fields, "limit"), config.brute.limit) || config.brute.limit < 0) { response = error("暴力接管阈值必须是非负整数"); return false; }
+    if (!parseInteger(value(fields, "limit"), config.brute.limit) || config.brute.limit < 0) { response = error(Error::BruteLimit); return false; }
     if (config.brute.limit != 0) {
 #ifndef __EMSCRIPTEN__
         if (value(fields, "multiThread") != "true") config.brute.config.threadCount = 1;
         else if (!parseInteger(value(fields, "maxThreads"), config.brute.config.threadCount) || config.brute.config.threadCount < 1) {
-            response = error("BruteForce 核心数必须是正整数");
+            response = error(Error::ThreadLimit);
             return false;
         }
 #endif
         config.brute.config.checkAllMoves = value(fields, "checkAllMoves") == "true";
     }
-    if (config.algorithm == MovePolicy::Algorithm::Anytime) {
-        int nodes;
-        if (!parseInteger(value(fields, "nodeBudget"), nodes) || nodes < 1) { response = error("Anytime 每步节点数必须是正整数"); return false; }
-        config.anytime.nodeLimit = nodes;
-        const char *names[] = {"rootWidth", "middleWidth", "deepWidth"};
-        for (int i = 0; i < 3; ++i) if (!parseInteger(value(fields, names[i]), config.anytime.width[i]) || config.anytime.width[i] < 1) { response = error("搜索候选宽度必须是正整数"); return false; }
-    }
-    if (config.algorithm != MovePolicy::Algorithm::LowRisk && !parseFiftyFifty(fields, config, response)) return false;
-    return true;
+    int nodes;
+    if (!parseInteger(value(fields, "nodeBudget"), nodes) || (nodes != -1 && nodes < 1)) { response = error(Error::NodeLimit); return false; }
+    config.anytime.nodeLimit = nodes;
+    const char *names[] = {"rootWidth", "middleWidth", "deepWidth"};
+    for (int i = 0; i < 3; ++i) if (!parseInteger(value(fields, names[i]), config.anytime.width[i]) || config.anytime.width[i] < 1) { response = error(Error::SearchWidth); return false; }
+    return parseFiftyFifty(fields, config, response);
+}
+
+Session::Error Session::parseBoardParameters(const std::vector<FormField> &fields, int &rows, int &cols, int &mines) const {
+    if (!parseInteger(value(fields, "rows"), rows) || !parseInteger(value(fields, "cols"), cols) || !parseInteger(value(fields, "mines"), mines))
+        return Error::BoardParameters;
+    if (rows < 1 || cols < 1 || rows > 100 || cols > 100 || mines < 0 || mines >= rows * cols)
+        return Error::BoardRange;
+    return Error::None;
 }
 
 bool Session::parseBoard(const std::vector<FormField> &fields, int &rows, int &cols, int &mines, std::string &cells, std::string &response) {
-    if (!parseInteger(value(fields, "rows"), rows) || !parseInteger(value(fields, "cols"), cols) || !parseInteger(value(fields, "mines"), mines)) {
-        response = error("盘面参数无效");
-        return false;
-    }
-    if (rows < 1 || cols < 1 || rows > 100 || cols > 100 || mines < 0 || mines >= rows * cols) {
-        response = error("自定义盘面范围无效");
+    const Error parameters = parseBoardParameters(fields, rows, cols, mines);
+    if (parameters != Error::None) {
+        response = error(parameters);
         return false;
     }
     cells = value(fields, "cells");
     if ((int)cells.size() != rows * cols || cells.find_first_not_of("012345678?MSG") != std::string::npos) {
-        response = error("盘面数据无效");
+        response = error(Error::BoardCells);
         return false;
     }
     return true;
@@ -320,7 +324,7 @@ ObservedBoard::Result Session::makeBoard(int rows, int cols, int mines, const st
 bool Session::createAnalysis(const std::vector<FormField> &fields, std::unique_ptr<Analysis> &analysis, std::string &response) {
     ShapeSolverConfig::Order algo;
     if (!parseOrderAlgo(fields, algo)) {
-        response = error("ShapeSolver 算法无效");
+        response = error(Error::SolverOrder);
         return false;
     }
     int rows, cols, mines;
@@ -332,8 +336,11 @@ bool Session::createAnalysis(const std::vector<FormField> &fields, std::unique_p
     config.shapeSolver.sa = algo == ShapeSolverConfig::Order::AutoSA ? &config_.annealing : nullptr;
     analysis.reset(new Analysis(nextAnalysis_++, config, makeBoard(rows, cols, mines, cells)));
     // 人工快照的局部检查和全盘存在性检查由 Position 构造完成，只在输入边界读取一次。
-    if (analysis->checked.error) {
-        response = error(analysis->checked.error);
+    const Position::CheckError checked = analysis->checked.error;
+    if (checked != Position::CheckError::None) {
+        response = error(checked == Position::CheckError::BasicConflict ? Error::BoardLogicConflict :
+                         checked == Position::CheckError::MineCountConflict ? Error::BoardMineCountConflict :
+                         Error::BoardComponentConflict);
         return false;
     }
     return true;
@@ -421,44 +428,6 @@ void Session::writeMoveDetails(std::ostream &result, const SuggestResult::Detail
     result << ']';
 }
 
-Position::ProbabilityResult Session::writeSuggestion(std::ostream &result, Analysis &analysis, const Config &config, const vector<ObservedBoard::CellId> &targets) {
-    Position::Result &position = analysis.checked.result;
-    Position::Pool &positions = analysis.positions;
-    const MovePolicy::Config::Guess guess = config.guess();
-    const MovePolicy::Config policy = config.policy(guess);
-    AnytimeSearch::Result searched;
-    SuggestResult::Details details;
-    const SuggestResult evaluated = MovePolicy().suggest(position, positions, policy, analysis.suggestions, targets, searched, details);
-    const Position::ProbabilityResult probability = Position().analyzeProbability(position, positions);
-    result << std::setprecision(18);
-    const bool safe = evaluated.engine == SuggestResult::Engine::Safe;
-    const bool exact = evaluated.engine == SuggestResult::Engine::BruteForce;
-    const char *engine = evaluated.engine == SuggestResult::Engine::None ? "Finished" : safe ? "Safe" : exact ? "BruteForce" : evaluated.engine == SuggestResult::Engine::LowRisk ? "LowRisk" : "Anytime";
-    result << ",\"engine\":" << jsonString(engine) << ",\"reason\":" << jsonString(evaluated.reason == SuggestResult::Reason::Forced ? "forced5050" : evaluated.reason == SuggestResult::Reason::Semi ? "5050OrSafe" : "score") << ",\"nodes\":" << evaluated.nodes << ",\"recommended\":[";
-    for (int i = 0; i < (int)evaluated.suggest.size; ++i) {
-        if (i != 0) result << ',';
-        result << evaluated.suggest[i];
-    }
-    result << "],\"candidates\":[";
-    for (int i = 0; i < (int)evaluated.candidates.size; ++i) {
-        if (i != 0) result << ',';
-        result << evaluated.candidates[i].cell;
-    }
-    result << "],\"moves\":[";
-    for (int i = 0; i < (int)evaluated.candidates.size; ++i) {
-        if (i != 0) result << ',';
-        const SuggestResult::Candidate &candidate = evaluated.candidates.data[i];
-        const long double mine = Probability().mineProbability(probability.boxes, positions.probabilities, candidate.cell, position.board, position.basic, position.structure);
-        result << "{\"cell\":" << candidate.cell << ",\"value\":" << candidate.value << ",\"probability\":" << mine;
-        if (evaluated.engine == SuggestResult::Engine::Anytime) result << ",\"depth\":" << analysis.suggestions.anytime.moves.data[searched.roots.offset + i].expandedDepth;
-        writeMoveDetails(result, details, candidate.cell);
-        result << '}';
-    }
-    result << ']';
-    analysis.suggestions.anytime.clear(positions);
-    return probability;
-}
-
 std::string Session::analyze(const std::vector<FormField> &fields) {
     std::string response;
     const std::string idText = value(fields, "analysisId");
@@ -470,41 +439,13 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
     } else {
         int id;
         if (!parseInteger(idText, id) || !analysis_ || id != analysis_->id)
-            return error("计算上下文已失效");
+            return error(Error::AnalysisExpired);
     }
     Position::Result &position = analysis_->checked.result;
     Position::Pool &positions = analysis_->positions;
     std::ostringstream result;
     result << "{\"ok\":true,\"analysisId\":" << analysis_->id;
-    Position::ProbabilityResult probability;
-    if (value(fields, "suggest") == "true") {
-        Config config = config_;
-        if (!parseConfig(fields, config, response))
-            return response;
-        const std::string selected = value(fields, "targets");
-        const ObservedBoard::Result &board = position.board;
-        vector<ObservedBoard::CellId> targets;
-        int previous = -1;
-        for (std::size_t start = 0; start < selected.size();) {
-            const std::size_t end = selected.find(',', start);
-            int cell;
-            if (!parseInteger(selected.substr(start, end - start), cell) || cell <= previous || cell >= board.cells.rows() * board.cells.cols())
-                return error("G 格编号无效");
-            const auto [row, col] = board.pos(cell);
-            if (board.cells[row][col] != ObservedBoard::CellState::Hidden)
-                return error("G 格必须是未揭格");
-            if (analysis_->mineProbability(cell) == 1.0L)
-                return error("G 格已确定为雷");
-            targets.push_back(cell);
-            previous = cell;
-            if (end == std::string::npos) break;
-            start = end + 1;
-        }
-        if (targets.size != 0) config.anytime.width[0] = 0;
-        probability = writeSuggestion(result, *analysis_, config, targets);
-    } else {
-        probability = Position().analyzeProbability(position, positions);
-    }
+    const Position::ProbabilityResult probability = Position().analyzeProbability(position, positions);
     result << ",\"candidateCount\":" << candidateCount(probability.totalWays);
     if (value(fields, "includeProbabilities") == "true")
         writeProbabilities(result, position, probability.boxes, positions.probabilities);
@@ -514,7 +455,7 @@ std::string Session::analyze(const std::vector<FormField> &fields) {
         int cell;
         const ObservedBoard::Result &board = position.board;
         if (!parseInteger(cellText, cell) || cell < 0 || cell >= board.cells.rows() * board.cells.cols())
-            return error("格子编号无效");
+            return error(Error::CellIndex);
         const ObservedBoard::CellState state = board.cells[cell / board.cells.cols()][cell % board.cells.cols()];
         const long double mine = Probability().mineProbability(probability.boxes, positions.probabilities, cell, board, position.basic, position.structure);
         result << std::setprecision(18) << ",\"probability\":" << mine;
@@ -577,36 +518,34 @@ std::string Session::analyzeIoe(const std::string &body, const std::function<voi
     if (!parseBoard(fields, rows, cols, mines, cells, response))
         return response;
     if (rows != 9 || cols != 9 || mines != 10)
-        return error("IOE 分析只支持初级盘面");
+        return error(Error::IoeBeginner);
     int clicks;
     if (!parseInteger(value(fields, "clicks"), clicks) || clicks < 0)
-        return error("累计点击数无效");
+        return error(Error::IoeClicks);
     if (clicks == 0 && cells.find_first_of("012345678") != std::string::npos)
-        return error("已揭开的盘面至少有一次点击");
+        return error(Error::IoeMissingClicks);
     const std::string mask = value(fields, "playerFlags");
     if (mask.size() != cells.size() || mask.find_first_not_of("01") != std::string::npos)
-        return error("玩家旗数据无效");
+        return error(Error::PlayerFlags);
     int candidateLimit = 1'000'000;
     int domLimit = 1'000'000;
     const std::string candidateLimitText = value(fields, "candidateLimit");
     const std::string domLimitText = value(fields, "domLimit");
     if ((!candidateLimitText.empty() && !parseInteger(candidateLimitText, candidateLimit)) || candidateLimit < 1)
-        return error("IOE 候选摆法上限无效");
+        return error(Error::IoeCandidateLimit);
     if ((!domLimitText.empty() && !parseInteger(domLimitText, domLimit)) || domLimit < 1)
-        return error("IOE DOM 调用上限无效");
+        return error(Error::IoeDomLimit);
     Grid<bool> playerFlags(rows, cols, false);
     for (int cell = 0; cell < rows * cols; ++cell) {
         if (mask[cell] == '1' && cells[cell] >= '0' && cells[cell] <= '8')
-            return error("已揭格上不能有玩家旗");
+            return error(Error::IoeFlagOnOpen);
         playerFlags[cell / cols][cell % cols] = mask[cell] == '1';
     }
     std::function<void(const IoeBruteForce::Progress &)> progress;
     if (publish) progress = [&](const IoeBruteForce::Progress &state) {
-        const char *phase = state.phase == IoeBruteForce::Phase::Enumeration ? "enumeration" :
-                            state.phase == IoeBruteForce::Phase::Root ? "root" : "search";
         std::ostringstream update;
-        update << "{\"progress\":{\"phase\":\"" << phase
-               << "\",\"candidateCount\":" << state.candidates << ",\"enumerated\":" << state.enumerated
+        update << "{\"progress\":{\"phase\":" << (int)state.phase
+               << ",\"candidateCount\":" << state.candidates << ",\"enumerated\":" << state.enumerated
                << ",\"rootAnalyzed\":" << state.rootAnalyzed << ",\"rootEligible\":" << state.rootEligible
                << ",\"rootDomCalls\":" << state.rootDomCalls << ",\"searchDomCalls\":" << state.searchDomCalls
                << ",\"domLimit\":" << state.domLimit << "}}";
@@ -614,12 +553,9 @@ std::string Session::analyzeIoe(const std::string &body, const std::function<voi
     };
     const IoeBruteForce::Result analysis = IoeBruteForce().solve(makeBoard(rows, cols, mines, cells), playerFlags, clicks, candidateLimit, domLimit, progress);
     if (analysis.status == IoeBruteForce::Status::InvalidBoard)
-        return error("IOE 盘面无解");
-    const bool exact = analysis.status == IoeBruteForce::Status::Exact;
-    const bool candidateLimitExceeded = analysis.status == IoeBruteForce::Status::CandidateLimit;
+        return error(Error::IoeUnsolvable);
     std::ostringstream result;
-    result << std::setprecision(18) << "{\"ok\":true,\"exact\":" << (exact ? "true" : "false")
-           << ",\"candidateLimitExceeded\":" << (candidateLimitExceeded ? "true" : "false")
+    result << std::setprecision(18) << "{\"ok\":true,\"status\":" << (int)analysis.status
            << ",\"candidateCount\":" << analysis.candidates
            << ",\"rootEligible\":" << analysis.rootEligible << ",\"wins\":" << analysis.wins
            << ",\"rootDomCalls\":" << analysis.rootDomCalls << ",\"searchDomCalls\":" << analysis.searchDomCalls
@@ -636,9 +572,7 @@ std::string Session::analyzeIoe(const std::string &body, const std::function<voi
     if (analysis.action == IoeBruteForce::Action::None) {
         result << "null";
     } else {
-        const char *kind = analysis.action == IoeBruteForce::Action::Open ? "open" :
-                           analysis.action == IoeBruteForce::Action::Unflag ? "unflag" : "chord";
-        result << "{\"kind\":\"" << kind << "\",\"cell\":" << analysis.cell << ",\"addFlags\":[";
+        result << "{\"kind\":" << (int)analysis.action << ",\"cell\":" << analysis.cell << ",\"addFlags\":[";
         for (int i = 0; i < analysis.addedCount; ++i) {
             if (i != 0) result << ',';
             result << analysis.addedFlags[i];
@@ -654,6 +588,121 @@ std::string Session::analyzeIoe(const std::string &body, const std::function<voi
     return result.str();
 }
 
+bool Session::parseSeed(const std::string &value, U128 &seed) const {
+    return value.size() == 32 &&
+           std::from_chars(value.data(), value.data() + 16, seed.hi, 16).ptr == value.data() + 16 &&
+           std::from_chars(value.data() + 16, value.data() + 32, seed.lo, 16).ptr == value.data() + 32;
+}
+
+void Session::writeSeed(std::ostream &result, U128 seed) const {
+    result << '"' << std::hex << std::setfill('0') << std::setw(16) << seed.hi
+           << std::setw(16) << seed.lo << std::dec << '"';
+}
+
+void Session::writeMinefield(std::ostream &result, const Grid<char> &layout) const {
+    result << '"';
+    const int count = layout.rows() * layout.cols();
+    for (int cell = 0; cell < count; ++cell)
+        result << (char) ('0' + layout[0][cell]);
+    result << '"';
+}
+
+std::string Session::generateBoard(const std::vector<FormField> &fields) {
+    int rows, cols, mines, first;
+    const Error parameters = parseBoardParameters(fields, rows, cols, mines);
+    if (parameters != Error::None) return error(parameters);
+    if (!parseInteger(value(fields, "first"), first) || first < 0 || first >= rows * cols)
+        return error(Error::CellIndex);
+    U128 initial;
+    if (!parseSeed(value(fields, "seed"), initial)) return error(Error::Seed);
+
+    Workspace &workspace = getWorkspace();
+    Grid<char> &layout = workspace.layout;
+    layout.resize(rows, cols, 0);
+    Minefield minefield;
+    const U128 seed = minefield.safeSeed(rows * cols, mines, initial, first);
+    Random random(seed.lo, seed.hi);
+    minefield.generate(layout, mines, random);
+    const U128 nextSeed = {random.next(), random.next()};
+
+    std::ostringstream result;
+    result << "{\"ok\":true,\"seed\":";
+    writeSeed(result, seed);
+    result << ",\"nextSeed\":";
+    writeSeed(result, nextSeed);
+    result << ",\"minefield\":";
+    writeMinefield(result, layout);
+    result << '}';
+    return result.str();
+}
+
+std::string Session::generateEffBoard(const std::vector<FormField> &fields) {
+    int rows, cols, mines;
+    if (parseBoardParameters(fields, rows, cols, mines) != Error::None)
+        return error(Error::BoardParameters);
+    const int size = rows * cols;
+    // 角上的零格及其邻格占用的安全格最少。
+    if (size - mines < (std::min)(rows, 2) * (std::min)(cols, 2))
+        return error(Error::BoardRange);
+
+    const std::string input = value(fields, "zne");
+    char *end;
+    const double threshold = std::strtod(input.c_str(), &end);
+    if (end == input.c_str() || end != input.c_str() + input.size() || !std::isfinite(threshold) || threshold <= 0)
+        return error(Error::EffThreshold);
+
+    int domExtraClicks = 0;
+    if (value(fields, "dom") == "true") {
+        const std::string level = value(fields, "difficulty");
+        if (level == "beginner" && rows == 9 && cols == 9 && mines == 10) domExtraClicks = 2;
+        else if (level == "intermediate" && rows == 16 && cols == 16 && mines == 40) domExtraClicks = 4;
+        else if (level == "advanced" && rows == 16 && cols == 30 && mines == 99) domExtraClicks = 9;
+    }
+
+    U128 seed;
+    if (!parseSeed(value(fields, "seed"), seed)) return error(Error::Seed);
+
+    Workspace &workspace = getWorkspace();
+    Grid<char> &layout = workspace.layout;
+    vector<int> &opening = workspace.effOpening;
+    layout.resize(rows, cols, 0);
+    Minefield minefield;
+    const std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(60);
+    int attempts = 0, domCalls = 0;
+    U128 boardSeed = seed;
+    EightWay::Filter status;
+    for (;;) {
+        Random random(boardSeed.lo, boardSeed.hi);
+        minefield.generate(layout, mines, random);
+        seed.lo = random.next();
+        seed.hi = random.next();
+        status = EightWay().filterOpening(layout, threshold, domExtraClicks, opening);
+        ++attempts;
+        domCalls += status.ranDom;
+        if (status.accepted || std::chrono::steady_clock::now() >= deadline) break;
+        layout.fill(0);
+        boardSeed = seed;
+    }
+
+    std::ostringstream result;
+    result << "{\"ok\":true,\"attempts\":" << attempts << ",\"domCalls\":" << domCalls << ",\"nextSeed\":";
+    writeSeed(result, seed);
+    if (status.accepted) {
+        result << ",\"seed\":";
+        writeSeed(result, boardSeed);
+        result << ",\"minefield\":";
+        writeMinefield(result, layout);
+        result << ",\"opening\":[";
+        for (std::size_t index = 0; index < opening.size; ++index) {
+            if (index != 0) result << ',';
+            result << opening[index];
+        }
+        result << ']';
+    }
+    result << '}';
+    return result.str();
+}
+
 std::string Session::playUntilNoSafe(const std::vector<FormField> &fields) {
     std::string response;
     int rows, cols, totalMines;
@@ -663,10 +712,10 @@ std::string Session::playUntilNoSafe(const std::vector<FormField> &fields) {
     ObservedBoard::Result board = makeBoard(rows, cols, totalMines, cells);
     ShapeSolverConfig::Order algo;
     if (!parseOrderAlgo(fields, algo))
-        return error("ShapeSolver 算法无效");
+        return error(Error::SolverOrder);
     const std::string mines = value(fields, "minefield");
     if ((int)mines.size() != rows * cols || mines.find_first_not_of("01") != std::string::npos)
-        return error("真实雷盘数据无效");
+        return error(Error::Minefield);
     Grid<char> grid(rows, cols, 0);
     int count = 0;
     for (int cell = 0; cell < rows * cols; ++cell) {
@@ -674,7 +723,7 @@ std::string Session::playUntilNoSafe(const std::vector<FormField> &fields) {
         count += grid[cell / cols][cell % cols];
     }
     if (count != board.totalMines)
-        return error("真实雷盘与总雷数不符");
+        return error(Error::MineCount);
     Position::Config config = config_.game;
     config.shapeSolver.order = algo;
     config.shapeSolver.sa = algo == ShapeSolverConfig::Order::AutoSA ? &config_.annealing : nullptr;
@@ -686,7 +735,7 @@ std::string Session::playUntilNoSafe(const std::vector<FormField> &fields) {
             const ObservedBoard::CellState state = board.cells[row][col];
             if (state == ObservedBoard::CellState::Hidden) continue;
             if (!ObservedBoard().isNumber(state) || ObservedBoard().numberValue(state) != game.number(col, row))
-                return error("游玩观测与真实雷盘不符");
+                return error(Error::BoardMismatch);
             revealed.push_back(board.id(row, col));
         }
     game.play(revealed.data, (int)revealed.size);
@@ -728,21 +777,17 @@ bool Session::startSearch(const std::string &body, std::string &response) {
             safe.push_back(cell);
     if (safe.size == 0)
         for (int i = 0; i < (int)targets.size; ++i)
-            if (analysis->mineProbability(targets[i]) == 1.0L) { response = error("Search 目标格已确定为雷"); return false; }
+            if (analysis->mineProbability(targets[i]) == 1.0L) { response = error(Error::SearchTargetMine); return false; }
     Config config = config_;
     if (!parseConfig(fields, config, response)) return false;
-    if (config.algorithm != MovePolicy::Algorithm::Anytime) { response = error("搜索仅支持 Anytime"); return false; }
     if (targets.size != 0) config.anytime.width[0] = 0;
-    config.anytime.nodeLimit = 0;
 #ifdef __EMSCRIPTEN__
-    searchBudget_ = 0;
-    searchRunning_ = value(fields, "run") == "true";
+    searchRunning_ = true;
     searchTask_.reset(new SearchTask(analysis, config, targets, safe));
 #else
     {
         const std::lock_guard<std::mutex> lock(searchMutex_);
-        searchBudget_ = 0;
-        searchRunning_ = value(fields, "run") == "true";
+        searchRunning_ = true;
         searchUpdate_ = "{\"ok\":true,\"nodes\":0,\"completedDepth\":0,\"finished\":false,\"safe\":false,\"recommended\":-1,\"moves\":[]";
     }
     Analysis *source = analysis.release();
@@ -756,23 +801,12 @@ bool Session::startSearch(const std::string &body, std::string &response) {
         };
         publish();
         constexpr long long nodesPerUpdate = 5000;
-        while (!task.result.finished && !stop.stop_requested()) {
-            bool running;
-            long long budget;
-            unsigned long long epoch;
+        while (!task.result.finished && !task.limitReached() && !stop.stop_requested()) {
             {
                 std::unique_lock<std::mutex> lock(searchMutex_);
-                if (!searchWake_.wait(lock, stop, [&]() { return searchRunning_ || searchBudget_ > 0; })) break;
-                running = searchRunning_;
-                budget = running ? nodesPerUpdate : (std::min)(searchBudget_, nodesPerUpdate);
-                epoch = searchBudgetEpoch_;
+                if (!searchWake_.wait(lock, stop, [&]() { return searchRunning_; })) break;
             }
-            const long long spent = task.step(budget);
-            if (!running) {
-                const std::lock_guard<std::mutex> lock(searchMutex_);
-                if (epoch == searchBudgetEpoch_)
-                    searchBudget_ = task.result.finished ? 0 : (std::max)(0LL, searchBudget_ - spent);
-            }
+            task.step(nodesPerUpdate);
             publish();
         }
     });
@@ -789,7 +823,8 @@ std::string Session::searchResult(const SearchTask &task) const {
     const SuggestResult snapshot = result.snapshot(pool);
     const ObservedBoard::CellId recommended = safe.size != 0 ? safe.data[0] : exact ? (initialized.suggest.size != 0 ? initialized.suggest.data[0] : -1) : result.recommended(pool);
     std::ostringstream json;
-    json << std::setprecision(18) << "{\"ok\":true,\"engine\":" << jsonString(exact ? "BruteForce" : safe.size != 0 ? "Safe" : "Anytime") << ",\"candidateCount\":" << candidateCount(task.layouts) << ",\"nodes\":" << result.nodes << ",\"completedDepth\":" << result.completedDepth << ",\"finished\":" << (result.finished ? "true" : "false") << ",\"safe\":" << (safe.size != 0 ? "true" : "false") << ",\"recommended\":" << recommended << ",\"moves\":[";
+    const SuggestResult::Engine engine = exact ? SuggestResult::Engine::BruteForce : safe.size != 0 ? SuggestResult::Engine::Safe : SuggestResult::Engine::Anytime;
+    json << std::setprecision(18) << "{\"ok\":true,\"engine\":" << (int)engine << ",\"candidateCount\":" << candidateCount(task.layouts) << ",\"nodes\":" << result.nodes << ",\"completedDepth\":" << result.completedDepth << ",\"finished\":" << (result.finished ? "true" : "false") << ",\"limitReached\":" << (task.limitReached() ? "true" : "false") << ",\"safe\":" << (safe.size != 0 ? "true" : "false") << ",\"recommended\":" << recommended << ",\"moves\":[";
     const int count = safe.size != 0 ? (int)safe.size : exact ? (int)initialized.candidates.size : (int)result.roots.count;
     for (int i = 0; i < count; ++i) {
         if (i != 0) json << ',';
@@ -816,31 +851,22 @@ std::string Session::advanceSearch() {
     SearchTask &task = *searchTask_;
     constexpr long long batch = 256;
     const std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
-    while (!task.result.finished && (searchRunning_ || searchBudget_ > 0)) {
-        const long long spent = task.step(searchRunning_ ? batch : (std::min)(searchBudget_, batch));
-        if (!searchRunning_) searchBudget_ = task.result.finished ? 0 : (std::max)(0LL, searchBudget_ - spent);
+    while (!task.result.finished && !task.limitReached() && searchRunning_) {
+        task.step(batch);
         if (std::chrono::steady_clock::now() >= end) break;
     }
-    return searchResult(task) + ",\"paused\":" + (!searchRunning_ && searchBudget_ == 0 ? "true" : "false") + '}';
+    return searchResult(task) + ",\"paused\":" + (!searchRunning_ ? "true" : "false") + '}';
 }
 #endif
 
 std::string Session::controlSearch(const std::vector<FormField> &fields) {
-    const std::string action = value(fields, "action");
-    int nodes = 0;
-    if (action == "step" && (!parseInteger(value(fields, "nodes"), nodes) || nodes < 1)) return error("节点预算必须是正整数");
-    if (action != "pause" && action != "resume" && action != "step") return error("搜索操作无效");
+    int action;
+    if (!parseInteger(value(fields, "action"), action) || (action != (int)SearchAction::Pause && action != (int)SearchAction::Resume))
+        return error(Error::SearchAction);
 #ifndef __EMSCRIPTEN__
     const std::lock_guard<std::mutex> lock(searchMutex_);
 #endif
-    searchRunning_ = action == "resume";
-    if (action == "step") searchBudget_ += nodes;
-    else {
-        searchBudget_ = 0;
-#ifndef __EMSCRIPTEN__
-        ++searchBudgetEpoch_;
-#endif
-    }
+    searchRunning_ = action == (int)SearchAction::Resume;
 #ifndef __EMSCRIPTEN__
     searchWake_.notify_one();
 #endif
@@ -859,7 +885,7 @@ void Session::stopAnalysis() {
 std::string Session::searchUpdate() const {
     const std::lock_guard<std::mutex> lock(searchMutex_);
     // 缓存保存计算结果前缀；暂停状态读取时补齐，控制操作无需等待下一次计算发布。
-    return searchUpdate_ + ",\"paused\":" + (!searchRunning_ && searchBudget_ == 0 ? "true" : "false") + '}';
+    return searchUpdate_ + ",\"paused\":" + (!searchRunning_ ? "true" : "false") + '}';
 }
 
 #endif
@@ -883,6 +909,10 @@ std::string Session::handle(const std::string &path, const std::string &body) {
     const std::vector<FormField> fields = parseForm(body);
     if (path == "/api/analyze")
         return analyze(fields);
+    if (path == "/api/generate-board")
+        return generateBoard(fields);
+    if (path == "/api/eff-board")
+        return generateEffBoard(fields);
     if (path == "/api/play-until-no-safe")
         return playUntilNoSafe(fields);
     if (path == "/api/anytime-search/control")
@@ -892,7 +922,7 @@ std::string Session::handle(const std::string &path, const std::string &body) {
         stopAnalysis();
         return "{\"ok\":true}";
     }
-    return error("未知接口");
+    return error(Error::UnknownEndpoint);
 }
 
 } // 命名空间 mss::UI

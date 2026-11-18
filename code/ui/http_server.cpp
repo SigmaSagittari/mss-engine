@@ -225,7 +225,7 @@ void HttpServer::run(bool openBrowser) {
         }
         if (request.host != host) {
             sendResponse(client, 403, "text/plain; charset=utf-8", "Forbidden");
-        } else if (request.path == "/" || request.path == "/state.js" || request.path == "/game.js" || request.path == "/view.js" || request.path == "/analysis.js" || request.path == "/anytime_search.js" || request.path == "/main.js" || request.path == "/style.css") {
+        } else if (request.path == "/" || request.path == "/i18n.js" || request.path == "/state.js" || request.path == "/game.js" || request.path == "/view.js" || request.path == "/analysis.js" || request.path == "/anytime_search.js" || request.path == "/main.js" || request.path == "/style.css") {
             if (request.method != "GET") {
                 sendResponse(client, 405, "text/plain; charset=utf-8", "Method Not Allowed");
             } else {
@@ -237,9 +237,9 @@ void HttpServer::run(bool openBrowser) {
             }
         } else if (request.path.rfind("/api/", 0) == 0) {
             if (request.method != "POST") {
-                sendResponse(client, 405, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"只接受 POST 请求\"}");
+                sendResponse(client, 405, "application/json; charset=utf-8", session_.error(Session::Error::HttpMethod));
             } else if (request.origin != origin || request.token != session_.token()) {
-                sendResponse(client, 403, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"请求来源无效\"}");
+                sendResponse(client, 403, "application/json; charset=utf-8", session_.error(Session::Error::RequestOrigin));
             } else if (request.path == "/api/analyze-ioe/stream") {
                 DWORD sendTimeout = 1000;
                 setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, (const char *)&sendTimeout, sizeof(sendTimeout));

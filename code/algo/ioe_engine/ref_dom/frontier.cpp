@@ -99,7 +99,7 @@ struct Frontier::FactorPlan {
         bool flag;
     };
 
-    Factor factors[cells];
+    Factor factors[maxCells];
     int count;
     int slotCount;
 };
@@ -110,25 +110,24 @@ struct Frontier::Workspace {
         int penalty[2];
         bool ready;
     };
-    struct Opening { uint64_t words[2]; int next; };
+    struct Opening { uint64_t words[signatureCapacity]; int next; };
 
     // 危险：只复用本次扫掠需要的前缀。建表时初始化累加项，其余槽位在建立索引或生成状态时写入。
     struct {
         FactorPlan plan;
-        int order[cells], slotLast[cells];
-        uint64_t flagMember[cells], baseMember[cells], activeAfter[cells], baseAfter[cells];
+        int order[maxCells], slotLast[maxCells];
+        uint64_t flagMember[maxCells], baseMember[maxCells], activeAfter[maxCells], baseAfter[maxCells];
     } factors;
     struct {
-        Mask future[cells];
-        int firstContact[cells], contactOrder[cells], slot[cells], slotLast[cells];
-        uint64_t compactFuture[cells][2];
-        Opening openings[cells];
-        int firstOpening[cells], openingCount[cells];
+        int firstContact[maxCells], contactOrder[maxCells], slot[maxCells], slotLast[maxCells];
+        uint64_t compactFuture[maxCells][signatureCapacity];
+        Opening openings[maxCells];
+        int firstOpening[maxCells], openingCount[maxCells];
     } contacts;
     struct {
-        // 每个分量至多两个字。分量来自不同的已选中心或零区，已付首开至多另占一个。
-        uint64_t withZeros[2 * cells], outgoing[2 * cells], canonical[2 * cells];
-        int offsets[cells];
+        // 分量来自不同的已选中心或零区，已付首开至多另占一个。
+        uint64_t withZeros[signatureCapacity * maxCells], outgoing[signatureCapacity * maxCells], canonical[signatureCapacity * maxCells];
+        int offsets[maxCells];
     } signatures;
     FactorTable table[2];
     ConnectivityPool connectivity[2];
@@ -140,10 +139,10 @@ __declspec(noinline) Frontier::Workspace &Frontier::getWorkspace() {
     return workspace;
 }
 
-void Frontier::makeFactorPlan(const Model &model, FactorPlan &plan) {
+void Frontier::makeFactorPlan(const ModelGraph &model, FactorPlan &plan) {
     Workspace &workspace = getWorkspace();
-    int (&order)[cells] = workspace.factors.order;
-    int (&slotLast)[cells] = workspace.factors.slotLast;
+    int (&order)[maxCells] = workspace.factors.order;
+    int (&slotLast)[maxCells] = workspace.factors.slotLast;
     plan.count = plan.slotCount = 0;
     const auto add = [&](const Scopes &scopes, int start, bool flag) {
         for (int i = start; i < scopes.size(); ++i) {
@@ -173,18 +172,18 @@ void Frontier::makeFactorPlan(const Model &model, FactorPlan &plan) {
     }
 }
 
-int Frontier::solve(const Model &model) {
+int Frontier::solve(const ModelGraph &model) {
     Workspace &workspace = getWorkspace();
     FactorPlan &factors = workspace.factors.plan;
     makeFactorPlan(model, factors);
     Dominance dominance;
     const int q = (int)model.candidates.size;
-    // 普通扫掠的一条线上，活跃因子的所属格只可能来自当前线及相邻两线。
-    // 每格最多一个因子，零区单独建连，所以最多 27 个因子同时占槽。
-    uint64_t (&flagMember)[cells] = workspace.factors.flagMember;
-    uint64_t (&baseMember)[cells] = workspace.factors.baseMember;
-    uint64_t (&activeAfter)[cells] = workspace.factors.activeAfter;
-    uint64_t (&baseAfter)[cells] = workspace.factors.baseAfter;
+    // 活跃因子来自当前线及相邻两线，每线至多 16 格。
+    assert_(factors.slotCount <= 64, "DOM 活跃因子超过一个字");
+    uint64_t (&flagMember)[maxCells] = workspace.factors.flagMember;
+    uint64_t (&baseMember)[maxCells] = workspace.factors.baseMember;
+    uint64_t (&activeAfter)[maxCells] = workspace.factors.activeAfter;
+    uint64_t (&baseAfter)[maxCells] = workspace.factors.baseAfter;
     std::fill_n(flagMember, q, 0);
     std::fill_n(baseMember, q, 0);
     std::fill_n(activeAfter, q, 0);
@@ -200,28 +199,21 @@ int Frontier::solve(const Model &model) {
         }
     }
 
-    Mask (&future)[cells] = workspace.contacts.future;
-    int (&firstContact)[cells] = workspace.contacts.firstContact;
-    std::fill_n(future, q, Mask{0, 0});
+    int (&firstContact)[maxCells] = workspace.contacts.firstContact;
     std::fill_n(firstContact, q, q);
     for (int i = 0; i < q; ++i) {
         for (int other : model.graph[i]) {
             if (other <= i) continue;
-            future[i].set(other);
             firstContact[other] = std::min(firstContact[other], i);
         }
     }
     for (int z = 0; z < model.zero_scopes.size(); ++z) {
         const span<const int> scope = model.zero_scopes[z];
         if (!scope.size) continue;
-        for (int candidate : scope) {
-            firstContact[candidate] = std::min(firstContact[candidate], scope[0]);
-            for (int other : scope)
-                if (other > candidate) future[candidate].set(other);
-        }
+        for (int candidate : scope) firstContact[candidate] = std::min(firstContact[candidate], scope[0]);
     }
-    int (&contactOrder)[cells] = workspace.contacts.contactOrder;
-    int (&connectivitySlot)[cells] = workspace.contacts.slot;
+    int (&contactOrder)[maxCells] = workspace.contacts.contactOrder;
+    int (&connectivitySlot)[maxCells] = workspace.contacts.slot;
     int contactCount = 0;
     for (int i = 0; i < q; ++i) {
         if (firstContact[i] < q) contactOrder[contactCount++] = i;
@@ -230,7 +222,7 @@ int Frontier::solve(const Model &model) {
     std::sort(contactOrder, contactOrder + contactCount, [&](int a, int b) {
         return firstContact[a] != firstContact[b] ? firstContact[a] < firstContact[b] : a < b;
     });
-    int (&slotLast)[cells] = workspace.contacts.slotLast;
+    int (&slotLast)[maxCells] = workspace.contacts.slotLast;
     int slotCount = 0;
     for (int at = 0; at < contactCount; ++at) {
         const int candidate = contactOrder[at];
@@ -240,21 +232,21 @@ int Frontier::solve(const Model &model) {
         slotLast[slot] = candidate;
         connectivitySlot[candidate] = slot;
     }
-    const int signatureWords = slotCount > 64 ? 2 : 1;
-    uint64_t (&compactFuture)[cells][2] = workspace.contacts.compactFuture;
+    const int signatureWords = std::max(1, (slotCount + 63) / 64);
+    uint64_t (&compactFuture)[maxCells][signatureCapacity] = workspace.contacts.compactFuture;
+    const auto addContact = [&](int from, int to) {
+        const int slot = connectivitySlot[to];
+        compactFuture[from][slot / 64] |= uint64_t{1} << (slot % 64);
+    };
     for (int i = 0; i < q; ++i) {
-        compactFuture[i][0] = compactFuture[i][1] = 0;
-        for (int word = 0; word < 2; ++word) {
-            for (uint64_t bits = word ? future[i].high : future[i].low; bits; bits &= bits - 1) {
-                const int slot = connectivitySlot[64 * word + std::countr_zero(bits)];
-                compactFuture[i][slot / 64] |= uint64_t{1} << (slot % 64);
-            }
-        }
+        std::fill_n(compactFuture[i], signatureWords, 0);
+        for (int other : model.graph[i])
+            if (other > i) addContact(i, other);
     }
 
-    Workspace::Opening (&openings)[cells] = workspace.contacts.openings;
-    int (&firstOpening)[cells] = workspace.contacts.firstOpening;
-    int (&openingCount)[cells] = workspace.contacts.openingCount;
+    Workspace::Opening (&openings)[maxCells] = workspace.contacts.openings;
+    int (&firstOpening)[maxCells] = workspace.contacts.firstOpening;
+    int (&openingCount)[maxCells] = workspace.contacts.openingCount;
     std::fill_n(firstOpening, q, -1);
     std::fill_n(openingCount, q, 0);
     for (int z = model.zero_scopes.size() - 1; z >= 0; --z) {
@@ -262,10 +254,12 @@ int Frontier::solve(const Model &model) {
         if (!scope.size) continue;
         const int at = scope[0];
         Workspace::Opening &entry = openings[z];
-        entry = {{0, 0}, firstOpening[at]};
+        entry = {{}, firstOpening[at]};
         for (int candidate : scope) {
             const int slot = connectivitySlot[candidate];
             entry.words[slot / 64] |= uint64_t{1} << (slot % 64);
+            for (int other : scope)
+                if (other > candidate) addContact(candidate, other);
         }
         firstOpening[at] = z;
         ++openingCount[at];
@@ -278,10 +272,10 @@ int Frontier::solve(const Model &model) {
     tables[0].add({0, 0}, FrontierWord().combine(FrontierWord().combine(0, 0), 0), model.three_bv());
     pools[0].reset(0);
 
-    uint64_t (&withZeros)[2 * cells] = workspace.signatures.withZeros;
-    uint64_t (&outgoing)[2 * cells] = workspace.signatures.outgoing;
-    uint64_t (&canonical)[2 * cells] = workspace.signatures.canonical;
-    int (&offsets)[cells] = workspace.signatures.offsets;
+    uint64_t (&withZeros)[signatureCapacity * maxCells] = workspace.signatures.withZeros;
+    uint64_t (&outgoing)[signatureCapacity * maxCells] = workspace.signatures.outgoing;
+    uint64_t (&canonical)[signatureCapacity * maxCells] = workspace.signatures.canonical;
+    int (&offsets)[maxCells] = workspace.signatures.offsets;
     constexpr int noBound = std::numeric_limits<int>::max();
     for (int i = 0; i < q; ++i) {
         FactorTable &table = tables[i & 1];
@@ -332,35 +326,39 @@ int Frontier::solve(const Model &model) {
                         std::sort(outgoing, outgoing + outWords);
                         id = nextPool.intern({outgoing, (size_t)outWords});
                     } else {
-                        const unsigned word = slot >= 0 ? (unsigned)slot / 64 : 0;
+                        const int word = slot >= 0 ? slot / 64 : 0;
                         const uint64_t bit = slot >= 0 ? uint64_t{1} << (slot % 64) : 0;
-                        uint64_t merged[2] = {selected ? compactFuture[i][0] : 0, selected ? compactFuture[i][1] : 0};
+                        uint64_t merged[signatureCapacity]{};
+                        if (selected) std::copy_n(compactFuture[i], signatureWords, merged);
                         int components = 0;
-                        for (int j = 0; j < oldWords; j += 2) {
-                            uint64_t projected[2] = {oldData[j], oldData[j + 1]};
-                            const bool touches = (projected[word] & bit) != 0;
-                            projected[word] &= ~bit;
-                            if (selected && touches) {
-                                merged[0] |= projected[0];
-                                merged[1] |= projected[1];
-                            } else if (projected[0] || projected[1]) {
+                        for (int j = 0; j < oldWords; j += signatureWords) {
+                            const bool join = selected && (oldData[j + word] & bit);
+                            bool remaining = false;
+                            for (int w = 0; w < signatureWords; ++w) {
+                                const uint64_t projected = oldData[j + w] & ~(w == word ? bit : 0);
+                                if (join) merged[w] |= projected;
+                                else outgoing[outWords + w] = projected;
+                                remaining |= projected != 0;
+                            }
+                            if (join) continue;
+                            if (remaining) {
                                 offsets[components++] = outWords;
-                                outgoing[outWords++] = projected[0];
-                                outgoing[outWords++] = projected[1];
+                                outWords += signatureWords;
                             } else ++closed;
                         }
                         if (selected) {
-                            if (merged[0] || merged[1]) {
+                            if (std::any_of(merged, merged + signatureWords, [](uint64_t w) { return w != 0; })) {
                                 offsets[components++] = outWords;
-                                outgoing[outWords++] = merged[0];
-                                outgoing[outWords++] = merged[1];
+                                std::copy_n(merged, signatureWords, outgoing + outWords);
+                                outWords += signatureWords;
                             } else ++closed;
                         }
                         std::sort(offsets, offsets + components, [&](int a, int b) {
-                            return outgoing[a] != outgoing[b] ? outgoing[a] < outgoing[b] : outgoing[a + 1] < outgoing[b + 1];
+                            return std::lexicographical_compare(outgoing + a, outgoing + a + signatureWords,
+                                                                outgoing + b, outgoing + b + signatureWords);
                         });
                         for (int component = 0; component < components; ++component)
-                            std::copy_n(outgoing + offsets[component], 2, canonical + 2 * component);
+                            std::copy_n(outgoing + offsets[component], signatureWords, canonical + signatureWords * component);
                         id = nextPool.intern({canonical, (size_t)outWords});
                     }
                     cached.branch[selected] = {id, closed, FrontierWord().combine(0, id)};

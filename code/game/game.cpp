@@ -7,8 +7,48 @@
 
 namespace mss {
 
+struct Minefield::Workspace {
+    vector<int> order;
+};
+
+__declspec(noinline) Minefield::Workspace &Minefield::getWorkspace() {
+    static thread_local Workspace workspace;
+    return workspace;
+}
+
+U128 Minefield::safeSeed(int count, int mines, U128 seed, int first) {
+    if (mines == 0) return seed;
+    Random candidates(seed.lo, seed.hi);
+    for (;;) {
+        Random random(seed.lo, seed.hi);
+        int position = first;
+        // 洗牌从后向前确定格子。只追踪首点，看它是否落在末尾的安全区。
+        for (int i = count - 1; i >= mines; --i) {
+            const int j = random.next() % (i + 1);
+            if (j == position) return seed;
+            if (i == position) position = j;
+        }
+        // 下一颗候选种子由独立推进的随机流给出，失败后无需跑完洗牌。
+        seed = {candidates.next(), candidates.next()};
+    }
+}
+
+void Minefield::generate(Grid<char> &layout, int mines, Random &random) {
+    const int count = layout.rows() * layout.cols();
+    Workspace &workspace = getWorkspace();
+    vector<int> &order = workspace.order;
+    order.resize(count);
+    for (int i = 0; i < count; ++i) order[i] = i;
+    for (int i = count - 1; i > 0; --i) {
+        const int j = random.next() % (i + 1);
+        std::swap(order[i], order[j]);
+    }
+    for (int i = 0; i < mines; ++i)
+        layout[0][order[i]] = 1;
+}
+
 struct Game::Workspace {
-    vector<ObservedBoard::CellId> order, safe;
+    vector<ObservedBoard::CellId> safe;
     vector<ObservedBoard::Delta::Change> changes;
 };
 
@@ -18,11 +58,11 @@ __declspec(noinline) Game::Workspace &Game::getWorkspace() {
 }
 
 Game::Game(int rows, int cols, int mines, U128 seed, const Position::Config &config, Combination::Pool &combinations)
-    : mines_(rows, cols, 0), seed_(seed), generated_(false), remainingSafe_(rows * cols - mines), state_(State::Running),
+    : mines_(rows, cols, 0), firstCandidate_(seed), generated_(false), remainingSafe_(rows * cols - mines), state_(State::Running),
       positions_(combinations), position_(Position().analyze(ObservedBoard::Result(rows, cols, mines), positions_, config)) {}
 
 Game::Game(const Grid<char> &mines, const ObservedBoard::Result &board, const Position::Config &config, Combination::Pool &combinations)
-    : mines_(mines), seed_(), generated_(true), remainingSafe_(board.cells.rows() * board.cells.cols() - board.totalMines),
+    : mines_(mines), firstCandidate_(), generated_(true), remainingSafe_(board.cells.rows() * board.cells.cols() - board.totalMines),
       state_(State::Running), positions_(combinations), position_(Position().analyze(board, positions_, config)) {
     for (int row = 0; row < board.cells.rows(); ++row) for (int col = 0; col < board.cells.cols(); ++col)
         remainingSafe_ -= ObservedBoard().isNumber(board.cells[row][col]);
@@ -34,7 +74,7 @@ void Game::reset(U128 seed) {
     positions_.clear();
     position_ = Position().analyze(ObservedBoard::Result(rows, cols, mines), positions_, position_.config());
     mines_.fill(0);
-    seed_ = seed;
+    firstCandidate_ = seed;
     generated_ = false;
     remainingSafe_ = rows * cols - mines;
     state_ = State::Running;
@@ -43,25 +83,14 @@ void Game::reset(U128 seed) {
 Game::State Game::state() const { return state_; }
 const Position::Result &Game::position() const { return position_; }
 
-void Game::generate(int first) {
-    const int cols = mines_.cols();
-    Workspace &workspace = getWorkspace();
-    vector<ObservedBoard::CellId> &order = workspace.order;
-    const int count = mines_.rows() * cols - 1;
-    order.resize(count);
-    for (int i = 0; i < count; ++i)
-        order[i] = i + (i >= first);
-
-    Random random(seed_.lo, seed_.hi);
-    for (int i = count - 1; i > 0; --i) {
-        const int j = random.next() % (i + 1);
-        std::swap(order[i], order[j]);
-    }
-    for (int i = 0; i < position_.board.totalMines; ++i) {
-        const int cell = order[i];
-        mines_[cell / cols][cell % cols] = 1;
-    }
+U128 Game::generate(int first) {
+    const int totalMines = position_.board.totalMines;
+    Minefield minefield;
+    const U128 seed = minefield.safeSeed(mines_.rows() * mines_.cols(), totalMines, firstCandidate_, first);
+    Random random(seed.lo, seed.hi);
+    minefield.generate(mines_, totalMines, random);
     generated_ = true;
+    return seed;
 }
 
 int Game::play(int x, int y) {

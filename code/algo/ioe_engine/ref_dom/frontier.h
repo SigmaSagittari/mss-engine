@@ -11,6 +11,7 @@
 
 namespace mss::ioe::ref_dom {
 
+constexpr int signatureCapacity = (maxCells + 63) / 64;
 struct FrontierWord {
     int populationCount(uint64_t bits) const {
 #if defined(__POPCNT__) || defined(__aarch64__)
@@ -133,13 +134,13 @@ private:
 };
 
 struct Frontier {
-    int solve(const Model &model);
+    int solve(const ModelGraph &model);
 
 private:
     struct Workspace;
     struct FactorPlan;
     Workspace &getWorkspace();
-    void makeFactorPlan(const Model &model, FactorPlan &plan);
+    void makeFactorPlan(const ModelGraph &model, FactorPlan &plan);
 };
 
 } // 命名空间 mss::ioe::ref_dom

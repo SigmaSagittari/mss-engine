@@ -532,7 +532,7 @@ IoeBruteForce::RootResult Search::filterRoot(const ObservedBoard::Result &board,
     positions.clear();
     Position position;
     Position::CheckedResult checked = position.analyzeChecked(board, positions, positionConfig, positions.probabilities);
-    if (checked.error) return {Status::InvalidBoard, 0, 0, 0};
+    if (checked.error != Position::CheckError::None) return {Status::InvalidBoard, 0, 0, 0};
     const long double candidates = position.countWays(checked.result, positions);
     if (candidates > candidateLimit) return {Status::CandidateLimit, candidates, 0, 0};
 

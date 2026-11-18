@@ -1,7 +1,12 @@
-function setMessage(text, kind = "") {
-    messageElement.hidden = !text;
-    messageElement.textContent = text;
-    messageElement.className = `message ${kind}`;
+function setMessage(element, key = "", kind = "", ...args) {
+    element.hidden = !key;
+    setLocalizedText(element, key, ...args);
+    element.className = `message ${kind}`;
+}
+
+function setErrorMessage(element, error) {
+    const message = localizedError(error);
+    setMessage(element, message.key, "error", ...message.args);
 }
 
 function currentBoardString() {
@@ -23,17 +28,6 @@ function selectAnalysisCell(cell) {
         boardElement.children[hoveredCell].classList.add("hovered");
 }
 
-function setDifficultyValues(value) {
-    const size = presets[value];
-    if (size) {
-        const [rows, cols, mines] = size;
-        document.getElementById("rows").value = rows;
-        document.getElementById("cols").value = cols;
-        document.getElementById("mines").value = mines;
-    }
-    customSettings.hidden = value !== "custom";
-}
-
 function formatCount(value) {
     const scientific = typeof value === "string" && value.includes("e") ? value : Number(value).toExponential(6);
     const [mantissa, exponentText] = scientific.split("e");
@@ -51,34 +45,32 @@ function formatPercent(value) {
 }
 
 function renderAnalysisResult() {
-    const now = performance.now();
-    let summary = "";
-    let recommended = [];
-    let safe = false;
-    if (search.result || search.controller) {
-        const result = search.result;
-        const speed = search.controller && result && !result.paused && !result.finished ? (result.nodes - search.samples[0].count) * 1000 / Math.max(1, now - search.samples[0].time) : 0;
-        const engine = result?.engine === "BruteForce" ? "精确枚举" : result?.safe ? "确定安全" : "Anytime";
-        summary = result ? `${engine} · ${formatCount(result.nodes)} 节点 · ${formatCount(Math.round(speed))} 节点/s · ${result.finished ? "已完成" : result.paused ? "已暂停" : "运行中"}` : "Anytime · 正在开始";
-        if (result?.engine === "Anytime") summary += ` · 全部候选完成第 ${result.completedDepth} 层`;
-        safe = result?.safe === true;
-        if (safe) recommended = result.moves.map((move) => move.cell);
-        else if (result && result.recommended >= 0) recommended = [result.recommended];
-    } else if (suggestionResult) {
-        const result = suggestionResult;
-        const names = { Finished: "棋盘已完成", Safe: "确定安全", LowRisk: "LowRisk", Anytime: "Anytime", BruteForce: "精确枚举" };
-        summary = `${names[result.engine]} · 分析耗时 ${result.elapsedMs.toFixed(1)} ms`;
-        if (result.engine === "Anytime" || result.engine === "BruteForce") summary += ` · ${formatCount(result.nodes)} 节点`;
-        recommended = result.recommended;
-        safe = result.engine === "Safe";
-    }
-    analysisSummary.hidden = !summary;
-    analysisSummary.textContent = summary;
-    analysisCountRow.hidden = !candidateCount;
-    analysisCount.textContent = candidateCount ? (ioeResultPanel.hidden ? formatCount(candidateCount) : Number(candidateCount).toLocaleString()) : "";
+    const result = search.result;
+    const running = search.controller && result && !result.paused && !result.finished && !result.limitReached;
+    let status = "";
+    if (result?.finished) status = result.engine === SearchEngine.BruteForce ? "exactComplete" : "searchComplete";
+    else if (result?.limitReached) status = "nodeLimitReached";
+    else if (result?.paused) status = "searchPaused";
+    else if (search.controller) status = result ? "searching" : "startingSearch";
+    const sample = search.samples[0];
+    const speed = running ? (result.nodes - sample.count) * 1000 / Math.max(1, performance.now() - sample.time) : 0;
+    const safe = result?.safe === true;
+    const recommended = safe ? result.moves.map((move) => move.cell) : result?.recommended >= 0 ? [result.recommended] : [];
+    analysisSummary.hidden = !status;
+    searchStatus.textContent = status ? tr(status) : "";
+    searchCount.textContent = result?.nodes > 0 ? tr("nodeCount", formatCount(result.nodes)) : "";
+    searchSpeed.textContent = speed > 0 ? tr("nodeSpeed", formatCount(Math.round(speed))) : "";
+    searchDepth.textContent = result?.completedDepth > 0 ? tr("completedDepth", result.completedDepth) : "";
+    boardCountRow.hidden = !candidateCount;
+    boardCount.textContent = candidateCount ? (ioeResultPanel.hidden ? formatCount(candidateCount) : Number(candidateCount).toLocaleString(locale)) : "";
     analysisRecommendation.hidden = recommended.length === 0;
     const state = activeState();
-    analysisRecommendation.textContent = safe ? `全部安全格（${recommended.length} 个）` : recommended.length ? `推荐：${recommended.map((cell) => `第 ${Math.floor(cell / state.cols) + 1} 行，第 ${cell % state.cols + 1} 列`).join("；")}` : "";
+    analysisRecommendation.textContent = safe ? tr("safeCells", recommended.length) :
+        recommended.length ? tr("recommendedCells", recommended.map(cell => cellPosition(cell, state))) : "";
+}
+
+function cellPosition(cell, state) {
+    return tr("cellPosition", Math.floor(cell / state.cols) + 1, cell % state.cols + 1);
 }
 
 function renderObserve(branches) {
@@ -96,7 +88,7 @@ function renderObserve(branches) {
             row = body.insertRow();
             row.insertCell(); row.insertCell(); row.insertCell();
         }
-        row.cells[0].textContent = digit === 9 ? "爆炸" : `数字 ${digit}`;
+        row.cells[0].textContent = digit === 9 ? tr("mineHit") : tr("numberOutcome", digit);
         row.cells[1].textContent = formatPercent(observation[digit]);
         row.cells[2].hidden = !hasScores;
         if (hasScores) {
@@ -112,7 +104,7 @@ function renderDetail() {
     detailPanel.hidden = mode !== "analysis" || selectedCell < 0;
     if (detailPanel.hidden) return;
     const state = activeState();
-    detailPosition.textContent = `第 ${Math.floor(selectedCell / state.cols) + 1} 行，第 ${selectedCell % state.cols + 1} 列`;
+    detailPosition.textContent = cellPosition(selectedCell, state);
     detailStatus.hidden = !detailStatus.textContent;
     detailContent.hidden = !detailData;
     if (detailData) detailRisk.textContent = formatPercent(detailData.probability);
@@ -126,7 +118,7 @@ function renderDetail() {
         for (const { mines, ways, probability } of counts) {
             const row = body.insertRow();
             row.insertCell().textContent = mines;
-            row.insertCell().textContent = Number(ways) < 1e15 ? Number(ways).toLocaleString() : ways;
+            row.insertCell().textContent = Number(ways) < 1e15 ? Number(ways).toLocaleString(locale) : ways;
             row.insertCell().textContent = formatPercent(probability);
         }
     }
@@ -143,31 +135,24 @@ function renderDetail() {
             const probability = formatPercent(counts[k]);
             if (Number.parseFloat(probability) === 0) continue;
             const row = document.createElement("div");
-            row.textContent = `命中 ${k} 个限制：${probability}`;
+            row.textContent = tr("restrictionsHit", k, probability);
             distribution.appendChild(row);
         }
         distribution.previousElementSibling.hidden = distribution.childElementCount === 0;
     }
-    let engine = null;
-    let move = null;
-    if (search.result) {
-        engine = search.result.engine;
-        move = search.moves.get(selectedCell);
-    } else if (suggestionResult) {
-        engine = suggestionResult.engine;
-        move = suggestionMoves.get(selectedCell);
-    }
+    const engine = search.result?.engine;
+    const move = search.moves.get(selectedCell);
     detailScoreRow.hidden = !move;
-    const names = { Safe: "确定安全", LowRisk: "LowRisk", Anytime: "Anytime", BruteForce: "精确枚举" };
-    detailEngine.textContent = move ? names[engine] : "";
+    const names = { [SearchEngine.Safe]: "guaranteedSafe", [SearchEngine.Anytime]: "anytime", [SearchEngine.BruteForce]: "exactEnumeration" };
+    detailEngine.textContent = move ? tr(names[engine]) : "";
     if (move) {
-        const labels = { Safe: "安全率", LowRisk: "安全率", Anytime: "当前评分", BruteForce: "精确胜率" };
-        detailScoreLabel.textContent = labels[engine];
+        const labels = { [SearchEngine.Safe]: "safeChance", [SearchEngine.Anytime]: "currentScore", [SearchEngine.BruteForce]: "exactWinRate" };
+        detailScoreLabel.textContent = tr(labels[engine]);
         const score = move.value;
         detailScore.textContent = score === null ? "—" : formatPercent(score);
     }
-    renderObserve(engine === "Anytime" && move ? move.branches : []);
-    const history = engine === "Anytime" && move ? move.history : [];
+    renderObserve(engine === SearchEngine.Anytime && move ? move.branches : []);
+    const history = engine === SearchEngine.Anytime && move ? move.history : [];
     searchHistory.hidden = history.length === 0;
     detailSide.hidden = searchHistory.hidden;
     detailColumns.classList.toggle("split", !detailSide.hidden);
@@ -184,7 +169,7 @@ function renderDetail() {
 
 function showDetail(data) {
     detailData = data;
-    detailStatus.textContent = "";
+    setLocalizedText(detailStatus);
     renderDetail();
 }
 
@@ -192,13 +177,17 @@ function clearDetail() {
     ++detailRequest;
     selectedCell = -1;
     detailData = null;
-    detailStatus.textContent = "";
+    setLocalizedText(detailStatus);
     detailPanel.hidden = true;
 }
 
+let ioeResult = null;
+
 function clearIoeResult() {
+    ioeResult = null;
     ioeMove = null;
     ioeResultPanel.hidden = true;
+    setMessage(analysisMessage, "");
 }
 
 const ioeBars = document.querySelector("#ioe-distribution ul");
@@ -231,17 +220,18 @@ function showIoeResult(result) {
     const buckets = result.winningIoe;
     if (buckets.some(bucket => bucket.length !== 4)) {
         clearIoeResult();
-        throw new Error("载入的 Wasm 版本过旧，请用 Ctrl+F5 刷新页面后重新分析。");
+        throw new UiError("outdatedWasm");
     }
+    ioeResult = result;
     candidateCount = result.candidateCount;
     const formatRate = count => {
-        const percent = (count / result.candidateCount).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 2 });
-        return `${count.toLocaleString()}(${percent})`;
+        const percent = (count / result.candidateCount).toLocaleString(locale, { style: "percent", maximumFractionDigits: 2 });
+        return `${count.toLocaleString(locale)}(${percent})`;
     };
     document.getElementById("ioe-wins").textContent = `${formatRate(result.wins)}\u00a0/\u00a0${formatRate(result.rootEligible)}`;
     const score = result.expectedScore === null ? Infinity : result.expectedScore;
     const notation = score >= 1e8 ? "scientific" : "standard";
-    document.getElementById("ioe-score").textContent = score.toLocaleString(undefined, { notation, maximumSignificantDigits: 8 });
+    document.getElementById("ioe-score").textContent = score.toLocaleString(locale, { notation, maximumSignificantDigits: 8 });
     const figure = document.getElementById("ioe-distribution");
     if (buckets.length) {
         const maxCount = Math.max(...buckets.map(([, , won, discarded]) => won + discarded));
@@ -249,11 +239,11 @@ function showIoeResult(result) {
         const height = count => 100 * Math.log1p(count) / Math.log1p(axisMax);
         const axis = figure.querySelector(".ioe-y-axis");
         const ticks = document.createDocumentFragment();
-        const maxLabel = axisMax.toLocaleString();
+        const maxLabel = axisMax.toLocaleString(locale);
         axis.style.minWidth = `${maxLabel.length + 1}ch`;
         for (let count = 0; count <= axisMax; count = count ? count * 10 : 1) {
             const tick = document.createElement("span");
-            tick.textContent = count.toLocaleString();
+            tick.textContent = count.toLocaleString(locale);
             tick.style.top = `${100 - height(count)}%`;
             ticks.append(tick);
         }
@@ -263,7 +253,7 @@ function showIoeResult(result) {
         buckets.sort(([a, b], [c, d]) => a / b - c / d);
         for (const [numerator, denominator, won, discarded] of buckets) {
             const label = document.createElement("span");
-            label.textContent = (numerator / denominator).toLocaleString(undefined, { style: "percent", maximumFractionDigits: 2 });
+            label.textContent = (numerator / denominator).toLocaleString(locale, { style: "percent", maximumFractionDigits: 2 });
             const track = document.createElement("div");
             track.className = "ioe-bar-track";
             const total = won + discarded;
@@ -285,10 +275,10 @@ function showIoeResult(result) {
             }
             const value = document.createElement("span");
             value.className = "ioe-bar-value";
-            value.textContent = total.toLocaleString();
+            value.textContent = total.toLocaleString(locale);
             track.append(value);
             const row = document.createElement("li");
-            row.title = `${label.textContent} · 总共 ${value.textContent} 张 · 实际达标 ${won.toLocaleString()} 张`;
+            row.title = tr("ioeBar", label.textContent, value.textContent, numberText(won));
             row.setAttribute("aria-label", row.title);
             row.append(track, label);
             rows.append(row);
@@ -299,17 +289,6 @@ function showIoeResult(result) {
     ioeResultPanel.hidden = false;
     renderAnalysisResult();
     if (buckets.length) fitIoeLabels();
-}
-
-function clearSuggestion() {
-    suggestionResult = null;
-    clearIoeResult();
-    for (const cell of suggestionMoves.keys())
-        boardElement.children[cell].classList.remove("analysis-candidate", "analysis-best");
-    suggestionMoves.clear();
-    endgameBestCells.clear();
-    renderAnalysisResult();
-    renderDetail();
 }
 
 function clearPressedCells() {
@@ -349,24 +328,22 @@ function updatePressedCells(cell) {
 function updateCell(button, cell, state) {
     const value = state.cells[cell];
     const isHidden = value === "?" || value === "G";
-    const searchMove = mode === "analysis" ? search.moves.get(cell) : null;
+    const searchMove = search.moves.get(cell);
     const showSearch = (isHidden || value === "S") && searchMove;
-    const suggested = suggestionMoves.get(cell);
-    const showSuggestion = (isHidden || value === "S") && suggested;
     const ioeTarget = ioeMove?.cell === cell;
     const playerFlag = mode === "play" ? isHidden && flags.has(cell) : state.playerFlags.has(cell);
-    const ioeFlag = !playerFlag && ioeMove?.kind === "chord" && ioeMove.addFlags.includes(cell);
-    const ioeUnflag = ioeMove?.kind === "chord" && ioeMove.removeFlags.includes(cell);
+    const ioeFlag = !playerFlag && ioeMove?.kind === IoeAction.Chord && ioeMove.addFlags.includes(cell);
+    const ioeUnflag = ioeMove?.kind === IoeAction.Chord && ioeMove.removeFlags.includes(cell);
     // 先算出最终样式和文字；概率刷新时只写变化项，不清空再恢复整格。
     let className = "cell";
     let text = "";
     let best = false;
     if (value === "G")
         className += " analysis-goal";
-    if (!showSearch && !showSuggestion) button.removeAttribute("data-analysis-detail");
+    if (!showSearch) button.removeAttribute("data-analysis-detail");
     button.removeAttribute("title");
-    button.setAttribute("aria-label", `第 ${Math.floor(cell / state.cols) + 1} 行，第 ${cell % state.cols + 1} 列`);
-    if (value >= "0" && value <= "8")
+    button.setAttribute("aria-label", cellPosition(cell, state));
+    if ((value >= "0" && value <= "8") || pressedCells.has(cell))
         className += " open";
     if (value >= "1" && value <= "8")
         className += ` number-${value}`;
@@ -384,24 +361,15 @@ function updateCell(button, cell, state) {
         if (cell === playState.lostCell)
             className += " hit-mine";
         text = "✹";
-    } else if (showSearch || showSuggestion) {
+    } else if (showSearch) {
         className += " analysis-candidate";
-        let score;
-        let detail;
-        if (showSearch) {
-            score = searchMove.value;
-            detail = search.result.engine === "BruteForce" ? "精确" : `${searchMove.depth} 层`;
-            best = search.result.safe || cell === search.result.recommended;
-            button.title = `评分 ${(Number(score) * 100).toFixed(4)}%，${detail}`;
-        } else {
-            score = suggested.value;
-            detail = suggested.depth === undefined ? `${(Number(suggested.probability) * 100).toFixed(1)}%` : `${suggested.depth} 层`;
-            best = endgameBestCells.has(cell);
-            button.title = `评分 ${(Number(score) * 100).toFixed(4)}%，${suggested.depth === undefined ? "雷率 " : ""}${detail}`;
-        }
+        const score = searchMove.value;
+        const detail = search.result.engine === SearchEngine.BruteForce ? tr("exact") : tr("moveDepth", searchMove.depth);
+        best = search.result.safe || cell === search.result.recommended;
+        button.title = tr("moveScore", (Number(score) * 100).toFixed(4), detail);
         text = score === null ? "—" : `${(Number(score) * 100).toFixed(1)}%`;
         button.dataset.analysisDetail = detail;
-        button.setAttribute("aria-label", `${button.getAttribute("aria-label")}，${button.title}`);
+        button.setAttribute("aria-label", tr("cellDescription", button.getAttribute("aria-label"), button.title));
     } else if (isHidden && probabilityDisplay.checked && (probabilities || probabilityPending)) {
         className += " probability-cell";
         if (probabilities) {
@@ -428,18 +396,23 @@ function updateCell(button, cell, state) {
         className += " hovered";
     if (best || ioeTarget)
         className += " analysis-best";
+    if (mode === "play" && state.firstMove && isHidden && state.effOpening?.has(cell)) {
+        className += " eff-opening";
+        button.setAttribute("aria-label", tr("cellDescription", button.getAttribute("aria-label"), tr("recommendedOpening")));
+    }
     if (ioeTarget) {
-        const action = { open: "左键", chord: "双击", unflag: "拔旗" }[ioeMove.kind];
-        button.setAttribute("aria-label", `${button.getAttribute("aria-label")}，IOE 推荐${action}`);
+        const action = { [IoeAction.Open]: "ioeOpen", [IoeAction.Chord]: "ioeChord", [IoeAction.Unflag]: "ioeUnflag" }[ioeMove.kind];
+        button.setAttribute("aria-label", tr("cellDescription", button.getAttribute("aria-label"), tr(action)));
     } else if (ioeFlag) {
-        button.setAttribute("aria-label", `${button.getAttribute("aria-label")}，IOE 推荐插旗`);
+        button.setAttribute("aria-label", tr("cellDescription", button.getAttribute("aria-label"), tr("ioeFlag")));
     } else if (ioeUnflag) {
-        button.setAttribute("aria-label", `${button.getAttribute("aria-label")}，IOE 推荐拔旗`);
+        button.setAttribute("aria-label", tr("cellDescription", button.getAttribute("aria-label"), tr("ioeUnflag")));
     }
     if (button.className !== className)
         button.className = className;
     if (button.textContent !== text)
         button.textContent = text;
+    button.tabIndex = mode === "play" || cell === Math.max(0, selectedCell) ? 0 : -1;
 }
 
 function makeCell(cell, state) {
@@ -458,6 +431,7 @@ function makeCell(cell, state) {
     button.addEventListener("click", (event) => {
         if (mode === "analysis") {
             selectedCell = cell;
+            button.focus({ preventScroll: true });
             requestDetail(cell);
             render();
         } else if (event.detail === 0) {
@@ -484,28 +458,35 @@ function render() {
     } else
         for (let cell = 0; cell < state.cells.length; ++cell)
             updateCell(boardElement.children[cell], cell, state);
-    document.getElementById("play-mode").classList.toggle("active", mode === "play");
-    document.getElementById("analysis-mode").classList.toggle("active", mode === "analysis");
-    document.getElementById("play-actions").hidden = mode !== "play";
-    document.getElementById("play-until-no-safe").disabled = operationBusy || playState.lost || playState.won;
-    document.getElementById("endgame-analysis").disabled = operationBusy || (mode === "play" && (playState.lost || playState.won));
+    const playing = mode === "play";
+    const finished = playing && (state.lost || state.won);
+    document.getElementById("play-mode").checked = playing;
+    document.getElementById("analysis-mode").checked = !playing;
+    for (const id of ["play-mode", "analysis-mode", "open-settings", "new-game", "board-data"])
+        document.getElementById(id).disabled = operationBusy;
+    boardElement.inert = operationBusy;
+    document.getElementById("new-game").hidden = !playing;
+    const autoPlay = document.getElementById("play-until-no-safe");
+    autoPlay.hidden = !playing;
+    autoPlay.disabled = operationBusy || finished;
     const ioeAnalysis = document.getElementById("ioe-analysis");
     ioeAnalysis.hidden = !isBeginner(state);
-    ioeAnalysis.disabled = operationBusy || (mode === "play" && (playState.lost || playState.won));
-    rngSeedInput.disabled = mode !== "play";
-    regenerateSeedButton.disabled = mode !== "play";
-    importBoardStringButton.disabled = mode !== "analysis";
-    document.getElementById("board-status").textContent = mode === "play" ? playState.lost ? "本局结束" : playState.won ? "已获胜" : "游玩模式" : "分析模式";
-    const marked = (mode === "play" ? flags : state.playerFlags).size;
-    document.getElementById("mine-counter").textContent = `${state.mines - marked} 雷`;
+    ioeAnalysis.disabled = operationBusy || finished;
+    document.getElementById("board-status").textContent = tr(playing ? state.lost ? "gameOver" : state.won ? "victory" : "playBoard" : "analysisDraft");
+    const boardMeta = document.getElementById("board-meta");
+    boardMeta.hidden = playing;
+    if (!playing) boardMeta.textContent = tr("boardDimensions", state.cols, state.rows, state.mines);
+    const remaining = state.mines - (playing ? flags : state.playerFlags).size;
+    document.getElementById("mine-counter").textContent = playing ? tr("boardDimensions", state.cols, state.rows, remaining) : tr("remainingMines", remaining);
+    const editor = document.getElementById("cell-editor");
+    editor.hidden = playing;
+    if (!playing) {
+        editor.disabled = operationBusy || selectedCell < 0;
+        const editTarget = document.getElementById("edit-target");
+        editTarget.hidden = selectedCell < 0;
+        if (!editTarget.hidden) editTarget.textContent = cellPosition(selectedCell, state);
+        for (const key of editor.querySelectorAll("[data-value]"))
+            key.setAttribute("aria-pressed", String(key.dataset.value === state.cells[selectedCell]));
+    }
     search.render();
-}
-
-function showSuggestion(result, elapsedMs) {
-    suggestionResult = { ...result, elapsedMs };
-    suggestionMoves = new Map(result.moves.map((move) => [move.cell, move]));
-    endgameBestCells = new Set(result.recommended);
-    candidateCount = result.candidateCount;
-    renderAnalysisResult();
-    renderDetail();
 }

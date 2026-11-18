@@ -10,56 +10,66 @@
 <body>
     <header class="topbar">
         <div class="brand">mss<span>__MSS_VERSION__</span></div>
-        <label class="difficulty-label" for="difficulty">盘面</label>
-        <select id="difficulty">
-            <option value="beginner">初级 9×9 / 10</option>
-            <option value="intermediate">中级 16×16 / 40</option>
-            <option value="advanced" selected>高级 30×16 / 99</option>
-            <option value="custom">自定义</option>
-        </select>
-        <div id="custom-settings" class="custom-settings" hidden>
-            <label>行 <input id="rows" type="number" min="1" max="100" value="16"></label>
-            <label>列 <input id="cols" type="number" min="1" max="100" value="30"></label>
-            <label>雷 <input id="mines" type="number" min="0" value="99"></label>
+        <fieldset class="mode-tabs">
+            <legend class="sr-only" data-i18n="workspace"></legend>
+            <input id="play-mode" type="radio" name="workspace" checked><label for="play-mode" data-i18n="play"></label>
+            <input id="analysis-mode" type="radio" name="workspace"><label for="analysis-mode" data-i18n="analysis"></label>
+        </fieldset>
+        <div class="actions">
+            <button id="play-until-no-safe" data-i18n="openSafe"></button>
+            <button id="anytime-search" data-i18n="startSearch"></button>
+            <button id="ioe-analysis" hidden data-i18n="analyzeIoe"></button>
+            <button id="new-game" class="primary" aria-haspopup="dialog" data-i18n="newGame"></button>
+            <button id="board-data" aria-haspopup="dialog" data-i18n="boardData"></button>
+            <button id="open-settings" class="settings-button" aria-haspopup="dialog" data-i18n-aria-label="settings" data-i18n-title="settings">
+                <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
+                    <path d="M20 9.5 22.4 10.2 22.4 13.8 20 14.5 19.4 15.9 20.6 18 18 20.6 15.9 19.4 14.5 20 13.8 22.4 10.2 22.4 9.5 20 8.1 19.4 6 20.6 3.4 18 4.6 15.9 4 14.5 1.7 13.9 1.7 10.2 4 9.5 4.6 8.1 3.4 6 6 3.4 8.1 4.6 9.5 4 10.1 1.7 13.8 1.6 14.5 4 15.9 4.6 18 3.4 20.6 6 19.4 8.1Z"/>
+                    <circle cx="12" cy="12" r="3.6"/>
+                </svg>
+            </button>
         </div>
-        <button id="new-game" class="primary">新游戏</button>
-        <div class="mode-tabs" role="tablist">
-            <button id="play-mode" class="mode active" role="tab">游玩</button>
-            <button id="analysis-mode" class="mode" role="tab">分析</button>
-        </div>
-        <button id="endgame-analysis" class="secondary">招法分析</button>
-        <button id="ioe-analysis" class="secondary" hidden>分析 IOE</button>
-        <button id="anytime-search" class="secondary" hidden>开始搜索</button>
-        <div id="play-actions" class="play-actions">
-            <button id="play-until-no-safe">开到无安全格</button>
-        </div>
-        <button id="open-settings" class="settings-button">设置</button>
     </header>
     <main>
         <section class="game-area">
-            <div class="board-heading">
-                <div id="board-status">正在载入盘面…</div>
-                <div id="mine-counter"></div>
+            <div class="board-title">
+                <h1 id="board-status" data-i18n="playBoard"></h1>
+                <span id="mine-counter"></span>
+                <div id="board-meta" class="muted"></div>
             </div>
             <div class="board-scroll"><div id="board" class="board" role="grid"></div></div>
+            <fieldset id="cell-editor" hidden>
+                <legend data-i18n="editCell"></legend>
+                <span id="edit-target" hidden></span>
+                <div class="edit-keys" data-i18n-aria-label="cellContents">
+                    <button data-value="0">0</button><button data-value="1">1</button><button data-value="2">2</button><button data-value="3">3</button><button data-value="4">4</button><button data-value="5">5</button><button data-value="6">6</button><button data-value="7">7</button><button data-value="8">8</button>
+                    <button data-value="?"><span data-i18n="unknown"></span> <kbd>H</kbd></button><button data-value="S"><span data-i18n="safe"></span> <kbd>S</kbd></button><button data-value="M"><span data-i18n="mine"></span> <kbd>M</kbd></button><button data-value="G"><span data-i18n="candidate"></span> <kbd>G</kbd></button>
+                </div>
+            </fieldset>
         </section>
         <aside class="analysis-sidebar">
+            <section class="details">
+                <h2 data-i18n="boardStatus"></h2>
+                <div id="board-message" class="message" aria-live="polite" hidden></div>
+                <div id="board-count-row" class="candidate-row" hidden><span data-i18n="layoutCount"></span><strong id="board-count"></strong></div>
+            </section>
             <section id="analysis-result" class="details">
-                <h2>分析结果</h2>
-                <div id="message" class="message" aria-live="polite" hidden></div>
-                <div id="analysis-summary" class="muted" hidden></div>
-                <div id="analysis-count-row" class="candidate-row" hidden><span>可行摆法数</span><strong id="analysis-count"></strong></div>
+                <h2 data-i18n="results"></h2>
+                <div id="analysis-message" class="message" aria-live="polite" hidden></div>
+                <div id="analysis-summary" class="muted" hidden>
+                    <strong id="search-status"></strong>
+                    <div class="search-metrics"><span id="search-count"></span><span id="search-speed"></span><span id="search-depth"></span></div>
+                </div>
                 <div id="analysis-recommendation" class="recommendation" hidden></div>
                 <div id="ioe-result" hidden>
-                    <div class="candidate-row"><span>IOE ≥ 200%（实际 / 可达）</span><strong id="ioe-wins"></strong></div>
-                    <div class="candidate-row"><span>加权评分</span><strong id="ioe-score"></strong></div>
+                    <div class="candidate-row"><span data-i18n="ioeRate"></span><strong id="ioe-wins"></strong></div>
+                    <div class="candidate-row"><span data-i18n="weightedScore"></span><strong id="ioe-score"></strong></div>
                     <figure id="ioe-distribution" class="ioe-distribution" hidden>
-                        <figcaption>IOE 分布（≥ 200%）</figcaption>
+                        <figcaption data-i18n="ioeDistribution"></figcaption>
                         <div class="ioe-legend">
-                            <span class="ioe-won" title="按此策略实际达到的 IOE">实际达标</span>
-                            <span class="ioe-discarded" title="按已知雷盘时可达到的最高 IOE">能达标但被舍弃</span>
+                            <span class="ioe-won" data-i18n-title="ioeReachedTip" data-i18n="ioeReached"></span>
+                            <span class="ioe-discarded" data-i18n-title="ioeReachableTip" data-i18n="ioeDiscarded"></span>
                         </div>
-                        <div class="ioe-y-label">摆法数（对数）</div>
+                        <div class="ioe-y-label" data-i18n="layoutLog"></div>
                         <div class="ioe-chart">
                             <div class="ioe-y-axis" aria-hidden="true"></div>
                             <div class="ioe-plot"><ul></ul></div>
@@ -68,122 +78,175 @@
                     </figure>
                 </div>
             </section>
-            <section id="cell-detail" class="details" aria-label="格子详情" hidden>
+            <section id="cell-detail" class="details" data-i18n-aria-label="cellDetails" hidden>
                 <div class="detail-heading"><h2 id="detail-position"></h2><span id="detail-engine"></span></div>
                 <div id="detail-status" class="muted" hidden></div>
                 <div class="detail-metrics">
-                    <div id="detail-content" hidden><span>雷率</span><strong id="detail-risk"></strong></div>
+                    <div id="detail-content" hidden><span data-i18n="mineProbability"></span><strong id="detail-risk"></strong></div>
                     <div id="detail-score-row" hidden><span id="detail-score-label"></span><strong id="detail-score"></strong></div>
                 </div>
                 <div id="detail-columns" class="detail-columns">
                     <table id="observe-result" class="detail-table" hidden>
-                        <caption>Observe</caption>
-                        <thead><tr><th>结局</th><th>概率</th><th id="observe-score-heading" hidden>子评分</th></tr></thead>
+                        <caption data-i18n="observe"></caption>
+                        <thead><tr><th data-i18n="outcome"></th><th data-i18n="probability"></th><th id="observe-score-heading" hidden data-i18n="childScore"></th></tr></thead>
                         <tbody></tbody>
                     </table>
                     <div id="detail-side" class="detail-side" hidden>
                         <table id="anytime-search-history" class="detail-table" hidden>
-                            <caption>各层评分</caption>
-                            <thead><tr><th>层</th><th>评分</th></tr></thead>
+                            <caption data-i18n="scoreHistory"></caption>
+                            <thead><tr><th data-i18n="depth"></th><th data-i18n="score"></th></tr></thead>
                             <tbody></tbody>
                         </table>
                     </div>
                 </div>
                 <table id="detail-group-mines" class="detail-table" hidden>
                     <caption></caption>
-                    <thead><tr><th scope="col">组内雷数</th><th scope="col">组内摆法数</th><th scope="col">概率</th></tr></thead>
+                    <thead><tr><th scope="col" data-i18n="groupMines"></th><th scope="col" data-i18n="groupWays"></th><th scope="col" data-i18n="probability"></th></tr></thead>
                     <tbody></tbody>
                 </table>
-                <section id="detail-long-term-risk" aria-label="长期风险" hidden>
-                    <h3>LTR 长期风险（已知此格是雷）</h3>
-                    <div><span id="detail-risk-body-union"></span> 命中本体死猜</div>
-                    <div>其余情况（未命中本体）：</div>
+                <section id="detail-long-term-risk" data-i18n-aria-label="longTermRisk" hidden>
+                    <h3 data-i18n="riskGivenMine"></h3>
+                    <div><span id="detail-risk-body-union"></span> <span data-i18n="riskBody"></span></div>
+                    <div data-i18n="riskRemainder"></div>
                     <div id="detail-risk-restriction-distribution"></div>
                 </section>
             </section>
         </aside>
     </main>
+    <dialog id="new-dialog" aria-labelledby="new-title">
+        <form id="new-form">
+            <div class="settings-title"><h2 id="new-title" data-i18n="newGame"></h2><button type="button" data-close data-i18n="cancel"></button></div>
+            <div class="dialog-body">
+                <label class="settings-row"><span data-i18n="difficulty"></span><select id="difficulty">
+                    <option value="beginner" data-i18n="beginner"></option>
+                    <option value="intermediate" data-i18n="intermediate"></option>
+                    <option value="advanced" selected data-i18n="advanced"></option>
+                    <option value="custom" data-i18n="custom"></option>
+                </select></label>
+                <div class="settings-group">
+                    <div class="settings-row eff-settings">
+                        <label for="eff-zne" data-i18n="minimumZne"></label>
+                        <input id="eff-zne" class="eff-inactive" type="number" min="0" step="any" placeholder="160">
+                        <label class="settings-check"><input id="eff-dom" type="checkbox"><span data-i18n="effDom"></span></label>
+                    </div>
+                    <p id="eff-zne-warning" hidden><span data-i18n="effZneWarning"></span><a href="https://docs.google.com/spreadsheets/d/1WqknSKaCqDXdytCE7kPU1XaLuKVN8y1A1ONjL2dTpzc/edit?gid=200183027" target="_blank" rel="noopener">ZNE Table</a><span data-i18n="effZneWarningEnd"></span></p>
+                </div>
+                <fieldset id="custom-settings" class="search-widths" hidden disabled>
+                    <legend class="sr-only" data-i18n="customBoard"></legend>
+                    <label><span data-i18n="rows"></span><input id="rows" type="number" min="1" max="100" required value="16"></label>
+                    <label><span data-i18n="cols"></span><input id="cols" type="number" min="1" max="100" required value="30"></label>
+                    <label><span data-i18n="mines"></span><input id="mines" type="number" min="0" required value="99"></label>
+                </fieldset>
+                <label class="settings-group" for="rng-seed"><span data-i18n="seedLabel"></span>
+                    <input id="rng-seed" type="text" maxlength="32" pattern="[0-9a-fA-F]{32}" data-i18n-title="seedTip" spellcheck="false" data-i18n-placeholder="seedPlaceholder">
+                </label>
+                <button id="reuse-seed" type="button" data-i18n="reuseSeed"></button>
+            </div>
+            <div class="dialog-footer">
+                <span id="eff-progress" class="eff-progress" role="status"></span>
+                <button class="primary" type="submit" data-i18n="startGame"></button>
+            </div>
+        </form>
+    </dialog>
+    <dialog id="data-dialog" aria-labelledby="data-title">
+        <div class="settings-title"><h2 id="data-title" data-i18n="boardData"></h2><button data-close data-i18n="close"></button></div>
+        <div class="dialog-body board-export">
+            <label for="board-string" id="data-label" data-i18n="visibleBoard"></label>
+            <textarea id="board-string" rows="6" spellcheck="false"></textarea>
+            <div class="actions">
+                <button id="export-json" data-i18n="exportJson"></button>
+                <button id="export-davidnhill" data-i18n="exportDavid"></button>
+                <button id="import-board-string" class="primary" hidden data-i18n="importDraft"></button>
+            </div>
+            <div id="board-export-status" class="muted" aria-live="polite"></div>
+        </div>
+    </dialog>
+    <dialog id="ioe-dialog" aria-labelledby="ioe-title">
+        <form id="ioe-form">
+            <div class="settings-title"><h2 id="ioe-title" data-i18n="analyzeIoe"></h2><button type="button" data-close data-i18n="cancel"></button></div>
+            <div class="dialog-body"><label class="settings-group"><span data-i18n="totalClicks"></span>
+                <input id="ioe-clicks" type="number" min="0" max="2147483647" required>
+            </label></div>
+            <div class="dialog-footer"><button class="primary" type="submit" data-i18n="startAnalysis"></button></div>
+        </form>
+    </dialog>
     <dialog id="settings-dialog" aria-labelledby="settings-title">
-        <div class="settings-title"><h2 id="settings-title">设置</h2><button id="close-settings" aria-label="关闭设置">关闭</button></div>
+        <div class="settings-title"><h2 id="settings-title" data-i18n="settings"></h2></div>
         <fieldset class="settings-body">
-            <legend class="settings-legend">设置选项</legend>
-            <input class="settings-category-radio" id="settings-category-solver" type="radio" name="settings-category" value="solver" checked>
-            <label class="settings-tab" id="settings-tab-solver" for="settings-category-solver">求解</label>
-            <input class="settings-category-radio" id="settings-category-display" type="radio" name="settings-category" value="display">
-            <label class="settings-tab" id="settings-tab-display" for="settings-category-display">显示</label>
-            <input class="settings-category-radio" id="settings-category-board" type="radio" name="settings-category" value="board">
-            <label class="settings-tab" id="settings-tab-board" for="settings-category-board">盘面</label>
-            <input class="settings-category-radio" id="settings-category-advanced" type="radio" name="settings-category" value="advanced">
-            <label class="settings-tab" id="settings-tab-advanced" for="settings-category-advanced">高级设置</label>
-            <input class="settings-category-radio" id="settings-category-acknowledgements" type="radio" name="settings-category" value="acknowledgements">
-            <label class="settings-tab" id="settings-tab-acknowledgements" for="settings-category-acknowledgements">致谢</label>
+            <legend class="settings-legend" data-i18n="settingsOptions"></legend>
+            <div class="settings-tabs">
+                <input class="settings-category-radio" id="settings-category-solver" type="radio" name="settings-category" value="solver" checked>
+                <label class="settings-tab" id="settings-tab-solver" for="settings-category-solver" data-i18n="solver"></label>
+                <input class="settings-category-radio" id="settings-category-display" type="radio" name="settings-category" value="display">
+                <label class="settings-tab" id="settings-tab-display" for="settings-category-display" data-i18n="display"></label>
+                <input class="settings-category-radio" id="settings-category-advanced" type="radio" name="settings-category" value="advanced">
+                <label class="settings-tab" id="settings-tab-advanced" for="settings-category-advanced" data-i18n="advancedSettings"></label>
+                <input class="settings-category-radio" id="settings-category-language" type="radio" name="settings-category" value="language">
+                <label class="settings-tab" id="settings-tab-language" for="settings-category-language" lang="en">language</label>
+                <input class="settings-category-radio" id="settings-category-acknowledgements" type="radio" name="settings-category" value="acknowledgements">
+                <label class="settings-tab" id="settings-tab-acknowledgements" for="settings-category-acknowledgements" data-i18n="acknowledgements"></label>
+            </div>
             <div class="settings-panels">
                 <section id="settings-solver" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-solver">
                     <section class="settings-group">
-                        <div class="settings-row"><h3>基础算法</h3><select id="suggest-strategy" aria-label="基础算法"><option value="lowrisk" __MSS_POLICY_LOWRISK__>LowRisk</option><option value="anytime" __MSS_POLICY_ANYTIME__>Anytime</option></select></div>
-                        <label id="anytime-settings" class="settings-row" hidden><span>招法分析节点预算</span><input id="policy-node-budget" type="number" min="1" max="2147483647" value="__MSS_POLICY_NODES__"></label>
+                        <label class="settings-row"><span data-i18n="nodeBudget"></span><input id="policy-node-budget" type="number" min="-1" max="2147483647" value="__MSS_POLICY_NODES__" aria-describedby="policy-node-budget-hint"></label>
+                        <p class="settings-caption" id="policy-node-budget-hint" data-i18n="nodeBudgetTip"></p>
                     </section>
                     <section class="settings-group">
-                        <div class="settings-row"><h3>暴力接管</h3><label class="settings-check"><input id="endgame-enabled" type="checkbox"><span>启用</span></label></div>
+                        <div class="settings-row"><h3 data-i18n="bruteForce"></h3><label class="settings-check"><input id="endgame-enabled" type="checkbox"><span data-i18n="enable"></span></label></div>
                         <div id="brute-settings" class="settings-stack">
-                            <label class="settings-row"><span>可行摆法数小于</span><input id="endgame-candidate-limit" type="number" min="1" step="1" value="__MSS_BRUTE_FORCE_THRESHOLD__"></label>
-                            <label class="settings-row"><span>评分范围</span><select id="endgame-check-all-moves" data-all="__MSS_BRUTE_FORCE_CHECK_ALL__"><option value="best">仅最佳招</option><option value="all">全部候选</option></select></label>
-                            <label class="settings-row"><span>多线程</span><input id="endgame-multithread" type="checkbox" __MSS_BRUTE_FORCE_MULTITHREAD__></label>
-                            <label class="settings-row" id="endgame-max-threads-row"><span>线程上限</span><input id="endgame-max-threads" type="number" min="1" max="2147483647" step="1" value="__MSS_THREAD_LIMIT__"></label>
+                            <label class="settings-row"><span data-i18n="belowLayouts"></span><input id="endgame-candidate-limit" type="number" min="1" step="1" value="__MSS_BRUTE_FORCE_THRESHOLD__"></label>
+                            <label class="settings-row"><span data-i18n="scoringScope"></span><select id="endgame-check-all-moves" data-all="__MSS_BRUTE_FORCE_CHECK_ALL__"><option value="best" data-i18n="bestOnly"></option><option value="all" data-i18n="allCandidates"></option></select></label>
+                            <label class="settings-row"><span data-i18n="multithreading"></span><input id="endgame-multithread" type="checkbox" __MSS_BRUTE_FORCE_MULTITHREAD__></label>
+                            <label class="settings-row" id="endgame-max-threads-row"><span data-i18n="threadLimit"></span><input id="endgame-max-threads" type="number" min="1" max="2147483647" step="1" value="__MSS_THREAD_LIMIT__"></label>
                         </div>
                     </section>
-                    <label class="settings-row"><span>手动搜索节点数</span><input id="anytime-search-nodes" type="number" min="-1" max="2147483647" value="-1" aria-describedby="manual-search-hint"></label>
-                    <p class="settings-caption" id="manual-search-hint">填 −1 时持续搜索，直到手动停止或搜完。</p>
                     <section class="settings-group">
                         <h3>IOE</h3>
-                        <label class="settings-row"><span>候选摆法上限</span><input id="ioe-candidate-limit" type="number" min="1" max="2147483647" step="1" value="1000000"></label>
-                        <label class="settings-row"><span>后续搜索 DOM 调用上限</span><input id="ioe-dom-limit" type="number" min="1" max="2147483647" step="1" value="1000000"></label>
+                        <label class="settings-row"><span data-i18n="ioeCandidateLimit"></span><input id="ioe-candidate-limit" type="number" min="1" max="2147483647" step="1" value="1000000"></label>
+                        <label class="settings-row"><span data-i18n="ioeDomLimit"></span><input id="ioe-dom-limit" type="number" min="1" max="2147483647" step="1" value="1000000"></label>
                     </section>
                 </section>
                 <section id="settings-display" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-display">
-                    <label class="settings-row"><span>棋盘概率</span><input id="probability-display" type="checkbox" checked></label>
-                    <label class="settings-row"><span>分组高亮</span><select id="highlight-display"><option value="">不高亮</option><option value="structureInstances">Structure Instance</option><option value="logicComponents">LogicComponent</option></select></label>
-                    <label class="settings-row"><span>格子大小</span><select id="cell-size"><option value="auto" selected>自适应</option><option value="25">25 px</option><option value="28">28 px</option><option value="32">32 px</option><option value="34">34 px</option><option value="38">38 px</option><option value="42">42 px</option><option value="48">48 px</option></select></label>
-                </section>
-                <section id="settings-board" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-board">
-                    <section class="settings-group">
-                        <label for="rng-seed">开局种子</label>
-                        <div class="seed-row"><input id="rng-seed" type="text" maxlength="32" spellcheck="false"><button id="regenerate-seed">以此种子重新开局</button></div>
-                    </section>
-                    <div class="board-export">
-                        <label for="board-string">盘面数据</label>
-                        <textarea id="board-string" rows="5" spellcheck="false"></textarea>
-                        <div class="board-export-actions"><button id="export-davidnhill">导出 davidNhill</button><button id="import-board-string" disabled title="在分析模式下导入盘面">导入盘面</button></div>
-                        <div id="board-export-status" class="muted" aria-live="polite"></div>
-                    </div>
+                    <label class="settings-row"><span data-i18n="showProbability"></span><input id="probability-display" type="checkbox" checked></label>
+                    <label class="settings-row"><span data-i18n="groupHighlight"></span><select id="highlight-display"><option value="" data-i18n="noHighlight"></option><option value="structureInstances">Structure Instance</option><option value="logicComponents">LogicComponent</option></select></label>
+                    <label class="settings-row"><span data-i18n="cellSize"></span><select id="cell-size"><option value="auto" selected data-i18n="automatic"></option><option value="25">25 px</option><option value="28">28 px</option><option value="32">32 px</option><option value="34">34 px</option><option value="38">38 px</option><option value="42">42 px</option><option value="48">48 px</option></select></label>
                 </section>
                 <section id="settings-advanced" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-advanced">
                     <section class="settings-group">
-                        <h3>Anytime 候选格上限</h3>
-                        <div class="search-widths">
-                            <label>第一步<input id="search-root-width" type="number" min="1" max="2147483647" value="__MSS_SEARCH_ROOT_WIDTH__"></label>
-                            <label>第二步<input id="search-middle-width" type="number" min="1" max="2147483647" value="__MSS_SEARCH_MIDDLE_WIDTH__"></label>
-                            <label>后续每步<input id="search-deep-width" type="number" min="1" max="2147483647" value="__MSS_SEARCH_DEEP_WIDTH__"></label>
-                        </div>
+                        <h3 data-i18n="anytimeWidth"></h3>
+                        <label class="settings-row"><span data-i18n="firstMove"></span><input id="search-root-width" type="number" min="1" max="2147483647" value="__MSS_SEARCH_ROOT_WIDTH__"></label>
+                        <label class="settings-row"><span data-i18n="secondMove"></span><input id="search-middle-width" type="number" min="1" max="2147483647" value="__MSS_SEARCH_MIDDLE_WIDTH__"></label>
+                        <label class="settings-row"><span data-i18n="laterMoves"></span><input id="search-deep-width" type="number" min="1" max="2147483647" value="__MSS_SEARCH_DEEP_WIDTH__"></label>
                     </section>
                     <section class="settings-group">
-                        <h3>50-50 与长期风险</h3>
-                        <label class="settings-row"><span>模板数量</span><input id="template-prefix" type="number" min="1" max="__MSS_TEMPLATE_COUNT__" value="__MSS_TEMPLATE_PREFIX__" aria-describedby="template-prefix-hint"></label>
-                        <p class="settings-caption" id="template-prefix-hint">从目录开头取这些模板，用于识别 50-50 和计算长期风险。</p>
-                        <label class="settings-row"><span>长期风险事件数上限</span><input id="ltr-event-limit" type="number" min="1" max="2147483647" step="1" value="__MSS_LTR_EVENT_LIMIT__" aria-describedby="ltr-event-limit-hint"></label>
-                        <p class="settings-caption" id="ltr-event-limit-hint">计算长期风险时，优先计入最可能发生的情况。</p>
+                        <h3 data-i18n="fiftyFiftyRisk"></h3>
+                        <label class="settings-row"><span data-i18n="templateCount"></span><input id="template-prefix" type="number" min="1" max="__MSS_TEMPLATE_COUNT__" value="__MSS_TEMPLATE_PREFIX__" aria-describedby="template-prefix-hint"></label>
+                        <p class="settings-caption" id="template-prefix-hint" data-i18n="templateTip"></p>
+                        <label class="settings-row"><span data-i18n="riskEventLimit"></span><input id="ltr-event-limit" type="number" min="1" max="2147483647" step="1" value="__MSS_LTR_EVENT_LIMIT__" aria-describedby="ltr-event-limit-hint"></label>
+                        <p class="settings-caption" id="ltr-event-limit-hint" data-i18n="riskEventTip"></p>
                     </section>
                     <section class="settings-group">
-                        <label class="settings-row"><span>概率求解器</span><select id="shape-algo" aria-describedby="shape-algo-hint"><option value="auto" selected>auto</option><option value="autoSA">autoSA</option></select></label>
-                        <p class="settings-caption" id="shape-algo-hint">autoSA 会为复杂局面多试几种计算顺序，算出的雷率相同。</p>
+                        <label class="settings-row"><span data-i18n="probabilitySolver"></span><select id="shape-algo" aria-describedby="shape-algo-hint"><option value="auto" selected>auto</option><option value="autoSA">autoSA</option></select></label>
+                        <p class="settings-caption" id="shape-algo-hint" data-i18n="solverOrderTip"></p>
                     </section>
                 </section>
+                <section id="settings-language" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-language">
+                    <label class="settings-row" for="language"><span lang="en">language</span>
+                        <select id="language">
+                            <button type="button"><selectedcontent></selectedcontent></button>
+                            <option value="zh-CN" lang="zh-CN">汉语<span class="language-flag" data-flag="cn" aria-hidden="true"></span></option>
+                            <option value="en" lang="en">english<span class="language-flag" data-flag="gb" aria-hidden="true"></span></option>
+                        </select>
+                    </label>
+                </section>
                 <section id="settings-acknowledgements" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-acknowledgements">
-                    <ul class="settings-acknowledgements">__MSS_ACKNOWLEDGEMENTS__</ul>
+                    <ul class="settings-acknowledgements"><li data-i18n="ackChatgpt"></li><li data-i18n="ackDom"></li><li data-i18n="ackDavid"></li></ul>
                 </section>
             </div>
         </fieldset>
     </dialog>
+    <script src="i18n.js" defer></script>
     <script src="state.js" defer></script>
     <script src="game.js" defer></script>
     <script src="view.js" defer></script>

@@ -6,22 +6,19 @@
 
 namespace mss::UI {
 
-// UI 持有可切换算法的参数；MovePolicy 仅在调用期间借用这些值。
+// UI 持有搜索参数；MovePolicy 仅在调用期间借用这些值。
 struct Config {
     struct Fifty {
         int prefix, eventLimit;
     };
     ShapeSolverConfig::SA annealing;
     Position::Config game;
-    MovePolicy::Algorithm algorithm;
     bool longTermRisk;
     AnytimeSearch::Config anytime;
     Fifty fiftyFifty;
     MovePolicy::Config::Brute brute;
 
     Config(bool parallel);
-    MovePolicy::Config::Guess guess() const;
-    MovePolicy::Config policy(const MovePolicy::Config::Guess &guess) const;
 };
 
 // UI 唯一公开入口；本地服务和计算会话由该函数持有。

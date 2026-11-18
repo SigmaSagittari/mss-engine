@@ -1,6 +1,7 @@
 const token = document.querySelector('meta[name="mss-token"]').content;
 const boardElement = document.getElementById("board");
-const messageElement = document.getElementById("message");
+const boardMessage = document.getElementById("board-message");
+const analysisMessage = document.getElementById("analysis-message");
 const detailPanel = document.getElementById("cell-detail");
 const detailStatus = document.getElementById("detail-status");
 const detailScoreRow = document.getElementById("detail-score-row");
@@ -16,7 +17,6 @@ const observeResult = document.getElementById("observe-result");
 const difficulty = document.getElementById("difficulty");
 const customSettings = document.getElementById("custom-settings");
 const settingsDialog = document.getElementById("settings-dialog");
-const suggestStrategy = document.getElementById("suggest-strategy");
 const templatePrefix = document.getElementById("template-prefix");
 const ltrEventLimit = document.getElementById("ltr-event-limit");
 const policyNodeBudget = document.getElementById("policy-node-budget");
@@ -25,7 +25,6 @@ const probabilityDisplay = document.getElementById("probability-display");
 const highlightDisplay = document.getElementById("highlight-display");
 const cellSizeSetting = document.getElementById("cell-size");
 const rngSeedInput = document.getElementById("rng-seed");
-const regenerateSeedButton = document.getElementById("regenerate-seed");
 const boardStringInput = document.getElementById("board-string");
 const boardExportStatus = document.getElementById("board-export-status");
 const importBoardStringButton = document.getElementById("import-board-string");
@@ -35,8 +34,12 @@ const endgameCheckAllMoves = document.getElementById("endgame-check-all-moves");
 const endgameMultithread = document.getElementById("endgame-multithread");
 const endgameMaxThreads = document.getElementById("endgame-max-threads");
 const analysisSummary = document.getElementById("analysis-summary");
-const analysisCountRow = document.getElementById("analysis-count-row");
-const analysisCount = document.getElementById("analysis-count");
+const searchStatus = document.getElementById("search-status");
+const searchCount = document.getElementById("search-count");
+const searchSpeed = document.getElementById("search-speed");
+const searchDepth = document.getElementById("search-depth");
+const boardCountRow = document.getElementById("board-count-row");
+const boardCount = document.getElementById("board-count");
 const analysisRecommendation = document.getElementById("analysis-recommendation");
 const ioeResultPanel = document.getElementById("ioe-result");
 let mode = "play";
@@ -56,17 +59,11 @@ let probabilityUpdateQueue = Promise.resolve();
 let probabilityRevision = 0;
 let probabilityPending = false;
 let operationBusy = false;
-let suggestionResult = null;
 let ioeMove = null;
 let detailData = null;
-let suggestionMoves = new Map();
-let endgameBestCells = new Set();
 const searchButton = document.getElementById("anytime-search");
 const searchHistory = document.getElementById("anytime-search-history");
-const searchNodeBudget = document.getElementById("anytime-search-nodes");
 const searchWidths = ["search-root-width", "search-middle-width", "search-deep-width"].map((id) => document.getElementById(id));
-const rngMask = 0xffffffffffffffffn;
-
 function makeRandomSeed() {
     const words = new Uint32Array(4);
     crypto.getRandomValues(words);
@@ -82,18 +79,40 @@ function postForm(path, fields, signal) {
     });
 }
 
-async function post(path, fields = {}) {
-    const response = token ? await postForm(path, fields) : null;
-    const result = response ? await response.json() : await wasmRequest(path, fields);
-    if ((response && !response.ok) || !result.ok)
-        throw new Error(result.error || (response ? `请求失败（${response.status}）` : "请求失败。"));
-    return result;
+async function post(path, fields = {}, signal) {
+    const response = token ? await postForm(path, fields, signal) : null;
+    const result = response ? await readApiJson(response) : await wasmRequest(path, fields);
+    return requireApiSuccess(result, response);
 }
 
-async function readUpdates(path, fields, controller, update, nodes) {
+function readApiJson(response) {
+    if (!response.ok && !response.headers.get("Content-Type")?.startsWith("application/json"))
+        throw new UiError("httpFailed", response.status);
+    return response.json();
+}
+
+function requireApiSuccess(result, response) {
+    if ((!response || response.ok) && result.ok) return result;
+    const code = result.errorCode;
+    if (Number.isInteger(code))
+        throw Object.hasOwn(messages, code) ? new UiError(code) : new UiError("unknownErrorCode", code);
+    if (response && !response.ok) throw new UiError("httpFailed", response.status);
+    throw new UiError("requestFailed");
+}
+
+async function startUpdates(path, fields, signal) {
+    if (!token)
+        return post(`${path}/start`, fields);
+    const response = await postForm(`${path}/start`, fields, signal);
+    if (!response.ok || !response.headers.get("Content-Type")?.startsWith("text/event-stream")) {
+        requireApiSuccess(await readApiJson(response), response);
+        throw new UiError("requestFailed");
+    }
+    return response;
+}
+
+async function readUpdates(path, response, controller, update) {
     if (!token) {
-        await post(`${path}/start`, fields);
-        if (nodes && !controller.signal.aborted) await post(`${path}/control`, { action: "step", nodes });
         while (!controller.signal.aborted) {
             const result = await post(`${path}/update`);
             if (controller.signal.aborted) break;
@@ -103,12 +122,6 @@ async function readUpdates(path, fields, controller, update, nodes) {
         }
         return;
     }
-    const response = await postForm(`${path}/start`, fields, controller.signal);
-    if (!response.ok || !response.headers.get("Content-Type").startsWith("text/event-stream")) {
-        const result = await response.json();
-        throw new Error(result.error || `请求失败（${response.status}）`);
-    }
-    if (nodes) await post(`${path}/control`, { action: "step", nodes });
     await readEventStream(response, update, controller.signal);
 }
 
@@ -143,13 +156,12 @@ async function analyzeIoeWithProgress(fields, update) {
                 else result = event;
             });
         } else {
-            const error = await response.json();
-            throw new Error(error.error || `请求失败（${response.status}）`);
+            requireApiSuccess(await readApiJson(response), response);
+            throw new UiError("requestFailed");
         }
     }
-    if (!result) throw new Error("IOE 分析连接已中断。");
-    if (!result.ok) throw new Error(result.error);
-    return result;
+    if (!result) throw new UiError("ioeDisconnected");
+    return requireApiSuccess(result);
 }
 
 function activeState() {

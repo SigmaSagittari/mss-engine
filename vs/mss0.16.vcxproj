@@ -83,6 +83,7 @@
   <ItemGroup>
     <ClCompile Include="..\code\main.cpp" />
     <ClCompile Include="..\code\algo\ioe_engine\bruteforce\bruteforce.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\eight_way\eight_way.cpp" />
     <ClCompile Include="..\code\algo\ioe_engine\ref_dom\ref_dom.cpp" />
     <ClCompile Include="..\code\algo\ioe_engine\ref_dom\frontier.cpp" />
     <ClCompile Include="..\code\algo\ioe_engine\ref_dom\dominance.cpp" />
@@ -111,6 +112,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\code\algo\ioe_engine\bruteforce\bruteforce.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\eight_way\eight_way.h" />
     <ClInclude Include="..\code\algo\ioe_engine\ref_dom\ref_dom.h" />
     <ClInclude Include="..\code\algo\ioe_engine\ref_dom\frontier.h" />
     <ClInclude Include="..\code\algo\ioe_engine\ref_dom\dominance.h" />
@@ -163,6 +165,7 @@
     <None Include="..\code\ui\web\index.html" />
     <None Include="..\code\ui\web\main.js" />
     <None Include="..\code\ui\web\solver_worker.js" />
+    <None Include="..\code\ui\web\i18n.js" />
     <None Include="..\code\ui\web\state.js" />
     <None Include="..\code\ui\web\style.css" />
     <None Include="..\code\ui\web\view.js" />
@@ -199,11 +202,5 @@
   <ItemGroup>
     <ClCompile Include="..\code\algo\winrate_engine\fifty_fifty\templates\semi.cpp" />
     <ClInclude Include="..\code\algo\winrate_engine\fifty_fifty\templates\semi.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="..\archive\monte_carlo\code\algo\winrate_engine\monte_carlo\monte_carlo.cpp" />
-    <None Include="..\archive\monte_carlo\code\algo\winrate_engine\monte_carlo\monte_carlo.h" />
-    <None Include="..\archive\monte_carlo\code\ui\web\monte_carlo.js" />
-    <None Include="..\archive\monte_carlo\integration.patch" />
   </ItemGroup>
 </Project>

@@ -46,9 +46,11 @@ struct Position {
         std::uint64_t probabilityVersion;
     };
 
+    enum class CheckError { None, BasicConflict, MineCountConflict, ComponentConflict };
+
     struct CheckedResult {
-        Result result;
-        const char *error; // nullptr 表示 result 可用，否则指向静态报错文本。
+        Result result; // error 为 None 时有效。
+        CheckError error;
     };
 
     struct ProbabilityResult {

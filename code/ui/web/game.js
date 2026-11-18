@@ -20,20 +20,6 @@ function formatRngSeed(seed) {
     return seed.hi.toString(16).padStart(16, "0") + seed.lo.toString(16).padStart(16, "0");
 }
 
-// 与 core/utility/rng.h 的 splitmix64 位运算保持一致。
-function splitmix64(value) {
-    value = (value + 0x9e3779b97f4a7c15n) & rngMask;
-    value = ((value ^ (value >> 30n)) * 0xbf58476d1ce4e5b9n) & rngMask;
-    value = ((value ^ (value >> 27n)) * 0x94d049bb133111ebn) & rngMask;
-    return value ^ (value >> 31n);
-}
-
-function nextRandom() {
-    rng.lo = splitmix64(rng.lo + 0x9e3779b97f4a7c15n);
-    rng.hi = splitmix64(rng.hi + 0xd1b54a32d192ed03n);
-    return rng.lo ^ rng.hi;
-}
-
 function neighbors(cell, state) {
     const row = Math.floor(cell / state.cols);
     const col = cell % state.cols;
@@ -92,37 +78,21 @@ function countThreeBV(state) {
     return count;
 }
 
-function createPlayState(rows, cols, mines) {
-    const seed = formatRngSeed(rng);
-    const cells = new Array(rows * cols);
-    for (let cell = 0; cell < cells.length; ++cell)
-        cells[cell] = cell;
-    // 本地使用 Fisher-Yates 洗牌；首开踩雷时由 moveFirstMine 挪雷，后端任务直接接收已生成的雷盘。
-    for (let cell = cells.length - 1; cell > 0; --cell) {
-        const other = Number(nextRandom() % BigInt(cell + 1));
-        const value = cells[cell];
-        cells[cell] = cells[other];
-        cells[other] = value;
+function createPlayState(rows, cols, mines, generated) {
+    const state = { rows, cols, mines, cells: "?".repeat(rows * cols), clicks: 0, startedAt: null, firstMove: true, lost: false, won: false, lostCell: -1 };
+    if (generated) {
+        state.seed = generated.seed;
+        state.minefield = generated.minefield;
+        state.effOpening = new Set(generated.opening);
+        state.numbers = numberCells(state.minefield, state);
     }
-    const minefield = new Array(cells.length).fill("0");
-    for (let mine = 0; mine < mines; ++mine)
-        minefield[cells[mine]] = "1";
-    const state = { rows, cols, mines, seed, minefield: minefield.join(""), cells: "?".repeat(rows * cols), clicks: 0, startedAt: null, firstMove: true, lost: false, won: false, lostCell: -1 };
-    state.numbers = numberCells(state.minefield, state);
     return state;
 }
 
-function moveFirstMine(cell) {
-    const safeCells = [];
-    for (let target = 0; target < playState.minefield.length; ++target)
-        if (playState.minefield[target] === "0")
-            safeCells.push(target);
-    const safeCell = safeCells[Number(nextRandom() % BigInt(safeCells.length))];
-    const minefield = playState.minefield.split("");
-    minefield[cell] = "0";
-    minefield[safeCell] = "1";
-    playState.minefield = minefield.join("");
-    playState.numbers = numberCells(playState.minefield, playState);
+async function generate(state, first) {
+    const { rows, cols, mines } = state;
+    const { seed, nextSeed, minefield } = await post("/api/generate-board", { rows, cols, mines, first, seed: formatRngSeed(rng) });
+    return { seed, nextSeed: parseRngSeed(nextSeed), minefield, numbers: numberCells(minefield, state) };
 }
 
 function revealLocally(cell) {
@@ -165,19 +135,11 @@ function revealLocallyBatch(seedCells) {
 }
 
 function showVictory(finishedAt) {
+    playState.finishedAt = finishedAt;
     const seconds = Math.max(1, finishedAt - playState.startedAt) / 1000;
     const threeBV = countThreeBV(playState);
     const cls = playState.clicks;
-    const lines = [
-        `时间 ${seconds.toFixed(3)} s`,
-        `3BV ${threeBV}`,
-        `3BV/s ${(threeBV / seconds).toFixed(2)}`,
-        `CLS ${cls}`,
-        `IOE ${(100 * threeBV / cls).toFixed(2)}%`
-    ];
-    setMessage("已获胜", "success");
-    for (const line of lines)
-        messageElement.append(document.createElement("br"), line);
+    setMessage(boardMessage, "victoryStats", "success", seconds.toFixed(3), threeBV, (threeBV / seconds).toFixed(2), cls, (100 * threeBV / cls).toFixed(2));
 }
 
 function finishPlayMove() {
@@ -185,19 +147,32 @@ function finishPlayMove() {
     scheduleProbabilityUpdate();
     render();
     if (playState.lost)
-        setMessage("踩到地雷，本局结束。", "error");
+        setMessage(boardMessage, "lostMessage", "error");
     else if (playState.won)
         showVictory(finishedAt);
     else
-        setMessage("");
+        setMessage(boardMessage, "");
 }
 
-function revealCell(cell) {
+async function revealCell(cell) {
     const startedAt = playState.startedAt ?? performance.now();
-    clearSuggestion();
+    if (!playState.minefield) {
+        operationBusy = true;
+        render();
+        try {
+            const { nextSeed, ...generated } = await generate(playState, cell);
+            Object.assign(playState, generated);
+            rng = nextSeed;
+        } catch (error) {
+            operationBusy = false;
+            render();
+            setErrorMessage(boardMessage, error);
+            return;
+        }
+        operationBusy = false;
+    }
+    clearIoeResult();
     playState = { ...playState, startedAt, clicks: playState.clicks + 1 };
-    if (playState.firstMove && playState.minefield[cell] === "1")
-        moveFirstMine(cell);
     flags.delete(cell);
     revealLocally(cell);
     finishPlayMove();
@@ -212,13 +187,11 @@ function chord(cell) {
     const targets = around.filter((next) => playState.cells[next] === "?" && !flags.has(next));
     if (targets.length === 0)
         return;
-    clearSuggestion();
+    clearIoeResult();
     playState = { ...playState, clicks: playState.clicks + 1 };
     for (const target of targets) {
         if (playState.cells[target] !== "?" || flags.has(target))
             continue;
-        if (playState.firstMove && playState.minefield[target] === "1")
-            moveFirstMine(target);
         flags.delete(target);
         revealLocally(target);
         if (playState.lost || playState.won)
@@ -228,7 +201,7 @@ function chord(cell) {
 }
 
 function activatePlayCell(cell) {
-    if (cell < 0 || playState.lost || playState.won)
+    if (operationBusy || cell < 0 || playState.lost || playState.won)
         return;
     const value = playState.cells[cell];
     if (value === "?") {
@@ -251,65 +224,59 @@ function toggleFlag(cell) {
     if (state.clicks !== null)
         ++state.clicks;
     const operation = wasFlagged ? "removeFlags" : "addFlags";
-    if (ioeMove?.kind === "chord" && ioeMove[operation].includes(cell)) {
+    if (ioeMove?.kind === IoeAction.Chord && ioeMove[operation].includes(cell)) {
         ioeMove = { ...ioeMove, [operation]: ioeMove[operation].filter(target => target !== cell) };
     } else if (!ioeResultPanel.hidden) {
         clearIoeResult();
-        setMessage("");
     }
     render();
 }
 
-function startNewGame(seed = null) {
-    let rows = Number(document.getElementById("rows").value);
-    let cols = Number(document.getElementById("cols").value);
-    let mines = Number(document.getElementById("mines").value);
-    if (difficulty.value !== "custom") [rows, cols, mines] = presets[difficulty.value];
-    if (!Number.isInteger(rows) || !Number.isInteger(cols) || !Number.isInteger(mines) || rows < 1 || cols < 1 || rows > 100 || cols > 100 || rows * cols > 10000 || mines < 0 || mines >= rows * cols) {
-        setMessage("自定义盘面范围无效。", "error");
-        return;
-    }
+function startNewGame(rows, cols, mines, seed = null, generated = null) {
     if (seed)
         rng = { lo: seed.lo, hi: seed.hi };
     if (boardElement.contains(document.activeElement))
         document.activeElement.blur();
-    playState = createPlayState(rows, cols, mines);
-    rngSeedInput.value = playState.seed;
+    playState = createPlayState(rows, cols, mines, generated);
     mode = "play";
     clearDetail();
-    clearSuggestion();
+    clearIoeResult();
     flags = new Set();
     leftMouseDown = false;
     hoveredCell = -1;
     selectedCell = -1;
     scheduleProbabilityUpdate();
     render();
-    setMessage("新局已开始，首开安全。", "success");
+    setMessage(boardMessage, "");
 }
 
 async function playUntilNoSafe() {
     if (mode !== "play" || operationBusy || playState.lost || playState.won)
         return;
+    const needsBoard = !playState.minefield;
+    if (needsBoard && playState.mines > 0) {
+        setMessage(boardMessage, "openedSafe", "success", 0);
+        return;
+    }
     stopAnalysis();
     operationBusy = true;
     ++probabilityRevision;
-    probabilityPending = false;
-    clearSuggestion();
+    clearIoeResult();
     clearDetail();
-    probabilities = null;
-    candidateCount = "";
-    const state = playState;
     const highlight = highlightDisplay.value;
-    const startedAt = state.startedAt ?? performance.now();
+    const startedAt = playState.startedAt ?? performance.now();
     render();
-    setMessage("");
+    setMessage(boardMessage, "openingSafe");
     try {
+        const { nextSeed, ...generated } = needsBoard ? await generate(playState, 0) : {};
+        const state = needsBoard ? { ...playState, ...generated } : playState;
         const result = await post("/api/play-until-no-safe", {
             rows: state.rows, cols: state.cols, mines: state.mines, cells: state.cells,
             minefield: state.minefield, algo: shapeAlgo.value, includeProbabilities: probabilityDisplay.checked, highlight
         });
         const finishedAt = performance.now();
         const opened = [...state.cells].filter((value, cell) => value === "?" && result.cells[cell] !== "?").length;
+        if (needsBoard) rng = nextSeed;
         // Game 批量逐格揭开。被自动清除的玩家旗也各计一次拔旗。
         playState = { ...state, rows: result.rows, cols: result.cols, mines: result.mines, minefield: result.minefield, cells: result.cells, clicks: state.clicks + opened, lost: result.lost, won: result.won, firstMove: state.firstMove && opened === 0 };
         if (opened > 0)
@@ -320,16 +287,17 @@ async function playUntilNoSafe() {
                 ++playState.clicks;
             }
         if (highlight) showHighlight(result[highlight]);
-        if (result.probabilities) {
-            probabilities = result.probabilities;
-            candidateCount = result.candidateCount;
-        }
+        // 接口一次返回盘面和雷率，同一轮渲染写入，等待期间沿用原盘面的显示。
+        probabilityPending = false;
+        probabilities = result.probabilities ?? null;
+        candidateCount = result.candidateCount ?? "";
         if (result.won)
             showVictory(finishedAt);
         else
-            setMessage(`自动揭开 ${opened} 格；没有确定安全格。`, "success");
+            setMessage(boardMessage, "openedSafe", "success", opened);
     } catch (error) {
-        setMessage(error.message, "error");
+        if (probabilityPending) scheduleProbabilityUpdate();
+        setErrorMessage(boardMessage, error);
     } finally {
         operationBusy = false;
         render();

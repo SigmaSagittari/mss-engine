@@ -34,84 +34,249 @@ document.addEventListener("mouseup", (event) => {
         activatePlayCell(cell);
 });
 
+const newDialog = document.getElementById("new-dialog");
+const dataDialog = document.getElementById("data-dialog");
+const ioeDialog = document.getElementById("ioe-dialog");
+const rowsInput = document.getElementById("rows");
+const colsInput = document.getElementById("cols");
+const minesInput = document.getElementById("mines");
+const newForm = document.getElementById("new-form");
+const effInput = document.getElementById("eff-zne");
+const effDom = document.getElementById("eff-dom");
+const effWarning = document.getElementById("eff-zne-warning");
+const effProgress = document.getElementById("eff-progress");
+const reuseSeed = document.getElementById("reuse-seed");
+const effDefaults = { beginner: 200, intermediate: 180, advanced: 160 };
+let playDifficulty = difficulty.value;
+let effDifficulty = playDifficulty;
+effDom.checked = effDifficulty === "beginner";
+let effActive = false;
+let effThreshold = "";
+let effGeneration = null;
+
+function updateGameForm() {
+    customSettings.hidden = difficulty.value !== "custom";
+    customSettings.disabled = customSettings.hidden || !!effGeneration;
+    minesInput.max = Math.max(0, rowsInput.valueAsNumber * colsInput.valueAsNumber - 1);
+}
+
+function updateEffInputFeedback() {
+    effInput.setCustomValidity(effThreshold && !(effInput.valueAsNumber > 0) ? tr("invalidEffInput") : "");
+    effWarning.hidden = !(effInput.valueAsNumber > effDefaults[effDifficulty]);
+}
+
+function updateEffForm() {
+    if (effDifficulty !== difficulty.value) {
+        effDifficulty = difficulty.value;
+        effDom.checked = effDifficulty === "beginner";
+        effActive = false;
+        effThreshold = "";
+    }
+    effInput.value = effThreshold;
+    effInput.placeholder = effActive ? tr("noEffLimit") : effDefaults[effDifficulty] ?? tr("noEffLimit");
+    effInput.classList.toggle("eff-inactive", !effActive);
+    effDom.disabled = effDifficulty === "custom" || !!effGeneration;
+    updateEffInputFeedback();
+}
+
+function showNewGame() {
+    const { rows, cols, mines } = playState;
+    difficulty.value = playDifficulty;
+    rowsInput.value = rows;
+    colsInput.value = cols;
+    minesInput.value = mines;
+    rngSeedInput.value = "";
+    reuseSeed.disabled = !playState.seed;
+    setLocalizedText(effProgress);
+    updateGameForm();
+    updateEffForm();
+    newDialog.showModal();
+    difficulty.focus();
+}
+
+function setGeneration(controller) {
+    effGeneration?.abort();
+    effGeneration = controller;
+    const busy = !!controller;
+    for (const control of [difficulty, effInput, rngSeedInput, newForm.querySelector('[type="submit"]')])
+        control.disabled = busy;
+    reuseSeed.disabled = busy || !playState.seed;
+    effDom.disabled = busy || effDifficulty === "custom";
+    updateGameForm();
+}
+
+async function generateNewGame(size, level, seed, threshold, dom) {
+    const controller = new AbortController();
+    setGeneration(controller);
+    let nextSeed = formatRngSeed(seed ?? rng);
+    let attempts = 0, domCalls = 0;
+    let refreshAt = performance.now() + 150;
+    const showProgress = () => {
+        setLocalizedText(effProgress, "effProgress", attempts, domCalls);
+    };
+    showProgress();
+    const [rows, cols, mines] = size;
+    try {
+        await pauseSearch();
+        while (newDialog.open && !controller.signal.aborted) {
+            const result = await post("/api/eff-board", { rows, cols, mines, zne: threshold, seed: nextSeed, difficulty: level, dom }, controller.signal);
+            if (!newDialog.open || controller.signal.aborted) return;
+            attempts += result.attempts;
+            domCalls += result.domCalls;
+            if (result.minefield) {
+                showProgress();
+                playDifficulty = level;
+                startNewGame(...size, parseRngSeed(result.nextSeed), result);
+                newDialog.close();
+                return;
+            }
+            nextSeed = result.nextSeed;
+            if (performance.now() >= refreshAt) {
+                showProgress();
+                refreshAt = performance.now() + 150;
+            }
+        }
+    } catch (error) {
+        if (newDialog.open && !controller.signal.aborted) {
+            const message = localizedError(error);
+            setLocalizedText(effProgress, message.key, ...message.args);
+        }
+    } finally {
+        if (effGeneration === controller) setGeneration(null);
+    }
+}
+
+document.getElementById("new-game").addEventListener("click", showNewGame);
+newDialog.addEventListener("close", () => {
+    if (newDialog.open || !effGeneration) return;
+    setGeneration(null);
+});
 difficulty.addEventListener("change", () => {
-    clearIoeResult();
-    setDifficultyValues(difficulty.value);
-    if (difficulty.value === "custom" || (mode === "analysis" && difficulty.value === "beginner" && isBeginner(analysisState)))
-        render();
-    else
-        startNewGame();
+    updateGameForm();
+    updateEffForm();
+    setLocalizedText(effProgress);
 });
-document.getElementById("new-game").addEventListener("click", () => startNewGame());
-document.getElementById("open-settings").addEventListener("click", () => {
+effInput.addEventListener("focus", () => {
+    if (effActive) return;
+    effActive = true;
+    effThreshold = effDefaults[effDifficulty]?.toString() ?? "";
+    updateEffForm();
+});
+effInput.addEventListener("input", () => {
+    effThreshold = effInput.value;
+    updateEffInputFeedback();
+});
+customSettings.addEventListener("input", updateGameForm);
+reuseSeed.addEventListener("click", () => {
+    rngSeedInput.value = playState.seed;
+    rngSeedInput.select();
+});
+newForm.addEventListener("submit", event => {
+    event.preventDefault();
+    if (effGeneration) return;
+    const level = difficulty.value;
+    const size = presets[level] || [rowsInput.valueAsNumber, colsInput.valueAsNumber, minesInput.valueAsNumber];
+    const seed = parseRngSeed(rngSeedInput.value);
+    if (effThreshold)
+        return generateNewGame(size, level, seed, effThreshold, effDom.checked);
+    newDialog.close();
+    playDifficulty = level;
+    startNewGame(...size, seed);
+});
+document.getElementById("open-settings").addEventListener("click", () => settingsDialog.showModal());
+const language = document.getElementById("language");
+language.addEventListener("change", () => {
+    applyLanguage(language.value);
+    updateEffForm();
+    if (ioeResult) showIoeResult(ioeResult);
+    render();
+});
+applyLanguage(language.value);
+settingsDialog.addEventListener("click", event => {
+    if (event.target !== settingsDialog) return;
+    const bounds = settingsDialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX >= bounds.right || event.clientY < bounds.top || event.clientY >= bounds.bottom)
+        settingsDialog.close();
+});
+for (const button of document.querySelectorAll("[data-close]"))
+    button.addEventListener("click", () => button.closest("dialog").close());
+document.getElementById("board-data").addEventListener("click", () => {
     boardStringInput.value = currentBoardString();
-    boardExportStatus.textContent = "";
-    settingsDialog.showModal();
+    boardStringInput.readOnly = mode === "play";
+    const dataLabel = document.getElementById("data-label");
+    dataLabel.dataset.i18n = mode === "play" ? "currentVisibleBoard" : "pasteableDraft";
+    dataLabel.textContent = tr(dataLabel.dataset.i18n);
+    importBoardStringButton.hidden = mode !== "analysis";
+    setLocalizedText(boardExportStatus);
+    dataDialog.showModal();
 });
-document.getElementById("close-settings").addEventListener("click", () => settingsDialog.close());
+document.getElementById("export-json").addEventListener("click", () => {
+    boardStringInput.value = currentBoardString();
+    boardStringInput.select();
+    setLocalizedText(boardExportStatus, "selectedJson");
+});
 document.getElementById("export-davidnhill").addEventListener("click", () => {
     const board = JSON.parse(currentBoardString());
     const lines = [`${board.cols}x${board.rows}x${board.mines}`];
     for (let row = 0; row < board.rows; ++row)
         lines.push(board.cells.slice(row * board.cols, (row + 1) * board.cols).replace(/[?MSG]/g, "H"));
     boardStringInput.value = lines.join("\n");
-    boardExportStatus.textContent = "已导出 davidNhill。";
+    boardStringInput.select();
+    setLocalizedText(boardExportStatus, "selectedDavid");
 });
 function importBoardString(text) {
     const source = text.trim();
     let board;
     if (source.startsWith("{")) {
-        board = JSON.parse(source);
+        try {
+            board = JSON.parse(source);
+        } catch (error) {
+            if (!(error instanceof SyntaxError)) throw error;
+            throw new UiError("unknownBoardFormat");
+        }
     } else {
         const lines = source.split(/\r?\n/);
         const header = lines[0].match(/^(\d+)x(\d+)x(\d+)$/i);
         if (!header)
-            throw new Error("无法识别盘面格式");
+            throw new UiError("unknownBoardFormat");
         if (lines.length !== Number(header[2]) + 1 || lines.slice(1).some((line) => line.length !== Number(header[1])))
-            throw new Error("davidNhill 盘面行数或宽度无效");
+            throw new UiError("invalidDavidSize");
         board = { rows: Number(header[2]), cols: Number(header[1]), mines: Number(header[3]), cells: lines.slice(1).join("").replace(/H/g, "?") };
     }
     if (!board || typeof board !== "object")
-        throw new Error("盘面参数无效");
+        throw new UiError(ApiError.BoardParameters);
     if (!Number.isInteger(board.rows) || !Number.isInteger(board.cols) || !Number.isInteger(board.mines))
-        throw new Error("盘面参数无效");
+        throw new UiError(ApiError.BoardParameters);
     if (board.rows < 1 || board.cols < 1 || board.rows > 100 || board.cols > 100 || board.rows * board.cols > 10000 || board.mines < 0 || board.mines >= board.rows * board.cols)
-        throw new Error("自定义盘面范围无效");
+        throw new UiError(ApiError.BoardRange);
     if (typeof board.cells !== "string" || board.cells.length !== board.rows * board.cols)
-        throw new Error("盘面数据长度无效");
+        throw new UiError("invalidBoardLength");
     for (let cell = 0; cell < board.cells.length; ++cell) {
         const value = board.cells[cell];
         if (value !== "?" && value !== "M" && value !== "S" && value !== "G" && !(value >= "0" && value <= "8"))
-            throw new Error("盘面状态无效");
+            throw new UiError("invalidCellState");
     }
-    clearSuggestion();
+    clearIoeResult();
     analysisState = { rows: board.rows, cols: board.cols, mines: board.mines, cells: board.cells, clicks: null, playerFlags: new Set() };
-    if (difficulty.value !== "beginner" || !isBeginner(analysisState))
-        difficulty.value = "custom";
-    setDifficultyValues(difficulty.value);
-    document.getElementById("rows").value = board.rows;
-    document.getElementById("cols").value = board.cols;
-    document.getElementById("mines").value = board.mines;
     hoveredCell = -1;
     selectedCell = -1;
     scheduleProbabilityUpdate();
-    boardStringInput.value = currentBoardString();
     render();
-    setMessage("盘面已导入。", "success");
+    setMessage(boardMessage, "importedBoard", "success");
 }
 
 importBoardStringButton.addEventListener("click", () => {
     if (mode !== "analysis" || operationBusy) return;
     try {
         importBoardString(boardStringInput.value);
-        boardExportStatus.textContent = "盘面已导入到分析模式。";
+        dataDialog.close();
     } catch (error) {
-        boardExportStatus.textContent = `导入失败：${error.message}`;
+        setLocalizedText(boardExportStatus, "importFailed", localizedError(error));
     }
 });
 
 document.addEventListener("paste", (event) => {
-    if (mode !== "analysis" || operationBusy || settingsDialog.open) return;
+    if (mode !== "analysis" || operationBusy || document.querySelector("dialog[open]")) return;
     const target = event.target;
     if (target.isContentEditable || target.closest?.("input, textarea, select")) return;
     if (!boardElement.contains(target) && !boardElement.matches(":hover")) return;
@@ -121,12 +286,12 @@ document.addEventListener("paste", (event) => {
     try {
         importBoardString(text);
     } catch (error) {
-        setMessage(`导入失败：${error.message}`, "error");
+        setMessage(boardMessage, "importFailed", "error", localizedError(error));
     }
 });
 window.addEventListener("resize", render);
 probabilityDisplay.addEventListener("change", () => {
-    clearSuggestion();
+    clearIoeResult();
     scheduleProbabilityUpdate(true);
     render();
 });
@@ -139,25 +304,25 @@ highlightDisplay.addEventListener("change", async () => {
     try {
         await calculate(state, { includeProbabilities: false, highlight });
     } catch (error) {
-        if (highlight === highlightDisplay.value && state === activeState()) setMessage(error.message, "error");
+        if (highlight === highlightDisplay.value && state === activeState()) setErrorMessage(boardMessage, error);
     }
 });
 shapeAlgo.addEventListener("change", () => {
-    clearSuggestion();
+    clearIoeResult();
     scheduleProbabilityUpdate(true);
     if (!probabilityDisplay.checked && !highlightDisplay.value && mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
     render();
 });
 function updatePolicySettings() {
-    document.getElementById("anytime-settings").hidden = suggestStrategy.value !== "anytime";
     document.getElementById("brute-settings").hidden = !bruteEnabled.checked;
     document.getElementById("endgame-max-threads-row").hidden = !endgameMultithread.checked;
     for (const input of [endgameCandidateLimit, endgameCheckAllMoves, endgameMultithread]) input.disabled = !bruteEnabled.checked;
     endgameMaxThreads.disabled = !bruteEnabled.checked || !endgameMultithread.checked;
 }
-for (const input of [suggestStrategy, templatePrefix, ltrEventLimit, policyNodeBudget, bruteEnabled, endgameCandidateLimit, endgameCheckAllMoves, endgameMultithread, endgameMaxThreads, cellSizeSetting, ...searchWidths]) input.addEventListener("change", () => {
+cellSizeSetting.addEventListener("change", render);
+for (const input of [templatePrefix, ltrEventLimit, policyNodeBudget, bruteEnabled, endgameCandidateLimit, endgameCheckAllMoves, endgameMultithread, endgameMaxThreads, ...searchWidths]) input.addEventListener("change", () => {
     stopAnalysis();
-    clearSuggestion();
+    clearIoeResult();
     updatePolicySettings();
     if ((input === templatePrefix || input === ltrEventLimit) && mode === "analysis" && selectedCell >= 0) requestDetail(selectedCell);
     render();
@@ -165,74 +330,78 @@ for (const input of [suggestStrategy, templatePrefix, ltrEventLimit, policyNodeB
 bruteEnabled.checked = Number(endgameCandidateLimit.value) > 0;
 endgameCheckAllMoves.value = endgameCheckAllMoves.dataset.all === "checked" ? "all" : "best";
 updatePolicySettings();
-regenerateSeedButton.addEventListener("click", () => {
-    const seed = parseRngSeed(rngSeedInput.value.trim());
-    if (!seed) {
-        setMessage("开局种子必须是 32 位十六进制数。", "error");
-        return;
-    }
-    startNewGame(seed);
-});
-document.getElementById("play-mode").addEventListener("click", () => {
-    if (mode !== "play") {
-        clearSuggestion();
-        mode = "play";
-        scheduleProbabilityUpdate();
-    }
-    clearDetail();
+document.getElementById("play-mode").addEventListener("change", () => {
+    clearIoeResult();
+    mode = "play";
+    hoveredCell = -1;
+    scheduleProbabilityUpdate();
     render();
-    setMessage("");
+    if (playState.won) showVictory(playState.finishedAt);
+    else setMessage(boardMessage, playState.lost ? "lostMessage" : "", playState.lost ? "error" : "");
 });
-document.getElementById("analysis-mode").addEventListener("click", openAnalysis);
+document.getElementById("analysis-mode").addEventListener("change", openAnalysis);
+document.getElementById("cell-editor").addEventListener("click", event => {
+    const key = event.target.closest("button[data-value]");
+    if (!key || selectedCell < 0) return;
+    editAnalysisCell(selectedCell, key.dataset.value);
+    boardElement.children[selectedCell].focus({ preventScroll: true });
+});
 document.getElementById("play-until-no-safe").addEventListener("click", playUntilNoSafe);
-document.getElementById("endgame-analysis").addEventListener("click", requestSuggestion);
-document.getElementById("ioe-analysis").addEventListener("click", requestIoeAnalysis);
+document.getElementById("ioe-analysis").addEventListener("click", () => {
+    const clicks = activeState().clicks;
+    if (clicks !== null) return requestIoeAnalysis(clicks);
+    const input = document.getElementById("ioe-clicks");
+    input.value = "";
+    ioeDialog.showModal();
+    input.focus();
+});
+document.getElementById("ioe-form").addEventListener("submit", event => {
+    event.preventDefault();
+    ioeDialog.close();
+    requestIoeAnalysis(document.getElementById("ioe-clicks").valueAsNumber);
+});
 searchButton.addEventListener("click", requestSearch);
-searchNodeBudget.addEventListener("input", () => search.render());
 
-document.addEventListener("click", (event) => {
-    if (operationBusy) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-    }
-}, true);
 document.addEventListener("keydown", (event) => {
-    if (operationBusy) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-    }
-}, true);
-document.addEventListener("keydown", (event) => {
-    if (operationBusy)
+    if (operationBusy || document.querySelector("dialog[open]") || event.repeat || event.ctrlKey || event.altKey || event.metaKey)
         return;
-    if (mode === "analysis" && hoveredCell >= 0 && !event.repeat && !event.ctrlKey && !event.altKey && !event.metaKey && !event.target.closest("input, select, textarea, [contenteditable=true], button:not(.cell)")) {
-        let state = "";
-        if (event.key >= "0" && event.key <= "8")
-            state = event.key;
-        else if (event.key.toLowerCase() === "h")
-            state = "?";
-        else if (event.key.toLowerCase() === "s")
-            state = "S";
-        else if (event.key.toLowerCase() === "m")
-            state = "M";
-        else if (event.key.toLowerCase() === "g")
-            state = "G";
-        if (state) {
+    if (mode === "analysis") {
+        const cell = cellFromTarget(event.target);
+        if (event.key.startsWith("Arrow")) {
+            if (cell < 0) return;
+            const { rows, cols } = analysisState;
+            let target = cell;
+            if (event.key === "ArrowLeft" && cell % cols > 0) --target;
+            else if (event.key === "ArrowRight" && cell % cols < cols - 1) ++target;
+            else if (event.key === "ArrowUp" && cell >= cols) target -= cols;
+            else if (event.key === "ArrowDown" && cell < (rows - 1) * cols) target += cols;
             event.preventDefault();
-            editAnalysisCell(hoveredCell, state);
+            boardElement.children[target].click();
+            boardElement.children[target].scrollIntoView({ block: "nearest", inline: "nearest" });
             return;
         }
+        const key = event.key.toUpperCase();
+        if (!/^[0-8HSMG]$/.test(key) || event.target.isContentEditable ||
+            event.target.closest("input:not(#analysis-mode), select, textarea"))
+            return;
+        const target = hoveredCell >= 0 ? hoveredCell : cell === selectedCell ? cell : -1;
+        if (target < 0) return;
+        event.preventDefault();
+        editAnalysisCell(target, key === "H" ? "?" : key);
+        return;
     }
-    if (event.code !== "Space" || event.repeat || event.ctrlKey || event.altKey || event.metaKey)
+    if (event.code !== "Space")
         return;
     if (event.target.closest("input, select, textarea, [contenteditable=true], button:not(.cell)"))
         return;
     event.preventDefault();
-    startNewGame();
+    const size = [playState.rows, playState.cols, playState.mines];
+    if (effDifficulty === playDifficulty && effThreshold) {
+        showNewGame();
+        newForm.requestSubmit();
+    } else {
+        startNewGame(...size);
+    }
 });
 
-setDifficultyValues(difficulty.value);
-playState = createPlayState(Number(document.getElementById("rows").value), Number(document.getElementById("cols").value), Number(document.getElementById("mines").value));
-rngSeedInput.value = playState.seed;
-scheduleProbabilityUpdate();
-render();
+startNewGame(...presets.advanced);
