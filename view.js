@@ -61,8 +61,10 @@ function renderAnalysisResult() {
     searchCount.textContent = result?.nodes > 0 ? tr("nodeCount", formatCount(result.nodes)) : "";
     searchSpeed.textContent = speed > 0 ? tr("nodeSpeed", formatCount(Math.round(speed))) : "";
     searchDepth.textContent = result?.completedDepth > 0 ? tr("completedDepth", result.completedDepth) : "";
-    boardCountRow.hidden = !candidateCount;
-    boardCount.textContent = candidateCount ? (ioeResultPanel.hidden ? formatCount(candidateCount) : Number(candidateCount).toLocaleString(locale)) : "";
+    const hasIoeDetails = !ioeResultPanel.hidden && !ioeResultDetails.hidden;
+    const count = hasIoeDetails ? ioeResult.candidateCount : candidateCount;
+    boardCountRow.hidden = !count;
+    boardCount.textContent = count ? (hasIoeDetails ? Number(count).toLocaleString(locale) : formatCount(count)) : "";
     analysisRecommendation.hidden = recommended.length === 0;
     const state = activeState();
     analysisRecommendation.textContent = safe ? tr("safeCells", recommended.length) :
@@ -182,9 +184,13 @@ function clearDetail() {
 }
 
 let ioeResult = null;
+let ioeDetailsRequest = null;
+const ioeDetailsButton = document.getElementById("ioe-calculate-details");
+const ioeResultDetails = document.getElementById("ioe-result-details");
 
 function clearIoeResult() {
     ioeResult = null;
+    ioeDetailsRequest = null;
     ioeMove = null;
     ioeResultPanel.hidden = true;
     setMessage(analysisMessage, "");
@@ -217,24 +223,49 @@ function fitIoeLabels() {
 window.addEventListener("resize", fitIoeLabels);
 
 function showIoeResult(result) {
+    if (result.status === IoeStatus.ProofOnly || result.status === IoeStatus.TooManyLayouts) {
+        ioeResult = result;
+        ioeResultDetails.hidden = true;
+        ioeDetailsButton.hidden = false;
+        ioeResultPanel.hidden = false;
+        return;
+    }
     const buckets = result.winningIoe;
-    if (buckets.some(bucket => bucket.length !== 4)) {
+    if (!Number.isInteger(result.completedLayouts) || buckets.some(bucket => bucket.length !== 5 || !Array.isArray(bucket[2]))) {
         clearIoeResult();
         throw new UiError("outdatedWasm");
     }
     ioeResult = result;
-    candidateCount = result.candidateCount;
     const formatRate = count => {
         const percent = (count / result.candidateCount).toLocaleString(locale, { style: "percent", maximumFractionDigits: 2 });
         return `${count.toLocaleString(locale)}(${percent})`;
     };
+    setLocalizedText(document.getElementById("ioe-rate"), "ioeRate", result.minIoePercent);
     document.getElementById("ioe-wins").textContent = `${formatRate(result.wins)}\u00a0/\u00a0${formatRate(result.rootEligible)}`;
+    document.getElementById("ioe-completed-layouts").textContent = `${numberText(result.completedLayouts)}\u00a0/\u00a0${numberText(result.rootEligible)}`;
+    document.getElementById("ioe-unsearched-legend").hidden = result.completedLayouts === result.rootEligible;
     const score = result.expectedScore === null ? Infinity : result.expectedScore;
     const notation = score >= 1e8 ? "scientific" : "standard";
-    document.getElementById("ioe-score").textContent = score.toLocaleString(locale, { notation, maximumSignificantDigits: 8 });
+    document.getElementById("ioe-score").textContent = result.rootEligible && !result.completedLayouts
+        ? "—" : score.toLocaleString(locale, { notation, maximumSignificantDigits: 8 });
     const figure = document.getElementById("ioe-distribution");
+    setLocalizedText(figure.querySelector("figcaption"), "ioeDistribution", result.minIoePercent);
+    const maxExtra = Math.max(0, ...buckets.map(([, , wins]) => wins.length - 1));
+    document.getElementById("ioe-extra-legend").hidden = maxExtra === 0;
     if (buckets.length) {
-        const maxCount = Math.max(...buckets.map(([, , won, discarded]) => won + discarded));
+        const clickColors = Array.from({ length: maxExtra + 1 }, (_, extra) =>
+            `color-mix(in hsl, var(--ioe-won-color), var(--ioe-extra-color) ${100 * extra / Math.max(1, maxExtra)}%)`);
+        const chips = clickColors.slice(1).map((color, index) => {
+            const chip = document.createElement("span");
+            chip.className = "ioe-extra-chip";
+            chip.style.setProperty("--ioe-color", color);
+            chip.textContent = numberText(index + 1);
+            return chip;
+        });
+        document.getElementById("ioe-extra-colors").replaceChildren(...chips);
+        buckets.sort(([a, b], [c, d]) => a / b - c / d);
+        const totals = buckets.map(([, , wins, discarded, unsearched]) => wins.reduce((sum, count) => sum + count, discarded + unsearched));
+        const maxCount = Math.max(...totals);
         const axisMax = 10 ** Math.ceil(Math.log10(maxCount));
         const height = count => 100 * Math.log1p(count) / Math.log1p(axisMax);
         const axis = figure.querySelector(".ioe-y-axis");
@@ -250,35 +281,39 @@ function showIoeResult(result) {
         axis.replaceChildren(ticks);
 
         const rows = document.createDocumentFragment();
-        buckets.sort(([a, b], [c, d]) => a / b - c / d);
-        for (const [numerator, denominator, won, discarded] of buckets) {
+        for (const [index, [numerator, denominator, wins, discarded, unsearched]] of buckets.entries()) {
             const label = document.createElement("span");
             label.textContent = (numerator / denominator).toLocaleString(locale, { style: "percent", maximumFractionDigits: 2 });
             const track = document.createElement("div");
             track.className = "ioe-bar-track";
-            const total = won + discarded;
+            const total = totals[index];
             const totalHeight = height(total);
-            const wonHeight = totalHeight * won / total;
             track.style.setProperty("--ioe-bar-height", `${totalHeight}%`);
-            if (won) {
+            let bottom = 0;
+            const segments = [
+                ...wins.map((count, extra) => [count, extra ? tr("ioeExtraClicks", extra) : tr("ioeFeasible"), clickColors[extra]]),
+                [discarded, tr("ioeDiscarded"), "var(--ioe-discarded-color)"],
+                [unsearched, tr("ioeUnsearched"), "var(--ioe-unsearched-color)"]
+            ];
+            const details = [];
+            for (const [count, description, color] of segments) {
+                if (!count) continue;
+                const barHeight = totalHeight * count / total;
                 const bar = document.createElement("span");
-                bar.className = "ioe-bar ioe-won";
-                bar.style.height = `${wonHeight}%`;
+                bar.className = "ioe-bar";
+                bar.style.setProperty("--ioe-color", color);
+                details.push(`${description} · ${numberText(count)}`);
+                bar.style.bottom = `${bottom}%`;
+                bar.style.height = `${barHeight}%`;
                 track.append(bar);
-            }
-            if (discarded) {
-                const bar = document.createElement("span");
-                bar.className = "ioe-bar ioe-discarded";
-                bar.style.bottom = `${wonHeight}%`;
-                bar.style.height = `${totalHeight - wonHeight}%`;
-                track.append(bar);
+                bottom += barHeight;
             }
             const value = document.createElement("span");
             value.className = "ioe-bar-value";
             value.textContent = total.toLocaleString(locale);
             track.append(value);
             const row = document.createElement("li");
-            row.title = tr("ioeBar", label.textContent, value.textContent, numberText(won));
+            row.title = [tr("ioeBar", label.textContent, value.textContent), ...details].join("\n");
             row.setAttribute("aria-label", row.title);
             row.append(track, label);
             rows.append(row);
@@ -286,6 +321,8 @@ function showIoeResult(result) {
         ioeBars.replaceChildren(rows);
     }
     figure.hidden = !buckets.length;
+    ioeDetailsButton.hidden = true;
+    ioeResultDetails.hidden = false;
     ioeResultPanel.hidden = false;
     renderAnalysisResult();
     if (buckets.length) fitIoeLabels();
@@ -462,7 +499,10 @@ function render() {
     autoPlay.disabled = operationBusy || finished;
     const ioeAnalysis = document.getElementById("ioe-analysis");
     ioeAnalysis.hidden = !isBeginner(state);
-    ioeAnalysis.disabled = operationBusy || finished;
+    ioeAnalysis.dataset.i18n = ioeController ? "stopIoe" : "analyzeIoe";
+    ioeAnalysis.textContent = tr(ioeAnalysis.dataset.i18n);
+    ioeAnalysis.disabled = (operationBusy && !ioeController) || finished;
+    ioeDetailsButton.disabled = operationBusy || finished;
     document.getElementById("board-status").textContent = tr(playing ? state.lost ? "gameOver" : state.won ? "victory" : "playBoard" : "analysisDraft");
     const boardMeta = document.getElementById("board-meta");
     boardMeta.hidden = playing;

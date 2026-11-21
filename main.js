@@ -433,8 +433,12 @@ document.getElementById("cell-editor").addEventListener("click", event => {
 });
 document.getElementById("play-until-no-safe").addEventListener("click", playUntilNoSafe);
 document.getElementById("ioe-analysis").addEventListener("click", () => {
+    if (ioeController) {
+        ioeController.abort();
+        return;
+    }
     const clicks = activeState().clicks;
-    if (clicks !== null) return requestIoeAnalysis(clicks);
+    if (clicks !== null) return requestIoeAnalysis(ioeSnapshot(clicks));
     const input = document.getElementById("ioe-clicks");
     input.value = "";
     ioeDialog.showModal();
@@ -443,8 +447,9 @@ document.getElementById("ioe-analysis").addEventListener("click", () => {
 document.getElementById("ioe-form").addEventListener("submit", event => {
     event.preventDefault();
     ioeDialog.close();
-    requestIoeAnalysis(document.getElementById("ioe-clicks").valueAsNumber);
+    requestIoeAnalysis(ioeSnapshot(document.getElementById("ioe-clicks").valueAsNumber));
 });
+ioeDetailsButton.addEventListener("click", () => requestIoeAnalysis(ioeDetailsRequest, true));
 searchButton.addEventListener("click", requestSearch);
 
 document.addEventListener("keydown", (event) => {

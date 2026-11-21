@@ -230,58 +230,92 @@ function editAnalysisCell(cell, state) {
 }
 
 function showIoeProgress(progress) {
-    const key = { [IoePhase.Enumeration]: "ioeEnumerating", [IoePhase.Root]: "ioeRoot", [IoePhase.Search]: "ioeSearching" }[progress.phase];
+    const key = { [IoePhase.Enumeration]: "ioeEnumerating", [IoePhase.Filtering]: progress.rootAnalyzed ? "ioeRoot" : "ioeRootNodes", [IoePhase.Search]: "ioeSearching" }[progress.phase];
     if (key === undefined) throw new UiError("outdatedWasm");
     setMessage(analysisMessage, key, "", progress);
 }
 
-function lockAnalysis(message) {
+function lockAnalysis(message, keepIoeResult) {
     operationBusy = true;
     stopAnalysis();
-    clearIoeResult();
+    if (!keepIoeResult) clearIoeResult();
     ++probabilityRevision;
     probabilityPending = false;
     setMessage(analysisMessage, message);
     render();
 }
 
-async function requestIoeAnalysis(clicks) {
+function ioeSnapshot(clicks) {
+    const state = activeState();
+    const playerFlags = mode === "play" ? flags : state.playerFlags;
+    const mask = Array.from(state.cells, (_, cell) => playerFlags.has(cell) ? "1" : "0").join("");
+    return { ...boardSnapshot(state, /[G*]/g), playerFlags: mask, clicks };
+}
+
+async function requestIoeAnalysis(fields, details = false) {
     const state = activeState();
     if (operationBusy || !isBeginner(state) || (mode === "play" && (state.lost || state.won)))
         return;
-    const playerFlags = mode === "play" ? flags : state.playerFlags;
+    if (!fields) return;
     const candidateLimitInput = document.getElementById("ioe-candidate-limit");
+    const rootMemoryInput = document.getElementById("ioe-root-memory-limit");
     const domLimitInput = document.getElementById("ioe-dom-limit");
+    const minIoeInput = document.getElementById("ioe-min-percent");
+    const minIoePercent = minIoeInput.valueAsNumber;
+    if (!Number.isInteger(minIoePercent) || !minIoeInput.validity.valid) {
+        setMessage(analysisMessage, ApiError.IoeMinPercent, "error");
+        return;
+    }
     const candidateLimit = candidateLimitInput.valueAsNumber;
+    const rootMemoryMiB = rootMemoryInput.valueAsNumber;
     const domLimit = domLimitInput.valueAsNumber;
-    if (!Number.isInteger(candidateLimit) || !Number.isInteger(domLimit) || !candidateLimitInput.validity.valid || !domLimitInput.validity.valid) {
+    if ([candidateLimitInput, rootMemoryInput, domLimitInput].some(input => !Number.isInteger(input.valueAsNumber) || !input.validity.valid)) {
         setMessage(analysisMessage, "invalidIoeLimits", "error");
         return;
     }
-    lockAnalysis("countingLayouts");
+    const controller = new AbortController();
+    ioeController = controller;
+    lockAnalysis("countingLayouts", details);
     try {
         await search.stopQueue;
-        const mask = Array.from(state.cells, (_, cell) => playerFlags.has(cell) ? "1" : "0").join("");
-        const result = await analyzeIoeWithProgress({ ...boardSnapshot(state, /[G*]/g), playerFlags: mask, clicks, candidateLimit, domLimit }, showIoeProgress);
-        if (result.status === IoeStatus.CandidateLimit) {
-            setMessage(analysisMessage, "tooManyLayouts", "", result.candidateCount);
-            return;
-        }
-        if (result.status !== IoeStatus.Exact && result.status !== IoeStatus.DomLimit)
+        controller.signal.throwIfAborted();
+        const result = await analyzeIoeWithProgress(
+            { ...fields, candidateLimit, rootMemoryMiB, domLimit, minIoePercent, stopAfterProof: !details },
+            showIoeProgress, controller.signal);
+        controller.signal.throwIfAborted();
+        if (![IoeStatus.Exact, IoeStatus.QueryLimit, IoeStatus.ProofOnly, IoeStatus.TooManyLayouts].includes(result.status))
             throw new UiError("outdatedWasm");
         if (result.move && !Object.values(IoeAction).includes(result.move.kind))
             throw new UiError("outdatedWasm");
         ioeMove = result.move;
+        if (result.status === IoeStatus.ProofOnly || result.status === IoeStatus.TooManyLayouts) {
+            if (result.move) {
+                ioeDetailsRequest = fields;
+                showIoeResult(result);
+            } else clearIoeResult();
+            if (result.status === IoeStatus.TooManyLayouts)
+                setMessage(analysisMessage, result.move ? "ioeProvedTooManyLayouts" : "tooManyLayouts", "", result.candidateCount);
+            else setMessage(analysisMessage, "ioeProvedOptimal");
+            return;
+        }
         let status = "";
-        if (result.status === IoeStatus.DomLimit)
-            status = ioeMove ? "ioeLimitReached" : "ioeLimitNoMove";
-        else if (!ioeMove)
+        if (result.status === IoeStatus.QueryLimit) {
+            if (result.reason === IoeReason.Proved) status = "ioeProvedOptimalAtLimit";
+            else status = result.move ? "ioeLimitReached" : "ioeLimitNoMove";
+        } else if (!result.move)
             status = result.wins > 0 ? "ioeBoardComplete" : "ioeNoOpening";
+        else {
+            status = { [IoeReason.Proved]: "ioeProvedOptimal", [IoeReason.Searched]: "ioeBruteforcedOptimal" }[result.reason];
+            if (status === undefined) throw new UiError("outdatedWasm");
+        }
+        ioeDetailsRequest = null;
         showIoeResult(result);
-        setMessage(analysisMessage, "ioeDomCalls", "", status, result.rootDomCalls, result.searchDomCalls);
+        setMessage(analysisMessage, "ioeWork", "", status, result.rootNodes, result.rootDomCalls, result.searchDomCalls, result.minIoePercent);
     } catch (error) {
-        setErrorMessage(analysisMessage, error);
+        if (controller.signal.aborted) setMessage(analysisMessage, "ioeStopped");
+        else setErrorMessage(analysisMessage, error);
     } finally {
+        ioeController = null;
         operationBusy = false;
         render();
     }

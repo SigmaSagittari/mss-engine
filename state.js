@@ -59,6 +59,7 @@ let probabilityUpdateQueue = Promise.resolve();
 let probabilityRevision = 0;
 let probabilityPending = false;
 let operationBusy = false;
+let ioeController = null;
 let ioeMove = null;
 let detailData = null;
 const searchButton = document.getElementById("anytime-search");
@@ -143,23 +144,24 @@ async function readEventStream(response, update, signal) {
     }
 }
 
-async function analyzeIoeWithProgress(fields, update) {
+async function analyzeIoeWithProgress(fields, update, signal) {
     const path = "/api/analyze-ioe/stream";
     let result;
     if (!token) {
-        result = await wasmRequest(path, fields, update);
+        result = await wasmRequest(path, fields, update, signal);
     } else {
-        const response = await postForm(path, fields);
+        const response = await postForm(path, fields, signal);
         if (response.ok && response.headers.get("Content-Type")?.startsWith("text/event-stream")) {
             await readEventStream(response, event => {
                 if (event.progress) update(event.progress);
                 else result = event;
-            });
+            }, signal);
         } else {
             requireApiSuccess(await readApiJson(response), response);
             throw new UiError("requestFailed");
         }
     }
+    signal.throwIfAborted();
     if (!result) throw new UiError("ioeDisconnected");
     return requireApiSuccess(result);
 }

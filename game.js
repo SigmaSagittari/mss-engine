@@ -212,6 +212,7 @@ function activatePlayCell(cell) {
 }
 
 function toggleFlag(cell) {
+    clearIoeResult();
     const state = activeState();
     if (mode === "play")
         state.startedAt ??= performance.now();
@@ -223,12 +224,6 @@ function toggleFlag(cell) {
         playerFlags.add(cell);
     if (state.clicks !== null)
         ++state.clicks;
-    const operation = wasFlagged ? "removeFlags" : "addFlags";
-    if (ioeMove?.kind === IoeAction.Chord && ioeMove[operation].includes(cell)) {
-        ioeMove = { ...ioeMove, [operation]: ioeMove[operation].filter(target => target !== cell) };
-    } else if (!ioeResultPanel.hidden) {
-        clearIoeResult();
-    }
     render();
 }
 
