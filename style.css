@@ -79,11 +79,12 @@ dialog::backdrop { background: #17203366; }
 .settings-panels { min-width: 0; padding: 16px 0; border-top: 1px solid var(--line); }
 .settings-panel { display: none; gap: 8px; }
 .settings-panel h3 { margin: 0; font-size: 14px; font-weight: 600; }
-.settings-body:has(#settings-category-solver:checked) #settings-solver,
+.settings-body:has(#settings-category-winrate:checked) #settings-winrate,
+.settings-body:has(#settings-category-ioe:checked) #settings-ioe,
 .settings-body:has(#settings-category-display:checked) #settings-display,
-.settings-body:has(#settings-category-advanced:checked) #settings-advanced,
+.settings-body:has(#settings-category-interaction:checked) #settings-interaction,
 .settings-body:has(#settings-category-language:checked) #settings-language,
-.settings-body:has(#settings-category-acknowledgements:checked) #settings-acknowledgements { display: grid; }
+.settings-body:has(#settings-category-information:checked) #settings-information { display: grid; }
 .settings-acknowledgements { margin: 0; padding-inline-start: 1.25em; line-height: 1.6; }
 @supports (appearance: base-select) and selector(::picker(select)) {
     .settings-panel select, .settings-panel select::picker(select) { appearance: base-select; }
@@ -91,6 +92,8 @@ dialog::backdrop { background: #17203366; }
     .settings-panel option { display: flex; align-items: center; gap: 8px; padding: 7px 11px; }
     #language selectedcontent { display: flex; flex: 1; align-items: center; gap: 8px; }
     .language-flag { flex: 0 0 24px; height: 16px; margin-inline-start: auto; background-size: 100% 100%; }
+    .language-flag[data-flag="vn"] { display: grid; place-items: center; background: #da251d; color: #ff0; font-size: 11px; line-height: 1; }
+    .language-flag[data-flag="vn"]::before { content: "★"; }
     .language-flag[data-flag="cn"] { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAgCAIAAADbtmxLAAAAYElEQVR42u3WwQkAIAiF4TdCa7T/Pq5SHSOiU6XCD+/grQ8NVFZLqCg3qJlGAAUc2YdOXAa9E2v70hz/Djlq8oCWwhO0IA6mT5863y6LuDqemsT5AQgQIECAAAECFAvUAZeoo+HBwFIZAAAAAElFTkSuQmCC"); }
     .language-flag[data-flag="gb"] { background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAgCAIAAADbtmxLAAAAr0lEQVR42u2Y3Q2AMAiEcQNXcAH3clO3wkRjbSyl9CfmTLjw2HKf9yKUmHmf16v41LRsSvGtcEuscMzSLb5FaXe90SignC9xJAvTECDRTgCyRNUJlHN5gGIPS1Q9QEow4TClTnpUbUDFYAIGiV+vRNUAZAlGBjJGVQVkDOYB4lbZgarkQEUgve/35UAO5EAO5EBvIP+X/Q4IbkDDHWGBhnysNQhuUQRdpbEeG6CeYw4kmMA8Duu0DQAAAABJRU5ErkJggg=="); }
 }
@@ -103,6 +106,7 @@ dialog::backdrop { background: #17203366; }
 .settings-panel .settings-row { min-height: 36px; }
 .settings-row select, .settings-row input[type=number], .search-widths input { min-width: 0; width: 100%; }
 .settings-row input[type=checkbox] { justify-self: start; width: 18px; height: 18px; margin-inline-start: 0; }
+#settings-interaction:not(:has(#long-press-flag:checked)) #long-press-duration-row { display: none; }
 .search-widths { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; border: 0; padding: 0; margin: 0; }
 .search-widths label { display: grid; gap: 5px; color: var(--muted); font-size: 13px; }
 
@@ -144,6 +148,8 @@ kbd { font: 11px Consolas, monospace; color: var(--muted); }
     font-size: 18px;
     font-weight: 700;
     user-select: none;
+    touch-action: manipulation;
+    -webkit-touch-callout: none;
 }
 .cell.open { border: 2px solid #808080; box-shadow: none; }
 .cell.number-1 { color: #0000ff; }

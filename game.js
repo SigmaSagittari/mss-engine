@@ -242,7 +242,7 @@ function startNewGame(rows, cols, mines, seed = null, generated = null) {
     clearDetail();
     clearIoeResult();
     flags = new Set();
-    leftMouseDown = false;
+    boardPresses.clear();
     hoveredCell = -1;
     selectedCell = -1;
     scheduleProbabilityUpdate();

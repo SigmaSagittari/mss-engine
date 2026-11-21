@@ -175,19 +175,21 @@
         <fieldset class="settings-body">
             <legend class="settings-legend" data-i18n="settingsOptions"></legend>
             <div class="settings-tabs">
-                <input class="settings-category-radio" id="settings-category-solver" type="radio" name="settings-category" value="solver" checked>
-                <label class="settings-tab" id="settings-tab-solver" for="settings-category-solver" data-i18n="solver"></label>
+                <input class="settings-category-radio" id="settings-category-winrate" type="radio" name="settings-category" value="winrate" checked>
+                <label class="settings-tab" id="settings-tab-winrate" for="settings-category-winrate" data-i18n="winrateSolver"></label>
+                <input class="settings-category-radio" id="settings-category-ioe" type="radio" name="settings-category" value="ioe">
+                <label class="settings-tab" id="settings-tab-ioe" for="settings-category-ioe" data-i18n="ioeSolver"></label>
                 <input class="settings-category-radio" id="settings-category-display" type="radio" name="settings-category" value="display">
                 <label class="settings-tab" id="settings-tab-display" for="settings-category-display" data-i18n="display"></label>
-                <input class="settings-category-radio" id="settings-category-advanced" type="radio" name="settings-category" value="advanced">
-                <label class="settings-tab" id="settings-tab-advanced" for="settings-category-advanced" data-i18n="advancedSettings"></label>
+                <input class="settings-category-radio" id="settings-category-interaction" type="radio" name="settings-category" value="interaction">
+                <label class="settings-tab" id="settings-tab-interaction" for="settings-category-interaction" data-i18n="interaction"></label>
                 <input class="settings-category-radio" id="settings-category-language" type="radio" name="settings-category" value="language">
                 <label class="settings-tab" id="settings-tab-language" for="settings-category-language" lang="en">language</label>
-                <input class="settings-category-radio" id="settings-category-acknowledgements" type="radio" name="settings-category" value="acknowledgements">
-                <label class="settings-tab" id="settings-tab-acknowledgements" for="settings-category-acknowledgements" data-i18n="acknowledgements"></label>
+                <input class="settings-category-radio" id="settings-category-information" type="radio" name="settings-category" value="information">
+                <label class="settings-tab" id="settings-tab-information" for="settings-category-information" data-i18n="information"></label>
             </div>
             <div class="settings-panels">
-                <section id="settings-solver" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-solver">
+                <section id="settings-winrate" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-winrate">
                     <section class="settings-group">
                         <label class="settings-row"><span data-i18n="nodeBudget"></span><input id="policy-node-budget" type="number" min="-1" max="2147483647" value="-1" aria-describedby="policy-node-budget-hint"></label>
                         <p class="settings-caption" id="policy-node-budget-hint" data-i18n="nodeBudgetTip"></p>
@@ -201,18 +203,6 @@
                             <label class="settings-row" id="endgame-max-threads-row"><span data-i18n="threadLimit"></span><input id="endgame-max-threads" type="number" min="1" max="2147483647" step="1" value="1"></label>
                         </div>
                     </section>
-                    <section class="settings-group">
-                        <h3>IOE</h3>
-                        <label class="settings-row"><span data-i18n="ioeCandidateLimit"></span><input id="ioe-candidate-limit" type="number" min="1" max="2147483647" step="1" value="1000000"></label>
-                        <label class="settings-row"><span data-i18n="ioeDomLimit"></span><input id="ioe-dom-limit" type="number" min="1" max="2147483647" step="1" value="1000000"></label>
-                    </section>
-                </section>
-                <section id="settings-display" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-display">
-                    <label class="settings-row"><span data-i18n="showProbability"></span><input id="probability-display" type="checkbox" checked></label>
-                    <label class="settings-row"><span data-i18n="groupHighlight"></span><select id="highlight-display"><option value="" data-i18n="noHighlight"></option><option value="structureInstances">Structure Instance</option><option value="logicComponents">LogicComponent</option></select></label>
-                    <label class="settings-row"><span data-i18n="cellSize"></span><select id="cell-size"><option value="auto" selected data-i18n="automatic"></option><option value="25">25 px</option><option value="28">28 px</option><option value="32">32 px</option><option value="34">34 px</option><option value="38">38 px</option><option value="42">42 px</option><option value="48">48 px</option></select></label>
-                </section>
-                <section id="settings-advanced" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-advanced">
                     <section class="settings-group">
                         <h3 data-i18n="anytimeWidth"></h3>
                         <label class="settings-row"><span data-i18n="firstMove"></span><input id="search-root-width" type="number" min="1" max="2147483647" value="6"></label>
@@ -231,17 +221,37 @@
                         <p class="settings-caption" id="shape-algo-hint" data-i18n="solverOrderTip"></p>
                     </section>
                 </section>
+                <section id="settings-ioe" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-ioe">
+                    <label class="settings-row"><span data-i18n="ioeCandidateLimit"></span><input id="ioe-candidate-limit" type="number" min="1" max="2147483647" step="1" value="1000000"></label>
+                    <label class="settings-row"><span data-i18n="ioeDomLimit"></span><input id="ioe-dom-limit" type="number" min="1" max="2147483647" step="1" value="1000000"></label>
+                </section>
+                <section id="settings-display" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-display">
+                    <label class="settings-row"><span data-i18n="showProbability"></span><input id="probability-display" type="checkbox" checked></label>
+                    <label class="settings-row"><span data-i18n="groupHighlight"></span><select id="highlight-display"><option value="" data-i18n="noHighlight"></option><option value="structureInstances">Structure Instance</option><option value="logicComponents">LogicComponent</option></select></label>
+                    <label class="settings-row"><span data-i18n="cellSize"></span><select id="cell-size"><option value="auto" selected data-i18n="automatic"></option><option value="25">25 px</option><option value="28">28 px</option><option value="32">32 px</option><option value="34">34 px</option><option value="38">38 px</option><option value="42">42 px</option><option value="48">48 px</option></select></label>
+                </section>
+                <section id="settings-interaction" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-interaction">
+                    <div class="settings-row">
+                        <label class="settings-check"><input id="long-press-flag" type="checkbox"><span data-i18n="longPressFlag"></span></label>
+                        <label id="long-press-duration-row" class="settings-check"><input id="long-press-duration" type="number" min="1" step="1" value="250" required data-i18n-aria-label="longPressDuration"><span>ms</span></label>
+                    </div>
+                </section>
                 <section id="settings-language" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-language">
                     <label class="settings-row" for="language"><span lang="en">language</span>
                         <select id="language">
                             <button type="button"><selectedcontent></selectedcontent></button>
                             <option value="zh-CN" lang="zh-CN">汉语<span class="language-flag" data-flag="cn" aria-hidden="true"></span></option>
                             <option value="en" lang="en">english<span class="language-flag" data-flag="gb" aria-hidden="true"></span></option>
+                            <option value="vi" lang="vi">Tiếng Việt<span class="language-flag" data-flag="vn" aria-hidden="true"></span></option>
                         </select>
                     </label>
                 </section>
-                <section id="settings-acknowledgements" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-acknowledgements">
-                    <ul class="settings-acknowledgements"><li data-i18n="ackChatgpt"></li><li data-i18n="ackDom"></li><li data-i18n="ackDavid"></li></ul>
+                <section id="settings-information" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-information">
+                    <div class="settings-row"><span data-i18n="buildTime"></span><span id="build-time">Nov 21 2026 19:19:24</span></div>
+                    <section class="settings-group">
+                        <h3 data-i18n="acknowledgements"></h3>
+                        <ul class="settings-acknowledgements"><li data-i18n="ackChatgpt"></li><li data-i18n="ackDom"></li><li data-i18n="ackDavid"></li></ul>
+                    </section>
                 </section>
             </div>
         </fieldset>

@@ -1,37 +1,117 @@
-document.addEventListener("mousedown", (event) => {
-    const cell = cellFromTarget(event.target);
-    if ((event.button !== 0 && event.button !== 2) || cell < 0)
+const longPressFlag = document.getElementById("long-press-flag");
+const longPressDuration = document.getElementById("long-press-duration");
+longPressDuration.addEventListener("change", () => {
+    if (longPressDuration.validity.valid)
+        longPressDuration.defaultValue = longPressDuration.value;
+    else
+        longPressDuration.value = longPressDuration.defaultValue;
+});
+
+function activateBoardCell(cell, flag = false) {
+    if (cell < 0 || operationBusy || (mode === "play" && (playState.lost || playState.won)))
         return;
-    event.preventDefault();
-    document.activeElement.blur();
-    if (operationBusy || (mode === "play" && (!playState || playState.lost || playState.won)))
-        return;
-    if (event.button === 2) {
+    if (flag) {
         const value = activeState().cells[cell];
         if (mode === "analysis" ? !/[0-8]/.test(value) : value === "?")
             toggleFlag(cell);
+    } else if (mode === "play") {
+        activatePlayCell(cell);
+    } else {
+        selectedCell = cell;
+        boardElement.children[cell].focus({ preventScroll: true });
+        requestDetail(cell);
+        render();
+    }
+}
+
+function clearBoardPress(pointerId) {
+    const press = boardPresses.get(pointerId);
+    if (press) {
+        clearTimeout(press.timer);
+        boardPresses.delete(pointerId);
+        updatePressedCells();
+    }
+    return press;
+}
+
+function scheduleBoardFlag(pointerId, press) {
+    const remaining = Math.ceil(press.flagAt - performance.now());
+    press.timer = setTimeout(() => {
+        if (boardPresses.get(pointerId) !== press)
+            return;
+        if (performance.now() < press.flagAt) {
+            scheduleBoardFlag(pointerId, press);
+            return;
+        }
+        clearBoardPress(pointerId);
+        if (mode !== "analysis" || press.cell === press.startCell)
+            activateBoardCell(press.cell, true);
+    }, Math.min(remaining, 0x7fffffff));
+}
+
+function beginBoardPress(event) {
+    if ((event.button !== 0 && event.button !== 2) || !boardElement.contains(event.target))
+        return;
+    const cell = cellFromTarget(event.target);
+    if (cell < 0 || operationBusy || (mode === "play" && (playState.lost || playState.won)))
+        return;
+    event.preventDefault();
+    document.activeElement.blur();
+    if (event.button === 2) {
+        activateBoardCell(cell, true);
         return;
     }
-    if (mode !== "play") return;
-    leftMouseDown = true;
-    updatePressedCells(cell);
-});
-document.addEventListener("mousemove", (event) => {
-    if (operationBusy)
+    const flagAt = longPressFlag.checked ? event.timeStamp + longPressDuration.valueAsNumber : Infinity;
+    const press = { startCell: cell, cell, flagAt, timer: undefined };
+    boardPresses.set(event.pointerId, press);
+    if (Number.isFinite(flagAt))
+        scheduleBoardFlag(event.pointerId, press);
+    updatePressedCells();
+}
+
+function finishBoardPress(event) {
+    if (event.button !== 0)
         return;
-    if (mode === "analysis")
+    const press = clearBoardPress(event.pointerId);
+    if (!press)
+        return;
+    const cell = cellFromTarget(document.elementFromPoint(event.clientX, event.clientY));
+    if (mode === "analysis" && cell !== press.startCell)
+        return;
+    activateBoardCell(cell, event.timeStamp >= press.flagAt);
+}
+
+boardElement.addEventListener("pointerdown", beginBoardPress);
+document.addEventListener("pointerup", finishBoardPress);
+document.addEventListener("pointermove", (event) => {
+    // 鼠标按住一个键再按另一个键时，浏览器用 pointermove 报告按键变化。
+    if ((event.button === 0 && (event.buttons & 1)) || (event.button === 2 && (event.buttons & 2)))
+        beginBoardPress(event);
+    else if (event.button === 0)
+        finishBoardPress(event);
+
+    if (!operationBusy && mode === "analysis")
         selectAnalysisCell(cellFromTarget(event.target));
-    if (leftMouseDown)
-        updatePressedCells(cellFromTarget(event.target));
-});
-document.addEventListener("mouseup", (event) => {
-    if (operationBusy || event.button !== 0 || !leftMouseDown)
+    const press = boardPresses.get(event.pointerId);
+    if (!press)
         return;
-    leftMouseDown = false;
-    const cell = cellFromTarget(event.target);
+    const cell = cellFromTarget(document.elementFromPoint(event.clientX, event.clientY));
+    if (press.cell !== cell) {
+        press.cell = cell;
+        updatePressedCells();
+    }
+});
+document.addEventListener("pointercancel", (event) => {
+    clearBoardPress(event.pointerId);
+});
+window.addEventListener("blur", () => {
+    boardPresses.clear();
     clearPressedCells();
-    if (mode === "play")
-        activatePlayCell(cell);
+});
+boardElement.addEventListener("click", (event) => {
+    // 指针事件已经处理棋盘操作，这里接收键盘和程序触发的点击。
+    if (event.detail === 0)
+        activateBoardCell(cellFromTarget(event.target));
 });
 
 const newDialog = document.getElementById("new-dialog");
@@ -257,6 +337,7 @@ function importBoardString(text) {
             throw new UiError("invalidCellState");
     }
     clearIoeResult();
+    boardPresses.clear();
     analysisState = { rows: board.rows, cols: board.cols, mines: board.mines, cells: board.cells, clicks: null, playerFlags: new Set() };
     hoveredCell = -1;
     selectedCell = -1;
@@ -332,6 +413,7 @@ endgameCheckAllMoves.value = endgameCheckAllMoves.dataset.all === "checked" ? "a
 updatePolicySettings();
 document.getElementById("play-mode").addEventListener("change", () => {
     clearIoeResult();
+    boardPresses.clear();
     mode = "play";
     hoveredCell = -1;
     scheduleProbabilityUpdate();
@@ -339,7 +421,10 @@ document.getElementById("play-mode").addEventListener("change", () => {
     if (playState.won) showVictory(playState.finishedAt);
     else setMessage(boardMessage, playState.lost ? "lostMessage" : "", playState.lost ? "error" : "");
 });
-document.getElementById("analysis-mode").addEventListener("change", openAnalysis);
+document.getElementById("analysis-mode").addEventListener("change", () => {
+    boardPresses.clear();
+    openAnalysis();
+});
 document.getElementById("cell-editor").addEventListener("click", event => {
     const key = event.target.closest("button[data-value]");
     if (!key || selectedCell < 0) return;
