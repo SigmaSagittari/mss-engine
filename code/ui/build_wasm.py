@@ -35,7 +35,7 @@ def build(code, output):
         [compiler, "-std=c++20", "-O3", "-fdeclspec", f"-ffile-prefix-map={code}=code", f"-I{code}",
          *map(str, sources), "--bind",
          "-sMODULARIZE=1", "-sEXPORT_NAME=createMssEngine", "-sENVIRONMENT=worker,node",
-         "-sALLOW_MEMORY_GROWTH=1", "-sSTACK_SIZE=4194304", "-o", "mss_engine.js"],
+         "-sALLOW_MEMORY_GROWTH=1", "-sMAXIMUM_MEMORY=4GB", "-sSTACK_SIZE=4194304", "-o", "mss_engine.js"],
         cwd=output, env=env, check=True, timeout=240,
     )
 

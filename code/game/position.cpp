@@ -39,7 +39,7 @@ Position::Result Position::analyze(const ObservedBoard::Result &board, Pool &poo
 }
 
 Position::CheckedResult Position::analyzeChecked(const ObservedBoard::Result &board, Pool &pool, const Config &config, Probability::Pool &probabilityPool) {
-    CheckedResult checked{{board, config}, CheckError::None};
+    CheckedResult checked{{board, config}, CheckError::None, 0};
     Result &result = checked.result;
     Basic().analyze(result.basic, result.board);
     if (!Basic().checkValid(result.board, result.basic)) {
@@ -52,12 +52,10 @@ Position::CheckedResult Position::analyzeChecked(const ObservedBoard::Result &bo
     vector<ShapeSolver::DistributionId> &distributionIds = workspace.distributionIds;
     ShapeSolver::DistributionPool &distributions = probabilityPool.distributions;
     analyzeDistributions(result, distributions, distributionIds);
-    const Probability::Result probability = Probability().analyze(distributionIds, result.board.totalMines - result.basic.mineSum, probabilityPool);
-    probabilityPool.blockProbabilities.pop_back(probability.probabilities);
-    probabilityPool.blocks.pop_back(probability.blocks);
+    checked.totalWays = Probability().countWays(distributionIds, result.board.totalMines - result.basic.mineSum, probabilityPool);
 
-    // Probability 遇到空分布会直接返回零，只在无解时区分连通块冲突和总雷数冲突。
-    if (probability.totalWays == 0.0L) {
+    // 分布全都非空却凑不出指定的总雷数时，才报总雷数冲突。
+    if (checked.totalWays == 0.0L) {
         checked.error = CheckError::MineCountConflict;
         for (std::size_t i = 0; i < result.structure.instanceIds.size; ++i) {
             if (distributions.list[distributionIds[i]].ways.count == 0) {

@@ -1,15 +1,15 @@
-#include "algo/ioe_engine/ref_dom/ref_dom.h"
+#include "algo/ioe_engine/dom/dom.h"
 
 #include <algorithm>
 #include <cstring>
 #include <limits>
 #include <type_traits>
 
-#include "algo/ioe_engine/ref_dom/frontier.h"
+#include "algo/ioe_engine/dom/frontier_solver.h"
 #include "core/algorithm/neighbors.h"
 #include "core/datastructure/bit_mask.h"
 
-namespace mss::ioe::ref_dom {
+namespace mss::ioe_dom {
 
 void Scopes::clear() {
     parts.size = 0;
@@ -23,15 +23,46 @@ void Scopes::append(span<const int> items) {
     parts.push_back(part);
 }
 
-template <int Rows, int Cols> struct RefDom::Engine {
+} // 命名空间 mss::ioe_dom
+
+namespace mss {
+
+using namespace ioe_dom;
+
+template <int Rows, int Cols> struct IoeDom::Engine {
+private:
     static constexpr int cells = Rows * Cols;
-    using Model = BoardModel<cells>;
-    using Neighbors = BoardNeighbors<cells>;
+
+    struct BaseDescription {
+        enum class Kind { Zero, Single } kind;
+        int representative;
+    };
+
+    struct Model : ClickGraph {
+        uint8_t mines[cells];
+        int8_t numbers[cells];
+        int candidate_index[cells];
+        vector<int> mine_cells;
+        vector<BaseDescription> base_descriptions;
+        Scopes zeros;
+    };
+
+    struct Neighbors {
+        struct Row {
+            int count;
+            int items[8];
+        };
+
+        Row rows[cells];
+        span<const int> operator[](int cell) const { return {rows[cell].items, rows[cell].count}; }
+    };
+
     using BoardBits = bitMask<(cells + 63) / 64>;
     using MineBits = bitMask<(Cols == 30 ? 2 : 1)>;
 
-    using StateMask = std::conditional_t<cells == ref_dom::cells, Mask, BoardBits>;
+    using StateMask = BoardBits;
 
+public:
     Neighbors makeNeighbors() {
         Neighbors result{};
         for (int cell = 0; cell < cells; ++cell) {
@@ -42,48 +73,50 @@ template <int Rows, int Cols> struct RefDom::Engine {
         return result;
     }
 
-    bool partialOpening(const Model &model, const StateMask &shown, const Neighbors &adjacent) {
-        for (int i = 0; i < model.zeros.size(); ++i)
-            for (int zero : model.zeros[i])
-                if (shown.test(zero))
-                    for (int next : adjacent[zero])
-                        if (!shown.test(next)) return true;
-        return false;
-    }
-
-    int remainingClicks(const Model &layout, const StateMask &shown, const StateMask &flags, const Neighbors &adjacent) {
+    Result evaluate(const Model &model, const StateMask &shown, const StateMask &flags, int budget, int wrongFlags, bool partial) {
         Workspace &workspace = getWorkspace();
-        int wrongFlags = 0;
-        for (int cell = 0; cell < cells; ++cell)
-            if (flags.test(cell) && !layout.mines[cell]) ++wrongFlags;
-        const Model *model = &layout;
-        if (partialOpening(layout, shown, adjacent)) {
-            // 错旗可能挡住展开。已揭开的零格不重复展开，按仍盖住的零格重算连通区。
-            Model &partial = workspace.model.partial;
-            std::copy_n(layout.mines, cells, partial.mines);
-            build(shown, adjacent, partial);
-            model = &partial;
+        if constexpr (cells == IoeBoard::cells) {
+            if (!partial && exceedsBudget(model, shown, flags, budget - wrongFlags)) return {overBudget, false};
         }
-        Model &remaining = workspace.model.remaining;
+        ClickGraph &remaining = workspace.model.remaining;
         Model (&reduced)[2] = workspace.model.reduced;
-        Model &ordered = workspace.model.ordered;
+        ClickGraph &ordered = workspace.model.ordered;
         int paidSeed;
-        remainingModel(*model, shown, flags, adjacent, remaining, paidSeed);
-        const Model &input = reduce(remaining, reduced);
+        remainingModel(model, shown, flags, adjacent(), remaining, paidSeed);
+        const ClickGraph &input = reduce(remaining, reduced);
         chooseOrder(input, ordered);
-        return wrongFlags + Frontier().solve(ordered) - paidSeed;
+        const int distance = FrontierSolver().compute(ordered, budget - wrongFlags + paidSeed);
+        return {distance < 0 ? overBudget : wrongFlags + distance - paidSeed, true};
     }
 
-    int remainingClicks(const Grid<char> &layout, span<const int> shownCells, span<const int> flagCells) {
+    const Neighbors &adjacent() {
+        static const Neighbors table = makeNeighbors();
+        return table;
+    }
+
+    int closed(const Grid<char> &mines, int budget) {
         Workspace &workspace = getWorkspace();
         Model &model = workspace.model.layout;
-        const Neighbors adjacent = makeNeighbors();
-        for (int cell = 0; cell < cells; ++cell) model.mines[cell] = layout[0][cell];
-        build({}, adjacent, model);
-        StateMask shown{}, flags{};
-        for (int cell : shownCells) shown.set(cell);
-        for (int cell : flagCells) flags.set(cell);
-        return remainingClicks(model, shown, flags, adjacent);
+        for (int cell = 0; cell < cells; ++cell) model.mines[cell] = mines[cell / Cols][cell % Cols];
+        build({}, adjacent(), model);
+        return evaluate(model, {}, {}, budget, 0, false).clicks;
+    }
+
+    Result observed(const IoeCells &mines, const IoeView &view, int budget) {
+        const int wrongFlags = (view.flags & ~mines).popcount();
+        if (wrongFlags > budget) return {overBudget, false};
+        const IoeCells *neighbors = IoeBoard().neighbors();
+        bool partial = false;
+        view.revealed.forEachSetBit([&](int cell) {
+            if (!(neighbors[cell] & mines).any() && (neighbors[cell] & ~view.revealed).any()) partial = true;
+        });
+        Workspace &workspace = getWorkspace();
+        Model &model = workspace.model.layout;
+        std::fill_n(model.mines, cells, 0);
+        mines.forEachSetBit([&](int cell) { model.mines[cell] = 1; });
+        // 错旗或人工修改会挡住展开。部分开零时直接按仍盖住的零格建立连通区。
+        build(partial ? view.revealed : IoeCells{}, adjacent(), model);
+        return evaluate(model, view.revealed, view.flags, budget, wrongFlags, partial);
     }
 
     void build(const StateMask &shown, const Neighbors &adjacent, Model &model) {
@@ -171,8 +204,134 @@ template <int Rows, int Cols> struct RefDom::Engine {
         }
     }
 
+    // 双击覆盖可能重复；给每个基本单元分配权，再按有限的插旗数放宽可用双击。
+    bool exceedsBudget(const Model &layout, const StateMask &shown, const StateMask &flags, int budget) {
+        constexpr int weight = 840;
+        struct Unit {
+            span<const int> centers;
+            int own;
+            int count;
+            int overlap;
+        };
+        // 危险：units 只读取前 unitCount 项；覆盖位集、容量和旗位按各自个数全部初始化。
+        Unit units[cells];
+        BoardBits cover[cells]{};
+        int unitCount = 0;
+        for (int id = 0; id < layout.base_scopes.size(); ++id) {
+            const BaseDescription &base = layout.base_descriptions[id];
+            if (shown.test(base.representative)) continue;
+            const int own = base.kind == BaseDescription::Kind::Single ? layout.candidate_index[base.representative] : -1;
+            const span<const int> centers = layout.base_scopes[id];
+            int count = 0;
+            for (int center : centers) {
+                if (center == own) continue;
+                cover[center].set(unitCount);
+                ++count;
+            }
+            units[unitCount++] = {centers, own, count, 0};
+        }
+        if (unitCount <= budget) return false;
+
+        const int centerCount = (int)layout.candidates.size;
+        int gain[cells], capacity[cells];
+        std::uint16_t needed[cells]{};
+        for (int center = 0; center < centerCount; ++center) {
+            gain[center] = cover[center].popcount();
+            capacity[center] = weight;
+        }
+        int flagCount = 0;
+        for (int id = 0; id < (int)layout.mine_cells.size; ++id) {
+            if (flags.test(layout.mine_cells[id])) continue;
+            const std::uint16_t bit = std::uint16_t{1} << flagCount++;
+            const span<const int> centers = layout.mine_scopes[id];
+            int useful = 0;
+            for (int center : centers) useful += gain[center] > 0;
+            if (!useful) continue;
+            for (int center : centers) {
+                if (!gain[center]) continue;
+                capacity[center] += weight / useful;
+                needed[center] |= bit;
+            }
+        }
+        int order[cells], left[cells];
+        for (int i = 0; i < unitCount; ++i) {
+            order[i] = i;
+            for (int center : units[i].centers)
+                if (center != units[i].own) units[i].overlap += gain[center] - 1;
+        }
+        for (int pass = 0; pass < 5; ++pass) {
+            if (pass == 1) std::reverse(order, order + unitCount);
+            if (pass >= 2)
+                std::sort(order, order + unitCount, [&](int a, int b) {
+                    const Unit &x = units[a], &y = units[b];
+                    if (pass == 2 && x.overlap != y.overlap) return x.overlap < y.overlap;
+                    if (x.count != y.count) return x.count < y.count;
+                    if (x.overlap != y.overlap) return pass == 4 ? x.overlap > y.overlap : x.overlap < y.overlap;
+                    return a < b;
+                });
+            std::copy_n(capacity, centerCount, left);
+            int total = 0;
+            for (int k = 0; k < unitCount; ++k) {
+                const Unit &unit = units[order[k]];
+                int value = weight;
+                for (int center : unit.centers)
+                    if (center != unit.own) value = std::min(value, left[center]);
+                total += value;
+                if (total > budget * weight) return true;
+                for (int center : unit.centers)
+                    if (center != unit.own) left[center] -= value;
+            }
+        }
+
+        auto canCover = [&](int spare, unsigned removed, unsigned considered, int clicks) {
+            if (unitCount <= clicks) return true;
+            int bucket[9]{};
+            BoardBits covered;
+            for (int center = 0; center < centerCount; ++center) {
+                if (gain[center] == 0 || (needed[center] & removed) || std::popcount(needed[center] & ~considered) > spare) continue;
+                covered |= cover[center];
+                ++bucket[gain[center]];
+            }
+            const int unionSize = covered.popcount();
+            int maximum = 0, chords = 0;
+            for (int adds = 8; adds > 1; --adds) {
+                for (int j = 0; j < bucket[adds] && maximum < unionSize; ++j) {
+                    maximum += adds;
+                    ++chords;
+                    if (unitCount + chords - std::min(maximum, unionSize) <= clicks) return true;
+                }
+            }
+            return false;
+        };
+        for (int used = 0; used <= std::min(flagCount, budget); ++used) {
+            if (!canCover(used, 0, 0, budget - used)) continue;
+            int scores[10]{};
+            for (int center = 0; center < centerCount; ++center) {
+                if (gain[center] < 2 || std::popcount(needed[center]) > used) continue;
+                for (unsigned bits = needed[center]; bits; bits &= bits - 1) scores[std::countr_zero(bits)] += gain[center] - 1;
+            }
+            unsigned selected = 0;
+            for (int j = 0; j < 2; ++j) {
+                int best = -1;
+                for (int i = 0; i < flagCount; ++i)
+                    if (scores[i] > 0 && (best < 0 || scores[i] > scores[best])) best = i;
+                if (best < 0) break;
+                selected |= 1U << best;
+                scores[best] = 0;
+            }
+            if (!selected) return false;
+            for (unsigned flags = selected;; flags = (flags - 1) & selected) {
+                const int spare = used - std::popcount(flags);
+                if (spare >= 0 && spare <= flagCount - std::popcount(selected)
+                        && canCover(spare, selected ^ flags, selected, budget - used)) return false;
+                if (!flags) break;
+            }
+        }
+        return true;
+    }
+
     void remainingModel(const Model &model, const StateMask &shown, const StateMask &flags, const Neighbors &adjacent,
-                        Model &remaining, int &paidSeed) {
+                        ClickGraph &remaining, int &paidSeed) {
         Workspace &workspace = getWorkspace();
         int (&anchors)[cells] = workspace.restriction.anchors;
         int (&remap)[cells] = workspace.restriction.remap;
@@ -207,15 +366,15 @@ template <int Rows, int Cols> struct RefDom::Engine {
         }
     }
 
-    const Model &reduce(const Model &original, Model (&models)[2]) {
+    const ClickGraph &reduce(const ClickGraph &original, Model (&models)[2]) {
         Workspace &workspace = getWorkspace();
         Relations &relations = workspace.reduction.relations;
         bool (&keep)[cells] = workspace.restriction.keep;
         int (&remap)[cells] = workspace.restriction.remap;
-        const Model *current = &original;
+        const ClickGraph *current = &original;
         int next = 0;
         for (;;) {
-            const Model &model = *current;
+            const ClickGraph &model = *current;
             const int q = (int)model.candidates.size;
             calculateRelations(model, relations);
             std::fill_n(keep, q, true);
@@ -232,7 +391,7 @@ template <int Rows, int Cols> struct RefDom::Engine {
                 if (!removeLeftClickDominated(model, relations, keep)) return model;
             }
             // 删除保持替代关系，或只缩小邻域，批内其余删除仍有效。
-            Model &output = models[next];
+            ClickGraph &output = models[next];
             restrictCandidates(model, keep, remap, output);
             restrictScopes(model.zero_scopes, remap, output.zero_scopes);
             restrictScopes(model.mine_scopes, remap, output.mine_scopes);
@@ -253,7 +412,7 @@ template <int Rows, int Cols> struct RefDom::Engine {
         return ((sweep & 1) ? lines - 1 - line : line) * length + along;
     }
 
-    void chooseOrder(const Model &model, Model &output) {
+    void chooseOrder(const ClickGraph &model, ClickGraph &output) {
         Workspace &workspace = getWorkspace();
         const int q = (int)model.candidates.size;
         int (&bestOrder)[cells] = workspace.order.bestOrder;
@@ -335,7 +494,7 @@ private:
 
     struct Workspace {
         struct {
-            Model layout, partial, remaining, reduced[2], ordered;
+            Model layout, remaining, reduced[2], ordered;
         } model;
 
         // 危险：各阶段复用缓冲，仅本次写入的棋盘或下标范围有效。
@@ -372,7 +531,7 @@ private:
         return count;
     }
 
-    void clearGraph(Model &model) {
+    void clearGraph(ClickGraph &model) {
         model.candidates.size = 0;
         model.graph.clear();
         model.zero_scopes.clear();
@@ -397,7 +556,7 @@ private:
         for (int i = 0; i < source.size(); ++i) appendRestricted(output, source[i], remap);
     }
 
-    void restrictCandidates(const Model &model, const bool *keep, int *remap, Model &output) {
+    void restrictCandidates(const ClickGraph &model, const bool *keep, int *remap, ClickGraph &output) {
         clearGraph(output);
         for (int old = 0; old < (int)model.candidates.size; ++old) {
             if (keep[old]) {
@@ -409,7 +568,7 @@ private:
             if (keep[old]) appendRestricted(output.graph, model.graph[old], remap);
     }
 
-    void orderModel(const Model &model, const int *order, Model &output) {
+    void orderModel(const ClickGraph &model, const int *order, ClickGraph &output) {
         Workspace &workspace = getWorkspace();
         clearGraph(output);
         int (&inverse)[cells] = workspace.order.inverse;
@@ -432,7 +591,7 @@ private:
         for (int i = 0; i < model.base_scopes.size(); ++i) append(output.base_scopes, model.base_scopes[i]);
     }
 
-    void calculateRelations(const Model &model, Relations &result) {
+    void calculateRelations(const ClickGraph &model, Relations &result) {
         const int q = (int)model.candidates.size;
         std::fill_n(result.propagation, q, BoardBits{});
         std::fill_n(result.mineFactors, q, MineBits{});
@@ -475,7 +634,7 @@ private:
 
     // 删除中心后，各分量取一个代表，代表构成独立集。
     // 最大的 |独立集| 减其覆盖数，与空集的点击上界合起来用于证明删除安全。
-    bool removeLeftClickDominated(const Model &model, const Relations &relation, bool *keep) {
+    bool removeLeftClickDominated(const ClickGraph &model, const Relations &relation, bool *keep) {
         Workspace &workspace = getWorkspace();
         int (&privateMines)[cells] = workspace.reduction.privateMines;
         int (&adjacent)[cells] = workspace.reduction.adjacent;
@@ -516,16 +675,15 @@ private:
 
     bool exceedsBound(uint64_t available, int chosen, uint64_t covered, int threshold, int &best,
                       const uint64_t *edges, const uint64_t *baseHits) {
-        const FrontierWord word;
-        const int hits = word.populationCount(covered);
+        const int hits = CountBits()(covered);
         best = std::max(best, chosen - hits);
         if (best > threshold) return true;
-        if (chosen + word.populationCount(available) - hits <= best) return false;
+        if (chosen + CountBits()(available) - hits <= best) return false;
 
         int pivot = 0, degree = -1;
         for (uint64_t scan = available; scan; scan &= scan - 1) {
             const int vertex = std::countr_zero(scan);
-            const int current = word.populationCount(edges[vertex] & available);
+            const int current = CountBits()(edges[vertex] & available);
             if (current > degree) {
                 pivot = vertex;
                 degree = current;
@@ -538,27 +696,14 @@ private:
 
 };
 
-Neighbors RefDom::makeNeighbors() {
-    return Engine<side, side>().makeNeighbors();
+IoeDom::Result IoeDom::minimum(const IoeCells &mines, const IoeView &view, int budget) {
+    return Engine<9, 9>().observed(mines, view, budget);
 }
 
-void RefDom::buildModel(Mask layout, const Neighbors &adjacent, Model &model) {
-    for (int cell = 0; cell < cells; ++cell) model.mines[cell] = layout.has(cell);
-    Engine<side, side>().build({}, adjacent, model);
+int IoeDom::minimum(const Grid<char> &mines, int budget) {
+    if (mines.rows() == 9) return Engine<9, 9>().closed(mines, budget);
+    if (mines.cols() == 16) return Engine<16, 16>().closed(mines, budget);
+    return Engine<16, 30>().closed(mines, budget);
 }
 
-bool RefDom::partialOpening(const Model &model, Mask shown, const Neighbors &adjacent) {
-    return Engine<side, side>().partialOpening(model, shown, adjacent);
-}
-
-int RefDom::remainingClicks(const Model &layout, Mask shown, Mask playerFlags, const Neighbors &adjacent) {
-    return Engine<side, side>().remainingClicks(layout, shown, playerFlags, adjacent);
-}
-
-int RefDom::remainingClicks(const Grid<char> &layout, span<const int> shown, span<const int> playerFlags) {
-    if (layout.rows() == side) return Engine<side, side>().remainingClicks(layout, shown, playerFlags);
-    if (layout.cols() == 16) return Engine<16, 16>().remainingClicks(layout, shown, playerFlags);
-    return Engine<16, 30>().remainingClicks(layout, shown, playerFlags);
-}
-
-} // 命名空间 mss::ioe::ref_dom
+} // 命名空间 mss

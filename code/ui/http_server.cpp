@@ -243,13 +243,16 @@ void HttpServer::run(bool openBrowser) {
             } else if (request.path == "/api/analyze-ioe/stream") {
                 DWORD sendTimeout = 1000;
                 setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, (const char *)&sendTimeout, sizeof(sendTimeout));
-                bool connected = sendAll(client, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n");
-                if (connected) {
+                if (sendAll(client, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n")) {
+                    struct IoeClientClosed {};
                     auto update = [&](const std::string &event) {
-                        if (connected) connected = sendAll(client, "data: " + event + "\n\n");
+                        if (!sendAll(client, "data: " + event + "\n\n")) throw IoeClientClosed{};
                     };
-                    const std::string result = session_.analyzeIoe(request.body, update);
-                    update(result);
+                    try {
+                        update(session_.analyzeIoe(request.body, update));
+                    } catch (const IoeClientClosed &) {
+                        // 页面结束分析后，直接离开本次请求。
+                    }
                 }
             } else if (request.path == "/api/anytime-search/stop") {
                 stopAnalysis();

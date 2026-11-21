@@ -7,6 +7,20 @@
 
 namespace mss {
 
+struct CountBits {
+    constexpr int operator()(std::uint64_t word) const {
+#if defined(__POPCNT__) || defined(__aarch64__) || defined(__wasm__)
+        return std::popcount(word);
+#else
+        // 通用 x86-64 构建没有 POPCNT，避免每个字都调用编译器的运行库函数。
+        word -= (word >> 1) & UINT64_C(0x5555555555555555);
+        word = (word & UINT64_C(0x3333333333333333)) + ((word >> 2) & UINT64_C(0x3333333333333333));
+        word = (word + (word >> 4)) & UINT64_C(0x0f0f0f0f0f0f0f0f);
+        return (word * UINT64_C(0x0101010101010101)) >> 56;
+#endif
+    }
+};
+
 // 定宽位集合；下标必须在位宽内，未使用的高位由调用方保持为 0。
 template <int WordCount> struct bitMask {
     static_assert(WordCount > 0, "bitMask 至少要有一个 word");
@@ -33,6 +47,9 @@ template <int WordCount> struct bitMask {
         return false;
     }
 
+    bool operator==(const bitMask &) const = default;
+    std::uint64_t word(int index) const { return words[index]; }
+
     // 调用方保证非空；空掩码触发断言。
     int firstSetBit() const {
         int index = 0;
@@ -49,7 +66,7 @@ template <int WordCount> struct bitMask {
     int popcount() const {
         int result = 0;
         for (int i = 0; i < WordCount; ++i)
-            result += std::popcount(words[i]);
+            result += CountBits()(words[i]);
         return result;
     }
 
@@ -64,6 +81,9 @@ template <int WordCount> struct bitMask {
             words[i] |= other.words[i];
         return *this;
     }
+
+    bitMask operator&(const bitMask &other) const { bitMask result = *this; return result &= other; }
+    bitMask operator|(const bitMask &other) const { bitMask result = *this; return result |= other; }
 
     bitMask operator~() const {
         bitMask result;

@@ -5,9 +5,11 @@
       <UniqueIdentifier>{91E509BB-8A79-4C9A-B2E9-8E5C884E3158}</UniqueIdentifier>
     </Filter>
     <Filter Include="algo\ioe_engine" />
+    <Filter Include="algo\ioe_engine\dom" />
+    <Filter Include="algo\ioe_engine\effboard_finder" />
+    <Filter Include="algo\ioe_engine\move_proof" />
+    <Filter Include="algo\ioe_engine\bruteforce\layout_filter" />
     <Filter Include="algo\ioe_engine\bruteforce" />
-    <Filter Include="algo\ioe_engine\eight_way" />
-    <Filter Include="algo\ioe_engine\ref_dom" />
     <Filter Include="algo\probability_engine">
       <UniqueIdentifier>{02BAD26E-5226-43F3-802D-9B2AC2A5CDF5}</UniqueIdentifier>
     </Filter>
@@ -76,35 +78,89 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\bruteforce.cpp">
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\layout_filter\constraints.cpp">
+      <Filter>algo\ioe_engine\bruteforce\layout_filter</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\ioe_engine\dom\dom.cpp">
+      <Filter>algo\ioe_engine\dom</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\ioe_engine\dom\frontier_solver.cpp">
+      <Filter>algo\ioe_engine\dom</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\ioe_engine\effboard_finder\eff_opening.cpp">
+      <Filter>algo\ioe_engine\effboard_finder</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\ioe_engine\move_proof\move_proof.cpp">
+      <Filter>algo\ioe_engine\move_proof</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\ioe_engine\ioe.cpp">
+      <Filter>algo\ioe_engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\ioe_engine\ioe_type.cpp">
+      <Filter>algo\ioe_engine</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\layout_filter\joint_filter.cpp">
+      <Filter>algo\ioe_engine\bruteforce\layout_filter</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\layout_filter\layout_filter.cpp">
+      <Filter>algo\ioe_engine\bruteforce\layout_filter</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\click_plans.cpp">
       <Filter>algo\ioe_engine\bruteforce</Filter>
     </ClCompile>
-    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\bruteforce.h">
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\click_query.cpp">
+      <Filter>algo\ioe_engine\bruteforce</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\strategy.cpp">
+      <Filter>algo\ioe_engine\bruteforce</Filter>
+    </ClCompile>
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\moves.cpp">
+      <Filter>algo\ioe_engine\bruteforce</Filter>
+    </ClCompile>
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\layout_filter\constraints.h">
+      <Filter>algo\ioe_engine\bruteforce\layout_filter</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\ioe_engine\dom\dom.h">
+      <Filter>algo\ioe_engine\dom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\ioe_engine\dom\frontier_solver.h">
+      <Filter>algo\ioe_engine\dom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\ioe_engine\dom\click_graph.h">
+      <Filter>algo\ioe_engine\dom</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\ioe_engine\effboard_finder\eff_opening.h">
+      <Filter>algo\ioe_engine\effboard_finder</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\ioe_engine\move_proof\move_proof.h">
+      <Filter>algo\ioe_engine\move_proof</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\strategy_type.h">
       <Filter>algo\ioe_engine\bruteforce</Filter>
     </ClInclude>
-    <ClCompile Include="..\code\algo\ioe_engine\eight_way\eight_way.cpp">
-      <Filter>algo\ioe_engine\eight_way</Filter>
-    </ClCompile>
-    <ClInclude Include="..\code\algo\ioe_engine\eight_way\eight_way.h">
-      <Filter>algo\ioe_engine\eight_way</Filter>
+    <ClInclude Include="..\code\algo\ioe_engine\ioe.h">
+      <Filter>algo\ioe_engine</Filter>
     </ClInclude>
-    <ClCompile Include="..\code\algo\ioe_engine\ref_dom\ref_dom.cpp">
-      <Filter>algo\ioe_engine\ref_dom</Filter>
-    </ClCompile>
-    <ClCompile Include="..\code\algo\ioe_engine\ref_dom\frontier.cpp">
-      <Filter>algo\ioe_engine\ref_dom</Filter>
-    </ClCompile>
-    <ClCompile Include="..\code\algo\ioe_engine\ref_dom\dominance.cpp">
-      <Filter>algo\ioe_engine\ref_dom</Filter>
-    </ClCompile>
-    <ClInclude Include="..\code\algo\ioe_engine\ref_dom\ref_dom.h">
-      <Filter>algo\ioe_engine\ref_dom</Filter>
+    <ClInclude Include="..\code\algo\ioe_engine\ioe_type.h">
+      <Filter>algo\ioe_engine</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\algo\ioe_engine\ref_dom\frontier.h">
-      <Filter>algo\ioe_engine\ref_dom</Filter>
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\layout_filter\joint_filter.h">
+      <Filter>algo\ioe_engine\bruteforce\layout_filter</Filter>
     </ClInclude>
-    <ClInclude Include="..\code\algo\ioe_engine\ref_dom\dominance.h">
-      <Filter>algo\ioe_engine\ref_dom</Filter>
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\layout_filter\layout_filter.h">
+      <Filter>algo\ioe_engine\bruteforce\layout_filter</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\click_plans.h">
+      <Filter>algo\ioe_engine\bruteforce</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\click_query.h">
+      <Filter>algo\ioe_engine\bruteforce</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\strategy.h">
+      <Filter>algo\ioe_engine\bruteforce</Filter>
+    </ClInclude>
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\moves.h">
+      <Filter>algo\ioe_engine\bruteforce</Filter>
     </ClInclude>
     <ClCompile Include="..\code\algo\probability_engine\basic\basic.cpp">
       <Filter>algo\probability_engine\basic</Filter>

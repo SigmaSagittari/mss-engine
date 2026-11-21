@@ -5,6 +5,7 @@
 namespace test {
 
 inline void harness() {
+    cases::ioeGroupOrder();
     cases::lowRiskPerformance();
 }
 

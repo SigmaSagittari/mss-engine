@@ -61,21 +61,33 @@
                 </div>
                 <div id="analysis-recommendation" class="recommendation" hidden></div>
                 <div id="ioe-result" hidden>
-                    <div class="candidate-row"><span data-i18n="ioeRate"></span><strong id="ioe-wins"></strong></div>
-                    <div class="candidate-row"><span data-i18n="weightedScore"></span><strong id="ioe-score"></strong></div>
-                    <figure id="ioe-distribution" class="ioe-distribution" hidden>
-                        <figcaption data-i18n="ioeDistribution"></figcaption>
-                        <div class="ioe-legend">
-                            <span class="ioe-won" data-i18n-title="ioeReachedTip" data-i18n="ioeReached"></span>
-                            <span class="ioe-discarded" data-i18n-title="ioeReachableTip" data-i18n="ioeDiscarded"></span>
-                        </div>
-                        <div class="ioe-y-label" data-i18n="layoutLog"></div>
-                        <div class="ioe-chart">
-                            <div class="ioe-y-axis" aria-hidden="true"></div>
-                            <div class="ioe-plot"><ul></ul></div>
-                        </div>
-                        <div class="ioe-x-label">IOE</div>
-                    </figure>
+                    <button id="ioe-calculate-details" type="button" data-i18n="calculateIoeDetails" hidden></button>
+                    <div id="ioe-result-details" hidden>
+                        <div class="candidate-row"><span id="ioe-rate"></span><strong id="ioe-wins"></strong></div>
+                        <div class="candidate-row"><span data-i18n="ioeCompletedLayouts"></span><strong id="ioe-completed-layouts"></strong></div>
+                        <div class="candidate-row"><span data-i18n="weightedScore"></span><strong id="ioe-score"></strong></div>
+                        <figure id="ioe-distribution" class="ioe-distribution" hidden>
+                            <figcaption></figcaption>
+                            <div class="ioe-legend">
+                                <div class="ioe-legend-status">
+                                    <span class="ioe-won" data-i18n="ioeFeasible"></span>
+                                    <span class="ioe-discarded" data-i18n="ioeDiscarded"></span>
+                                    <span id="ioe-unsearched-legend" class="ioe-unsearched" data-i18n="ioeUnsearched" hidden></span>
+                                </div>
+                                <div id="ioe-extra-legend" class="ioe-extra-legend" hidden>
+                                    <span data-i18n="ioeExtraPrefix"></span>
+                                    <span id="ioe-extra-colors" class="ioe-extra-colors"></span>
+                                    <span data-i18n="ioeExtraSuffix"></span>
+                                </div>
+                            </div>
+                            <div class="ioe-y-label" data-i18n="layoutLog"></div>
+                            <div class="ioe-chart">
+                                <div class="ioe-y-axis" aria-hidden="true"></div>
+                                <div class="ioe-plot"><ul></ul></div>
+                            </div>
+                            <div class="ioe-x-label" data-i18n="ioeMaximum"></div>
+                        </figure>
+                    </div>
                 </div>
             </section>
             <section id="cell-detail" class="details" data-i18n-aria-label="cellDetails" hidden>
@@ -222,7 +234,9 @@
                     </section>
                 </section>
                 <section id="settings-ioe" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-ioe">
-                    <label class="settings-row"><span data-i18n="ioeCandidateLimit"></span><input id="ioe-candidate-limit" type="number" min="1" max="2147483647" step="1" value="1000000"></label>
+                    <label class="settings-row"><span data-i18n="ioeMinPercent"></span><input id="ioe-min-percent" type="number" min="1" max="2147483647" step="1" value="200"></label>
+                    <label class="settings-row"><span data-i18n="ioeCandidateLimit"></span><input id="ioe-candidate-limit" type="number" min="1" max="2147483647" step="1" value="10000000"></label>
+                    <label class="settings-row"><span data-i18n="ioeRootMemoryLimit"></span><input id="ioe-root-memory-limit" type="number" min="1" max="2147483647" step="1" value="2560"></label>
                     <label class="settings-row"><span data-i18n="ioeDomLimit"></span><input id="ioe-dom-limit" type="number" min="1" max="2147483647" step="1" value="1000000"></label>
                 </section>
                 <section id="settings-display" class="settings-panel" role="tabpanel" aria-labelledby="settings-tab-display">

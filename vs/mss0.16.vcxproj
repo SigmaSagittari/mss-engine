@@ -82,11 +82,19 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\code\main.cpp" />
-    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\bruteforce.cpp" />
-    <ClCompile Include="..\code\algo\ioe_engine\eight_way\eight_way.cpp" />
-    <ClCompile Include="..\code\algo\ioe_engine\ref_dom\ref_dom.cpp" />
-    <ClCompile Include="..\code\algo\ioe_engine\ref_dom\frontier.cpp" />
-    <ClCompile Include="..\code\algo\ioe_engine\ref_dom\dominance.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\layout_filter\constraints.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\dom\dom.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\dom\frontier_solver.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\effboard_finder\eff_opening.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\move_proof\move_proof.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\ioe.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\ioe_type.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\layout_filter\joint_filter.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\layout_filter\layout_filter.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\click_plans.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\click_query.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\strategy.cpp" />
+    <ClCompile Include="..\code\algo\ioe_engine\bruteforce\moves.cpp" />
     <ClCompile Include="..\code\algo\probability_engine\basic\basic.cpp" />
     <ClCompile Include="..\code\algo\probability_engine\logic_component\logic_component.cpp" />
     <ClCompile Include="..\code\algo\probability_engine\observed_board\observed_board.cpp" />
@@ -111,11 +119,21 @@
     <ClCompile Include="..\code\ui\ui.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\bruteforce.h" />
-    <ClInclude Include="..\code\algo\ioe_engine\eight_way\eight_way.h" />
-    <ClInclude Include="..\code\algo\ioe_engine\ref_dom\ref_dom.h" />
-    <ClInclude Include="..\code\algo\ioe_engine\ref_dom\frontier.h" />
-    <ClInclude Include="..\code\algo\ioe_engine\ref_dom\dominance.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\layout_filter\constraints.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\dom\dom.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\dom\frontier_solver.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\dom\click_graph.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\effboard_finder\eff_opening.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\move_proof\move_proof.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\strategy_type.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\ioe.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\ioe_type.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\layout_filter\joint_filter.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\layout_filter\layout_filter.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\click_plans.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\click_query.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\strategy.h" />
+    <ClInclude Include="..\code\algo\ioe_engine\bruteforce\moves.h" />
     <ClInclude Include="..\code\algo\probability_engine\basic\basic.h" />
     <ClInclude Include="..\code\algo\probability_engine\logic_component\logic_component.h" />
     <ClInclude Include="..\code\algo\probability_engine\observed_board\observed_board.h" />

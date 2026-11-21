@@ -192,12 +192,18 @@ kbd { font: 11px Consolas, monospace; color: var(--muted); }
 .muted { color: #66738a; font-size: 13px; line-height: 1.5; }
 .candidate-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 9px 0; color: #66738a; font-size: 13px; }
 .candidate-row strong { font-family: Consolas, monospace; font-variant-numeric: tabular-nums; }
-.ioe-distribution { --ioe-plot-height: 8rem; --ioe-label-space: 1.2em; --ioe-won-color: #287a57; --ioe-discarded-color: #d28a28; margin: 10px 0 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+.ioe-distribution { --ioe-plot-height: 8rem; --ioe-label-space: 1.2em; --ioe-won-color: #287a57; --ioe-extra-color: #d28a28; --ioe-discarded-color: #bd4747; --ioe-unsearched-color: #8b96a5; margin: 10px 0 0; font-size: 13px; font-variant-numeric: tabular-nums; }
 .ioe-distribution figcaption { margin-bottom: 8px; font-weight: 600; }
-.ioe-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 8px; color: #647484; }
-.ioe-legend span::before { display: inline-block; width: .8em; height: .8em; margin-right: .35em; background: var(--ioe-color); content: ""; }
+.ioe-legend { margin-bottom: 8px; color: #647484; }
+.ioe-legend-status, .ioe-extra-legend { display: flex; flex-wrap: wrap; align-items: center; }
+.ioe-legend-status { gap: 4px 12px; }
+.ioe-legend-status span::before { display: inline-block; width: .8em; height: .8em; margin-right: .35em; background: var(--ioe-color); content: ""; }
+.ioe-extra-legend { gap: 4px; margin-top: 4px; }
+.ioe-extra-colors { display: inline-flex; flex-wrap: wrap; gap: 3px; }
+.ioe-extra-chip { display: inline-grid; place-items: center; min-width: 1.5em; height: 1.5em; padding-inline: .2em; box-sizing: border-box; font-weight: 700; background: var(--ioe-color); color: #000; color: oklch(from var(--ioe-color) calc(1 - l) c h); }
 .ioe-won { --ioe-color: var(--ioe-won-color); }
 .ioe-discarded { --ioe-color: var(--ioe-discarded-color); }
+.ioe-unsearched { --ioe-color: var(--ioe-unsearched-color); }
 .ioe-y-label, .ioe-x-label { color: #647484; }
 .ioe-x-label { margin-top: 4px; text-align: center; }
 .ioe-chart { display: grid; grid-template-columns: max-content minmax(0, 1fr); }

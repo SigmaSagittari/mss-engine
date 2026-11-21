@@ -72,6 +72,7 @@ template <typename Key, typename Value, typename Hash = SplitMix64Hash> class Fl
 
     std::size_t size() const { return size_; }
     bool empty() const { return size_ == 0; }
+    std::uint64_t allocatedBytes() const { return std::uint64_t{allocated_} * sizeof(Slot); }
     void clear() { capacity_ = size_ = 0; }
 
     void reserve(std::size_t expected) {
@@ -101,6 +102,17 @@ template <typename Key, typename Value, typename Hash = SplitMix64Hash> class Fl
         if (!slot.used) { slot.key = key; slot.value = value; slot.used = 1; ++size_; }
     }
 
+    // 内存不足时保持原表；扩容时先为新表预留整块空间。
+    bool emplace(const Key &key, const Value &value, std::uint64_t &memoryLeft) {
+        if (!reserveForInsert(memoryLeft)) return false;
+        emplace(key, value);
+        return true;
+    }
+
+    Value *getOrInsert(const Key &key, std::uint64_t &memoryLeft) {
+        return reserveForInsert(memoryLeft) ? &(*this)[key] : nullptr;
+    }
+
   private:
     std::size_t findIndex(const Key &key) const {
         if (size_ == 0) return capacity_;
@@ -113,10 +125,24 @@ template <typename Key, typename Value, typename Hash = SplitMix64Hash> class Fl
     }
 
     Slot &insertionSlot(const Key &key) {
-        if (size_ + 1 > capacity_ * kMaxLoadFactor) rehash(capacity_ ? capacity_ * 2 : 4);
+        if (size_ + 1 > capacity_ * kMaxLoadFactor) rehash(insertCapacity());
         std::size_t index = hash_(key) & (capacity_ - 1);
         while (activeSlots_[index].used && !(activeSlots_[index].key == key)) index = (index + 1) & (capacity_ - 1);
         return activeSlots_[index];
+    }
+
+    std::size_t insertCapacity() const { return capacity_ ? capacity_ * 2 : 4; }
+
+    bool reserveForInsert(std::uint64_t &memoryLeft) {
+        if (size_ + 1 <= capacity_ * kMaxLoadFactor) return true;
+        const std::size_t next = insertCapacity();
+        if (capacity_ + next > allocated_) {
+            const std::uint64_t bytes = (std::uint64_t{capacity_} + next) * sizeof(Slot);
+            if (bytes > memoryLeft) return false;
+            memoryLeft -= bytes - allocatedBytes();
+        }
+        rehash(next);
+        return true;
     }
 
     void rehash(std::size_t newCapacity) {

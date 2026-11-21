@@ -36,6 +36,8 @@ struct Position {
         Result(const ObservedBoard::Result &board, const Config &config)
             : board(board), config_(config), pendingBoard{}, pendingBasic{}, probabilityVersion(0) {}
         const Config &config() const { return config_; }
+        // 更新后续计算的求解参数；同盘已完成的分布和概率可继续使用。
+        void setShapeSolverConfig(const ShapeSolver::Config &config) { config_.shapeSolver = config; }
 
       private:
         friend struct Position;
@@ -51,6 +53,7 @@ struct Position {
     struct CheckedResult {
         Result result; // error 为 None 时有效。
         CheckError error;
+        long double totalWays; // 符合各数字和总雷数的摆法数，无解时为 0。
     };
 
     struct ProbabilityResult {
@@ -99,7 +102,7 @@ struct Position {
 
     // 从可信盘面构建 Basic 和 Structure。
     Result analyze(const ObservedBoard::Result &board, Pool &pool, const Config &config);
-    // 从人工盘面构建局面并校验全盘有解。probabilityPool.distributions 绑定 pool.structure。
+    // 从人工盘面构建局面并返回合法摆法数。分布存入 probabilityPool.distributions，它须绑定 pool.structure。
     CheckedResult analyzeChecked(const ObservedBoard::Result &board, Pool &pool, const Config &config, Probability::Pool &probabilityPool);
 
     // 更新盘面和 Basic，保留池尾增量供下次查询时合并更新 Structure。
