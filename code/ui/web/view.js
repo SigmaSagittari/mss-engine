@@ -14,7 +14,7 @@ function currentBoardString() {
 }
 
 function cellFromTarget(target) {
-    const button = target.closest(".cell");
+    const button = target?.closest(".cell");
     return button ? Number(button.dataset.cell) : -1;
 }
 
@@ -307,21 +307,19 @@ function showHighlight(groups = []) {
     });
 }
 
-function updatePressedCells(cell) {
+function updatePressedCells() {
     clearPressedCells();
-    if (!leftMouseDown || mode !== "play" || playState.lost || playState.won || cell < 0)
+    if (mode !== "play" || operationBusy || playState.lost || playState.won)
         return;
-    const value = playState.cells[cell];
-    let targets = [];
-    if (value >= "1" && value <= "8")
-        targets = neighbors(cell, playState);
-    else if (value === "?" && !flags.has(cell))
-        targets.push(cell);
-    for (const target of targets) {
-        if (playState.cells[target] !== "?" || flags.has(target))
-            continue;
-        boardElement.children[target].classList.add("open");
-        pressedCells.add(target);
+    for (const { cell } of boardPresses.values()) {
+        const value = playState.cells[cell];
+        const targets = value >= "1" && value <= "8" ? neighbors(cell, playState) : [cell];
+        for (const target of targets) {
+            if (playState.cells[target] !== "?" || flags.has(target))
+                continue;
+            boardElement.children[target].classList.add("open");
+            pressedCells.add(target);
+        }
     }
 }
 
@@ -428,16 +426,6 @@ function makeCell(cell, state) {
         if (hoveredCell === cell)
             selectAnalysisCell(-1);
     });
-    button.addEventListener("click", (event) => {
-        if (mode === "analysis") {
-            selectedCell = cell;
-            button.focus({ preventScroll: true });
-            requestDetail(cell);
-            render();
-        } else if (event.detail === 0) {
-            activatePlayCell(cell);
-        }
-    });
     button.addEventListener("contextmenu", (event) => event.preventDefault());
     updateCell(button, cell, state);
     return button;
@@ -460,6 +448,9 @@ function render() {
             updateCell(boardElement.children[cell], cell, state);
     const playing = mode === "play";
     const finished = playing && (state.lost || state.won);
+    if (operationBusy || finished)
+        boardPresses.clear();
+    updatePressedCells();
     document.getElementById("play-mode").checked = playing;
     document.getElementById("analysis-mode").checked = !playing;
     for (const id of ["play-mode", "analysis-mode", "open-settings", "new-game", "board-data"])

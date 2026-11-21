@@ -118,6 +118,8 @@ std::string Session::index(std::string content) const {
     replace("__MSS_BRUTE_FORCE_CHECK_ALL__", config.brute.config.checkAllMoves ? "checked" : "");
     replace("__MSS_BRUTE_FORCE_MULTITHREAD__", config.brute.config.threadCount > 1 ? "checked" : "");
     replace("__MSS_POLICY_NODES__", std::to_string(config.anytime.nodeLimit));
+    const std::string buildTimeMarker = "__MSS_BUILD_TIME__";
+    if (content.find(buildTimeMarker) != std::string::npos) replace(buildTimeMarker, __DATE__ " " __TIME__);
     const std::string versionMarker = "__MSS_VERSION__";
     while (content.find(versionMarker) != std::string::npos) replace(versionMarker, mss::version);
     return content;
